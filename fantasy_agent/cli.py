@@ -122,15 +122,16 @@ def _emergency_buy(store: Store, s, api: FantasyAPI, world) -> str | None:
     if not candidates:
         return None
     pick = candidates[0]
+    name = notify.esc(pick.item.player.name)
     try:
         api.bid(world.league_id, pick.item.market_id, pick.item.price)
     except Exception as exc:
-        return f"❌ Fichaje de emergencia fallido para {pick.item.player.name}: {exc}"
+        return f"❌ Fichaje de emergencia fallido para <b>{name}</b>: {notify.esc(str(exc))}"
     store.record_auto_buy(pick.item.player.id, pick.item.price)
     return (
-        f"🚨 FICHAJE DE EMERGENCIA (sin confirmar — plantilla incompleta)\n"
-        f"{pick.item.player.name} ({pick.item.player.position}) por {service.m(pick.item.price)}\n"
-        f"Motivo: {'; '.join(pick.reasons)}"
+        f"🚨 <b>FICHAJE DE EMERGENCIA</b> (sin confirmar — plantilla incompleta)\n"
+        f"<b>{name}</b> ({pick.item.player.position}) por {service.m(pick.item.price)}\n"
+        f"Motivo: {notify.esc('; '.join(pick.reasons))}"
     )
 
 
@@ -193,7 +194,7 @@ def _watch_once(store: Store, s) -> str:
     confirm.run_scheduled(s, store, api)  # por si algo se confirmó y ya toca, dentro de este mismo tick
 
     for e in events:
-        notify.send_all(s, e)  # inmediato: acabas de perder saldo, no esperas turno para saberlo
+        notify.send_all(s, e, html=True)  # inmediato: acabas de perder saldo, no esperas turno para saberlo
 
     if digest.due(store, s):
         notify.send_all(s, service.situational_briefing(world, s))

@@ -42,23 +42,25 @@ def propose(
     when_note = ""
     if execute_at and execute_at - time.time() > IMMEDIATE_WINDOW_S:
         when = time.strftime("%d/%m %H:%M", time.localtime(execute_at))
-        when_note = f"\n\n⏱️ Si confirmas, se ejecuta sola el {when} (no hace falta que estés pendiente)."
-    label_line = f"{label}\n\n" if label else ""
+        when_note = f"\n\n⏱️ <i>Si confirmas, se ejecuta sola el {when} — no hace falta que estés pendiente.</i>"
+    label_line = f"<b>{notify.esc(label)}</b>\n\n" if label else ""
     notify.send_all(
         settings,
-        f"❓ PROPUESTA [{op_id}]\n\n{label_line}{description}{when_note}",
+        f"❓ <b>PROPUESTA [{op_id}]</b>\n\n{label_line}{notify.esc(description)}{when_note}",
         buttons=[("✅ Confirmar", f"confirm:{op_id}"), ("❌ Cancelar", f"cancel:{op_id}")],
+        html=True,
     )
     return op_id
 
 
 def _execute(api: FantasyAPI, kind: str, payload: dict[str, Any]) -> str:
+    name = notify.esc(str(payload.get("player_name", "?")))
     if kind == "bid":
         api.bid(payload["league_id"], payload["market_id"], payload["money"])
-        return f"✅ Puja enviada: {payload['money'] / 1_000_000:.2f}M por {payload.get('player_name', '?')}"
+        return f"✅ Puja enviada: <b>{payload['money'] / 1_000_000:.2f}M</b> por <b>{name}</b>"
     if kind == "clause":
         api.pay_buyout_clause(payload["league_id"], payload["player_id"], payload["amount"])
-        return f"✅ Cláusula pagada: {payload['amount'] / 1_000_000:.2f}M por {payload.get('player_name', '?')}"
+        return f"✅ Cláusula pagada: <b>{payload['amount'] / 1_000_000:.2f}M</b> por <b>{name}</b>"
     raise ValueError(f"tipo de operación desconocido: {kind}")
 
 
@@ -67,9 +69,9 @@ def _run_and_report(settings: Settings, store: Store, api: FantasyAPI, op_id: st
         msg = _execute(api, op["kind"], op["payload"])
         store.resolve_pending(op_id, "done")
     except Exception as exc:
-        msg = f"❌ Error ejecutando [{op_id}]: {exc}\nNo se ha gastado nada — revísalo y proponlo de nuevo."
+        msg = f"❌ Error ejecutando [{op_id}]: {notify.esc(str(exc))}\nNo se ha gastado nada — revísalo y proponlo de nuevo."
         store.resolve_pending(op_id, "error")
-    notify.send_all(settings, msg)
+    notify.send_all(settings, msg, html=True)
     return msg
 
 

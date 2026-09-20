@@ -117,6 +117,60 @@ jugador). Reglas adicionales de esta investigación:
 | Bonus local/visitante | **pendiente de añadir** en `lineup.py` |
 | Penalización por rotación europea | **pendiente** (dato externo, no hay endpoint fiable) |
 
+## 7. Cartera de presupuesto, no fichajes sueltos
+
+Nunca se propone una lista que en conjunto no quepa en tu saldo real: `analysis.allocate_budget`
+coge las oportunidades ordenadas por score y va eligiendo mientras quepan, reservando
+`BUDGET_RESERVE_PCT` (20% por defecto) como colchón para cláusulas — ver §1. El score en sí
+ya no es solo precio/rendimiento de hoy: suma "forma reciente" (media de las últimas 2-3
+jornadas jugadas, más predictiva que la media de toda la temporada — `service.recent_form`) y
+un extra si el jugador se acaba de recuperar de lesión/duda/sanción y su precio aún no lo
+refleja (`storage.recently_recovered`, histórico que guardamos nosotros porque la API solo da
+el estado de hoy).
+
+## 8. Red de seguridad: plantilla incompleta para la jornada
+
+Si no llegas al mínimo de jugadores DISPONIBLES por posición para alinear ningún 11 legal
+(1 portero, 3 defensas, 3 centrocampistas, 1 delantero — `analysis.position_shortage`), el
+sistema ficha del **mercado libre** (nunca clausulazos: eso le quita algo a un rival y sigue
+necesitando tu sí) **sin pedir confirmación**, priorizando por: (1) qué posición está más
+corta, (2) rendimiento, (3) coste. Tope de seguridad: `EMERGENCY_BUY_CAP_PCT` (15% del saldo
+por operación) y `EMERGENCY_BUYS_PER_WEEK` (3 por semana).
+
+## 9. Cláusulas: no alimentar al líder, no clausular por venganza
+
+`analysis.clause_alerts` despriorriza (no descarta) dos casos, con aviso explícito en el
+mensaje: pagar la cláusula del líder actual de la liga (le das el dinero que necesita para
+reponerse), y clausular de vuelta al mismo rival que te acaba de clausular a ti (casi siempre
+le hace un favor: recupera parte del dinero y consigue el jugador que quería — confirmado por
+varias guías externas, no es solo intuición). El líder se calcula de la clasificación real;
+quién te clausuló sale de `/activity` (`service.recent_clauser_against_me` — **sin verificar
+en vivo todavía**, mismo aviso que otras rutas nuevas: si nunca detecta nada, comprobar con
+`fantasy probe` y ajustar las claves).
+
+## 10. Ejecución al segundo exacto (sin servidor 24/7)
+
+El precio de una cláusula es fijo y conocido de antemano — no es una puja a ciegas. Por eso tu
+"Confirmar" vale como aprobación del importe exacto, aunque la cláusula aún no se haya
+liberado: `confirm.propose(..., execute_at=...)` guarda esa aprobación, y `run_scheduled()`
+la ejecuta ella sola, durmiendo dentro del propio job de GitHub Actions hasta el instante
+exacto (por eso el `timeout-minutes` del workflow subió a 28). Las pujas de mercado usan el
+mismo mecanismo pero al revés: se ejecutan ~60s **antes** de que cierre el anuncio (no antes,
+para no revelar la puja y evitar que otro reaccione — mismo principio que el "last-minute
+bidding" de otros bots de este juego).
+
+## 11. Mensajes: parte corto y repartido, no todo de golpe
+
+`digest.py` manda como mucho un parte de situación (`service.situational_briefing`, 4-6
+líneas: saldo, huecos, próxima cláusula, posición en la liga) cada `BRIEFING_INTERVAL_MIN`
+(90 min por defecto), nunca en horas de silencio (23h-7h, `digest.in_quiet_hours`) — pero las
+propuestas de decisión (cláusulas, fichajes) se mandan siempre, sin esperar turno ni respetar
+las horas de silencio, para no perder una ventana real. Los botones de Telegram (Confirmar/
+Cancelar) van en cada propuesta (`confirm.propose(..., label=...)`), con una etiqueta de
+urgencia (`analysis.clause_urgency_label`, 4 niveles) o calidad (`analysis.player_quality_label`).
+En cuanto se ejecuta algo (confirmación o fichaje de emergencia), se manda un aviso corto
+inmediato con el resultado — no espera al siguiente parte de situación.
+
 ## Próximos pasos de implementación
 
 1. Añadir a `lineup.py` el multiplicador local/visitante y el ajuste por dificultad del
@@ -124,4 +178,9 @@ jugador). Reglas adicionales de esta investigación:
 2. Añadir `SEASON_PHASE_CUTOFF` (jornada o fecha) en `.env`/`config.py` y una segunda función
    de puntuación en `analysis.py` para la fase competitiva.
 3. Estimar saldo de rivales a partir de `/activity` (ya apuntado en el README original) para
-   priorizar clausulazos donde el rival no pueda responder.
+   priorizar clausulazos donde el rival no pueda responder — mismo endpoint que §9, aprovechar
+   la misma llamada.
+4. Verificar en vivo `service.recent_clauser_against_me` (forma del JSON de `/activity`) y el
+   payload real de `update_lineup` (bloqueado desde antes, ver README).
+5. Probar el primer fichaje de emergencia y la primera cláusula programada contra la cuenta
+   real — todo esto está solo probado con datos de mentira (tests), no en vivo todavía.

@@ -43,7 +43,7 @@ class Tests(unittest.TestCase):
         self.sent = []
         patcher = patch(
             "fantasy_agent.notify.send_telegram",
-            side_effect=lambda s, t, buttons=None: self.sent.append(t),
+            side_effect=lambda s, t, buttons=None, html=False: self.sent.append(t),
         )
         self.mock_send = patcher.start()
         self.addCleanup(patcher.stop)

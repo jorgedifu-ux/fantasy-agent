@@ -15,6 +15,12 @@ def any_enabled(settings: Settings) -> bool:
     return telegram_enabled(settings)
 
 
+def esc(text: str) -> str:
+    """Escapa texto dinámico (nombres de jugador/mánager) antes de meterlo en un mensaje con
+    parse_mode HTML, para que un '&' o '<' sueltos no rompan el formato."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _chunks(text: str, size: int) -> list[str]:
     chunks, current = [], ""
     for line in text.splitlines(keepends=True):
@@ -27,10 +33,14 @@ def _chunks(text: str, size: int) -> list[str]:
     return chunks
 
 
-def send_telegram(settings: Settings, text: str, *, buttons: list[tuple[str, str]] | None = None) -> None:
+def send_telegram(
+    settings: Settings, text: str, *, buttons: list[tuple[str, str]] | None = None, html: bool = False,
+) -> None:
     """`buttons`: lista de (texto_botón, callback_data), p.ej. [("✅ Confirmar", "confirm:a1b2")].
     Se pone en el ÚLTIMO trozo si el mensaje se corta en varios (los botones van pegados al
-    texto que los explica)."""
+    texto que los explica). `html=True`: interpreta `<b>`/`<i>`/`<code>` como formato en vez
+    de texto literal — el llamador es responsable de escapar cualquier dato dinámico con
+    `esc()` antes de meterlo en el mensaje (si no, un '&' o '<' sueltos rompen el envío)."""
     if not telegram_enabled(settings):
         raise RuntimeError("Configura TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID en el .env")
     url = f"https://api.telegram.org/bot{settings.telegram_token}/sendMessage"
@@ -41,6 +51,8 @@ def send_telegram(settings: Settings, text: str, *, buttons: list[tuple[str, str
             "text": chunk,
             "disable_web_page_preview": True,
         }
+        if html:
+            body["parse_mode"] = "HTML"
         if buttons and i == len(chunks) - 1:
             body["reply_markup"] = {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in buttons]]}
         request_json("POST", url, json_body=body)
@@ -67,9 +79,11 @@ def get_telegram_updates(settings: Settings, offset: int | None = None) -> list[
     return resp.get("result", [])
 
 
-def send_all(settings: Settings, text: str, *, buttons: list[tuple[str, str]] | None = None) -> None:
+def send_all(
+    settings: Settings, text: str, *, buttons: list[tuple[str, str]] | None = None, html: bool = False,
+) -> None:
     if telegram_enabled(settings):
-        send_telegram(settings, text, buttons=buttons)
+        send_telegram(settings, text, buttons=buttons, html=html)
 
 
 def send_report(settings: Settings, sections: list[str], *, telegram: bool | None = None) -> None:
