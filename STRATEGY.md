@@ -48,7 +48,21 @@ Fuente: guías de jornadaperfecta.com, futbolfantasy.com, analiticafantasy.com, 
   días — no es objetivo aunque su cláusula parezca barata; comprobar `SquadSlot.clause_open`
   antes de proponer nada.
 
-## 3. Titularidad, rotación, rival y campo
+## 3. Cuándo fijar el once (timing, no solo contenido)
+
+El once final **no se fija en automático hasta el día antes de que arranque la jornada**
+(ventana configurable, por defecto las últimas 24h antes del primer partido — la misma
+ventana que ya usa `service.clause_freeze_window` para las cláusulas). Fijarlo antes no
+compensa: la información de titularidad, lesiones y sanciones sigue cambiando hasta último
+momento, y un once "final" puesto con una semana de antelación puede quedar obsoleto sin que
+nadie lo corrija. Mientras estemos fuera de esa ventana, el once solo se **muestra** en el
+informe diario (para que sepas cómo pinta la cosa), pero no se envía a la API. Dentro de la
+ventana, cada `tick` puede refinarlo con la información más fresca hasta que cierre el plazo.
+
+`LINEUP_LOCK_HOURS` (nueva variable, por defecto 24) controla el tamaño de esta ventana —
+ver `config.py` y el punto correspondiente en `cli._watch_once()`.
+
+## 4. Titularidad, rotación, rival y campo
 
 Fuentes: futbolfantasy.com (seguimiento de titularidad), tuayudantefantasy.com (predictor por
 rival/campo), calculadorafantasy.com, lacabrafantasy.com.
@@ -77,7 +91,7 @@ Factores a ponderar en la puntuación esperada de cada jugador (`lineup.py`,
 6. **Racha reciente de puntos** (media de las últimas 3-5 jornadas, no solo la temporada
    completa) — un jugador "en forma" pesa más que su media anual.
 
-## 4. Mercado (fichajes/ventas, fuera de clausulazos)
+## 5. Mercado (fichajes/ventas, fuera de clausulazos)
 
 Ya modelado en el proyecto (`analysis.py`): puntos por millón + tendencia a 3 días +
 descuento sobre valor + media de puntos, separando "oportunidad para el once" de
@@ -90,7 +104,7 @@ jugador). Reglas adicionales de esta investigación:
 - Evitar pujar por encima de valor salvo en fase competitiva final, donde ya no importa
   revalorizar — ahí sí se puede pagar de más por puntos inmediatos.
 
-## 5. Umbrales a mantener sincronizados con el código
+## 6. Umbrales a mantener sincronizados con el código
 
 | Regla | Dónde vive en el código |
 |---|---|
@@ -98,6 +112,7 @@ jugador). Reglas adicionales de esta investigación:
 | Riesgo propio: tu cláusula ≤ 1.25× valor | `analysis.py` |
 | Horizonte de reventa: 14 días de blindaje | `analysis.py::project_value` |
 | Congelación de cláusulas: 24h antes de la jornada | `service.py::clause_freeze_window` |
+| Once no se aplica en automático hasta 24h antes de la jornada | `config.py::LINEUP_LOCK_HOURS` (**pendiente de añadir**) |
 | Corte fase económica → competitiva | **pendiente de añadir** (`SEASON_PHASE_CUTOFF`) |
 | Bonus local/visitante | **pendiente de añadir** en `lineup.py` |
 | Penalización por rotación europea | **pendiente** (dato externo, no hay endpoint fiable) |
