@@ -1,0 +1,239 @@
+"""Línea de comandos: `python -m fantasy_agent <comando>`."""
+from __future__ import annotations
+
+import argparse
+import json
+import random
+import sys
+import time
+from datetime import datetime
+
+from . import auth, confirm, notify, service
+from .api import FantasyAPI
+from .attendance import estimate_titularidad
+from .config import load_settings
+from .storage import Store
+
+
+def _out(settings, text: str, telegram: bool) -> None:
+    print(text)
+    if telegram:
+        notify.send_telegram(settings, text)
+
+
+def cmd_auth(args, s) -> None:
+    if args.step == "url":
+        print("1) Abre Chrome → DevTools (F12) → pestaña Network → marca 'Preserve log'.")
+        print("2) Pega esta URL e inicia sesión con tu cuenta de LaLiga Fantasy:\n")
+        print(auth.build_login_url(s))
+        print("\n3) La página se quedará en blanco (es normal). En Network, la última fila '(canceled)'")
+        print("   empieza por ?state=...&code=... → clic derecho → Copy link address.")
+        print("4) Ejecuta: python -m fantasy_agent auth code 'authredirect://...'")
+    elif args.step == "code":
+        if not args.url:
+            sys.exit("Falta la URL: auth code 'authredirect://...'")
+        tokens = auth.exchange_code(s, args.url)
+        mins = int((tokens["expires_at"] - time.time()) / 60)
+        print(f"✅ Sesión guardada. Caduca en {mins} min · refresh: {'sí' if tokens['refresh_token'] else 'no'}")
+    elif args.step == "status":
+        t = auth.load_tokens(s)
+        if not t:
+            print("Sin sesión.")
+        else:
+            mins = int((t["expires_at"] - time.time()) / 60)
+            print(f"Token caduca en {mins} min · refresh token: {'sí' if t.get('refresh_token') else 'no'}")
+    elif args.step == "refresh":
+        auth.refresh(s)
+        print("✅ Token renovado.")
+
+
+def cmd_probe(args, s) -> None:
+    api = FantasyAPI(s)
+    data = api.get(args.path, authed=not args.public)
+    print(json.dumps(data, indent=2, ensure_ascii=False)[: args.max_chars])
+
+
+def cmd_leagues(args, s) -> None:
+    api = FantasyAPI(s)
+    league_id, team_id, _ = service.resolve_league(api, s)
+    print(json.dumps(api.leagues(), indent=2, ensure_ascii=False)[:3000])
+    print(f"\nLiga seleccionada: {league_id} · equipo detectado: {team_id or '(no viene en la respuesta)'}")
+
+
+def cmd_standing(args, s) -> None:
+    api = FantasyAPI(s)
+    league_id, _, _ = service.resolve_league(api, s)
+    from .models import parse_standing
+    for r in parse_standing(api.standing(league_id)):
+        print(f"team_id={r.team_id:<10} manager_id={r.manager_id:<12} {r.manager_name:<20} {r.points:>5} pts  {service.m(r.team_value)}")
+
+
+def _world(api, s, trends=True):
+    return service.build_world(api, s, with_trends=trends)
+
+
+def cmd_section(args, s) -> None:
+    api = FantasyAPI(s)
+    world = _world(api, s, trends=args.cmd in ("market", "trends", "report"))
+    news = None
+    if args.cmd in ("lineup", "report") and getattr(args, "news", False):
+        news = estimate_titularidad(api, [sl.player for sl in world.my_slots if sl.player.position_id != 5])
+    if args.cmd == "report":
+        sections = service.report_sections(world, s, news)
+        print("\n\n".join(sections))
+        if args.telegram:
+            notify.send_report(s, sections, telegram=args.telegram)
+        return
+    text = {
+        "market": lambda: service.market_report(world),
+        "trends": lambda: service.trends_report(world),
+        "rivals": lambda: service.rivals_report(world),
+        "clauses": lambda: service.clauses_report(world, s)[0],
+        "lineup": lambda: service.lineup_report(world, news),
+    }[args.cmd]()
+    _out(s, text, args.telegram)
+
+
+def _watch_once(store: Store, s) -> str:
+    """Una pasada: alertas de cláusula siempre, informe completo si toca hoy."""
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    daily_due = now.hour >= s.report_hour and store.get("last_daily") != today
+    api = FantasyAPI(s)
+    world = _world(api, s, trends=daily_due)
+
+    _, alerts = service.clauses_report(world, s)
+    fresh = [a for a in alerts if store.alert_is_new(a.key)]
+    info_alerts = [a for a in fresh if a.kind != "open_affordable"]
+    if info_alerts:
+        notify.send_all(s, "🚨 ALERTAS\n" + "\n".join(a.message for a in info_alerts))
+
+    # Cláusulas ya pagables y "lógicas" (≤1.2x valor, ver STRATEGY.md §2): se PROPONEN para
+    # confirmar, no se pagan solas — a diferencia de la alineación, es dinero irreversible.
+    for a in fresh:
+        if a.kind == "open_affordable":
+            confirm.propose(
+                s, store, "clause",
+                {
+                    "league_id": world.league_id,
+                    "player_id": a.slot.player.id,
+                    "amount": a.slot.clause,
+                    "player_name": a.slot.player.name,
+                },
+                f"Clausulazo — {a.slot.player.name} (de {a.slot.owner_name})\n"
+                f"Cláusula: {service.m(a.slot.clause)} · Valor de mercado: {service.m(a.slot.player.market_value)}",
+            )
+
+    if daily_due:
+        # Pujas propuestas como mucho una vez al día (no cada tick): evita repetir la misma
+        # propuesta 48 veces si nadie contesta y no satura Telegram.
+        for o in service.top_bid_candidates(world):
+            key = f"bid:{o.item.player.id}:{o.item.price}"
+            if store.alert_is_new(key, ttl_hours=24):
+                confirm.propose(
+                    s, store, "bid",
+                    {
+                        "league_id": world.league_id,
+                        "market_id": o.item.market_id,
+                        "money": o.item.price,
+                        "player_name": o.item.player.name,
+                    },
+                    f"Fichaje — {o.item.player.name} ({o.item.player.position})\n"
+                    f"Precio: {service.m(o.item.price)} · score {o.score}\n{'; '.join(o.reasons) or 'sin avisos'}",
+                )
+
+    confirm.poll_and_execute(s, store, api)
+
+    if daily_due:
+        news = None
+        try:
+            news = estimate_titularidad(api, [sl.player for sl in world.my_slots if sl.player.position_id != 5])
+        except Exception as exc:
+            print(f"[titularidad] error: {exc}")
+        notify.send_report(s, service.report_sections(world, s, news))
+        store.set("last_daily", today)
+    return f"[{now:%H:%M}] ok · {len(fresh)} alertas nuevas{' · informe diario enviado' if daily_due else ''}"
+
+
+def cmd_pending(args, s) -> None:
+    store = Store(s.db_file)
+    rows = store.get_pending()
+    if not rows:
+        print("Sin propuestas pendientes.")
+        return
+    for r in rows:
+        print(f"[{r['id']}] {r['kind']}\n{r['description']}\n")
+
+
+def cmd_tick(args, s) -> None:
+    """Una sola pasada de vigilancia (pensado para cron / GitHub Actions)."""
+    if not notify.any_enabled(s):
+        sys.exit("tick necesita Telegram configurado")
+    print(_watch_once(Store(s.db_file), s))
+
+
+def cmd_watch(args, s) -> None:
+    """Bucle local: alarmas de cláusula cada X minutos e informe completo una vez al día."""
+    if not notify.any_enabled(s):
+        sys.exit("El modo watch necesita Telegram configurado en el .env")
+    store = Store(s.db_file)
+    print(f"👀 Vigilando cada ~{s.watch_interval_min} min. Informe diario a las {s.report_hour}:00. Ctrl+C para salir.")
+    while True:
+        try:
+            print(_watch_once(store, s))
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            print(f"[{datetime.now():%H:%M}] error: {exc}")
+        # Intervalo con algo de aleatoriedad para no pegar peticiones a hora fija.
+        time.sleep(s.watch_interval_min * 60 * random.uniform(0.85, 1.15))
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="fantasy", description="Analista de LaLiga Fantasy (solo lectura)")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("auth", help="Login y sesión")
+    p.add_argument("step", choices=["url", "code", "status", "refresh"])
+    p.add_argument("url", nargs="?")
+    p.set_defaults(func=cmd_auth)
+
+    p = sub.add_parser("probe", help="Ver JSON crudo de una ruta de la API")
+    p.add_argument("path", help="p.ej. /v1/competition/1/leagues")
+    p.add_argument("--public", action="store_true", help="sin token")
+    p.add_argument("--max-chars", type=int, default=6000)
+    p.set_defaults(func=cmd_probe)
+
+    sub.add_parser("leagues", help="Tus ligas").set_defaults(func=cmd_leagues)
+    sub.add_parser("standing", help="Clasificación con ids").set_defaults(func=cmd_standing)
+
+    for name, help_ in [
+        ("market", "Oportunidades de mercado"),
+        ("trends", "Tus jugadores: cuáles conviene vender ya"),
+        ("rivals", "Resumen de rivales"),
+        ("clauses", "Alarmas de cláusulas"),
+        ("lineup", "Once recomendado"),
+        ("report", "Informe completo"),
+    ]:
+        p = sub.add_parser(name, help=help_)
+        p.add_argument("--telegram", action="store_true", help="enviar también por Telegram")
+        if name in ("lineup", "report"):
+            p.add_argument("--news", action="store_true", help="estima titularidad por histórico de jornadas jugadas")
+        p.set_defaults(func=cmd_section)
+
+    sub.add_parser("watch", help="Vigilancia continua con alertas por Telegram").set_defaults(func=cmd_watch)
+    sub.add_parser("tick", help="Una sola pasada de vigilancia (para cron / GitHub Actions)").set_defaults(func=cmd_tick)
+    sub.add_parser("pending", help="Propuestas (pujas/cláusulas) esperando tu confirmación").set_defaults(func=cmd_pending)
+
+    args = parser.parse_args(argv)
+    settings = load_settings()
+    try:
+        args.func(args, settings)
+    except KeyboardInterrupt:
+        print("\nHasta luego.")
+    except RuntimeError as exc:
+        sys.exit(f"❌ {exc}")
+
+
+if __name__ == "__main__":
+    main()
