@@ -53,20 +53,31 @@ def propose(
     return op_id
 
 
-def _execute(api: FantasyAPI, kind: str, payload: dict[str, Any]) -> str:
+def _execute(api: FantasyAPI, store: Store, kind: str, payload: dict[str, Any]) -> str:
     name = notify.esc(str(payload.get("player_name", "?")))
     if kind == "bid":
         api.bid(payload["league_id"], payload["market_id"], payload["money"])
-        return f"✅ Puja enviada: <b>{payload['money'] / 1_000_000:.2f}M</b> por <b>{name}</b>"
+        store.add_market_bid(payload["player_id"], name, payload["money"], payload.get("expires_at"))
+        return (
+            f"📨 Puja <b>enviada</b> (pendiente de resolverse): <b>{payload['money'] / 1_000_000:.2f}M</b> "
+            f"por <b>{name}</b>\nTe aviso en cuanto se sepa si la ganas."
+        )
     if kind == "clause":
         api.pay_buyout_clause(payload["league_id"], payload["player_id"], payload["amount"])
-        return f"✅ Cláusula pagada: <b>{payload['amount'] / 1_000_000:.2f}M</b> por <b>{name}</b>"
+        return f"✅ Cláusula pagada: <b>{payload['amount'] / 1_000_000:.2f}M</b> por <b>{name}</b> — ya es tuyo."
+    if kind == "sell":
+        api.sell_player(payload["league_id"], payload["player_id"], payload["sale_price"])
+        store.add_market_bid(payload["player_id"], name, payload["sale_price"], None, direction="sell")
+        return (
+            f"📨 Puesto a la venta (pendiente de que alguien lo compre): <b>{name}</b> "
+            f"por <b>{payload['sale_price'] / 1_000_000:.2f}M</b>\nTe aviso en cuanto se venda de verdad."
+        )
     raise ValueError(f"tipo de operación desconocido: {kind}")
 
 
 def _run_and_report(settings: Settings, store: Store, api: FantasyAPI, op_id: str, op: dict) -> str:
     try:
-        msg = _execute(api, op["kind"], op["payload"])
+        msg = _execute(api, store, op["kind"], op["payload"])
         store.resolve_pending(op_id, "done")
     except Exception as exc:
         msg = f"❌ Error ejecutando [{op_id}]: {notify.esc(str(exc))}\nNo se ha gastado nada — revísalo y proponlo de nuevo."

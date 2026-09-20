@@ -31,6 +31,12 @@ class FakeAPI:
         self.calls.append(("bid", league_id, market_id, money))
 
 
+BID_PAYLOAD = {
+    "league_id": "L1", "market_id": "m1", "money": 5_000_000,
+    "player_id": "P9", "player_name": "Fulanito", "expires_at": time.time() + 3600,
+}
+
+
 def telegram_message(text, update_id=1):
     return {"update_id": update_id, "message": {"text": text}}
 
@@ -150,6 +156,18 @@ class Tests(unittest.TestCase):
         self.assertEqual(results, [])
         self.assertEqual(self.api.calls, [])
         self.assertEqual(len(self.store.get_scheduled()), 1)  # sigue programado, para más tarde
+
+
+    def test_bid_execution_is_tracked_as_pending_not_done(self):
+        op_id = confirm.propose(self.s, self.store, "bid", BID_PAYLOAD, "Fichaje de prueba")
+        with patch("fantasy_agent.notify.get_telegram_updates", return_value=self._updates([f"Confirmar {op_id}"])):
+            confirm.poll_and_execute(self.s, self.store, self.api)
+        self.assertEqual(self.api.calls, [("bid", "L1", "m1", 5_000_000)])
+        pending_bids = self.store.unresolved_market_bids()
+        self.assertEqual(len(pending_bids), 1)
+        self.assertEqual(pending_bids[0]["player_id"], "P9")
+        # El mensaje debe dejar claro que está pendiente, no que ya se ha ganado el jugador.
+        self.assertIn("pendiente", self.sent[-1].lower())
 
 
 if __name__ == "__main__":

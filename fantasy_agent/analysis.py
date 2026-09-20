@@ -143,9 +143,28 @@ def project_value(current: int, trend: Trend, days: int = 14) -> int:
 
 
 def sell_high_candidates(trends: dict[str, tuple[Player, Trend]], mine: set[str]) -> list[tuple[Player, Trend]]:
-    """Jugadores tuyos que llevan una buena subida a 7 días pero ya se están frenando: venderlos ya."""
+    """Jugadores tuyos que llevan una buena subida a 7 días pero ya se están frenando: venderlos
+    ya, EN GANANCIA — es el motivo "bueno" de vender, aprovechando el máximo antes de que baje."""
     out = [(p, t) for pid, (p, t) in trends.items() if pid in mine and t.d7 >= 8 and t.d1 <= 0.5]
     return sorted(out, key=lambda x: -x[1].d7)[:5]
+
+
+def cut_loss_candidates(my_slots: list[SquadSlot], trends: dict[str, tuple[Player, Trend]]) -> list[SquadSlot]:
+    """Jugadores tuyos que probablemente NO se van a recuperar: caída sostenida (no un mal día
+    suelto) o lesión/sanción larga con un rendimiento ya de por sí flojo. A diferencia de
+    `sell_high_candidates` (vender GANANDO), aquí se vende aunque sea con pérdida — mejor
+    liquidar ahora que seguir esperando a alguien que no va a volver a su nivel. Deliberadamente
+    conservador: exige caída sostenida (7 días Y 3 días, no un susto de un solo día) o un
+    jugador claramente descartado (lesionado y ya de flojo rendimiento antes de lesionarse)."""
+    out = []
+    for sl in my_slots:
+        p = sl.player
+        trend = trends.get(p.id, (p, Trend(0, 0, 0)))[1]
+        sustained_fall = trend.d7 <= -8 and trend.d3 <= -2
+        written_off = p.status.lower() in ("injured", "suspended", "lesionado", "sancionado") and p.avg_points < 2.0
+        if sustained_fall or written_off:
+            out.append(sl)
+    return out
 
 
 # ---------- alarmas de cláusulas --------------------------------------------
@@ -179,6 +198,27 @@ def clause_urgency_label(ratio: float, penalty: float) -> str:
     if ratio <= 1.1:
         return "🟠 URGENTE"
     return "🟡 RECOMENDABLE"
+
+
+def bid_amount(item: MarketItem, score: float, cash: int | None, cap_price: int | None = None) -> int:
+    """Cuánto pujar DE VERDAD, no solo el precio de salida. Solo compensa ofrecer de más en
+    oportunidades buenas o muy buenas (mismos umbrales que `player_quality_label` — un score
+    "a valorar" no merece pagar de más). Si ya hay otras pujas compitiendo (`item.bids > 0`),
+    un empujón extra. Nunca pasa de `cap_price` (si se da, p.ej. el tope de emergencia) ni
+    del saldo disponible."""
+    if score >= 22:
+        overbid_pct = 0.17  # 🔥 chollo: merece la pena pelearlo
+    elif score >= 16:
+        overbid_pct = 0.08  # ✅ buena opción: un empujón moderado
+    else:
+        overbid_pct = 0.0   # 🤔 a valorar: al precio de salida, sin forzar
+    if item.bids > 0:
+        overbid_pct += 0.05
+    target = round(item.price * (1 + overbid_pct))
+    ceiling = cash if cash is not None else target
+    if cap_price is not None:
+        ceiling = min(ceiling, cap_price)
+    return max(item.price, min(target, ceiling))
 
 
 def player_quality_label(score: float) -> str:

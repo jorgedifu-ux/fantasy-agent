@@ -123,16 +123,76 @@ def _emergency_buy(store: Store, s, api: FantasyAPI, world) -> str | None:
         return None
     pick = candidates[0]
     name = notify.esc(pick.item.player.name)
+    cap = int(world.my_cash * s.emergency_buy_cap_pct) if world.my_cash else pick.item.price
+    money = analysis.bid_amount(pick.item, pick.score, world.my_cash, cap_price=cap)
     try:
-        api.bid(world.league_id, pick.item.market_id, pick.item.price)
+        api.bid(world.league_id, pick.item.market_id, money)
     except Exception as exc:
         return f"❌ Fichaje de emergencia fallido para <b>{name}</b>: {notify.esc(str(exc))}"
-    store.record_auto_buy(pick.item.player.id, pick.item.price)
+    store.record_auto_buy(pick.item.player.id, money)
+    expires_at = pick.item.expires.timestamp() if pick.item.expires else None
+    store.add_market_bid(pick.item.player.id, name, money, expires_at)
     return (
         f"🚨 <b>FICHAJE DE EMERGENCIA</b> (sin confirmar — plantilla incompleta)\n"
-        f"<b>{name}</b> ({pick.item.player.position}) por {service.m(pick.item.price)}\n"
-        f"Motivo: {notify.esc('; '.join(pick.reasons))}"
+        f"Puja <b>enviada</b> (pendiente de resolverse) por <b>{name}</b> ({pick.item.player.position}), "
+        f"{service.m(money)}\n"
+        f"Motivo: {notify.esc('; '.join(pick.reasons))}\n"
+        f"Te aviso en cuanto se sepa si la ganas."
     )
+
+
+def _check_bid_resolutions(store: Store, world) -> list[str]:
+    """Una puja "enviada" no es una puja "ganada". Compara lo pendiente con tu plantilla
+    actual: si el jugador ya está en tu equipo, la ganaste; si ya pasó de sobra su hora de
+    cierre y sigue sin estar, la perdiste (otro mánager pujó más)."""
+    my_ids = {sl.player.id for sl in world.my_slots}
+    now = time.time()
+    results: list[str] = []
+    for b in store.unresolved_market_bids("buy"):
+        if b["player_id"] in my_ids:
+            store.resolve_market_bid(b["id"], "won")
+            results.append(f"✅ <b>Puja ganada</b>: {notify.esc(b['player_name'])} ya es tuyo.")
+        elif b["expires_at"] and now > b["expires_at"] + 600:  # 10 min de margen tras el cierre
+            store.resolve_market_bid(b["id"], "lost")
+            results.append(
+                f"❌ <b>Puja perdida</b>: {notify.esc(b['player_name'])} — otro mánager habrá "
+                f"pujado más. No se ha gastado nada."
+            )
+    for b in store.unresolved_market_bids("sell"):
+        if b["player_id"] not in my_ids:
+            store.resolve_market_bid(b["id"], "sold")
+            results.append(f"💰 <b>Vendido</b>: {notify.esc(b['player_name'])} por {service.m(b['price'])}.")
+    return results
+
+
+def _sell_proposals(store: Store, s, world) -> None:
+    """Recomendaciones de venta: dos motivos distintos, nunca en automático (a diferencia de
+    los fichajes de emergencia, vender sí necesita siempre tu sí, ver STRATEGY.md).
+    1) Aprovechar máximo: vender EN GANANCIA antes de que empiece a bajar.
+    2) Cortar pérdidas: caída sostenida o lesión larga sin visos de recuperación — vender
+       aunque sea perdiendo, porque esperar solo empeora las cosas."""
+    mine_ids = {sl.player.id for sl in world.my_slots}
+    for p, t in analysis.sell_high_candidates(world.trends, mine_ids)[:2]:
+        if store.alert_is_new(f"sell_profit:{p.id}", ttl_hours=48):
+            confirm.propose(
+                s, store, "sell",
+                {"league_id": world.league_id, "player_id": p.id, "sale_price": p.market_value, "player_name": p.name},
+                f"Venta recomendada — {p.name}\n"
+                f"En máximo ({t.d7:+.0f}% en 7 días, ya frenando) — va a empezar a bajar.\n"
+                f"Vender ahora: {service.m(p.market_value)}",
+                label="💰 APROVECHAR MÁXIMO",
+            )
+    for sl in analysis.cut_loss_candidates(world.my_slots, world.trends)[:2]:
+        p = sl.player
+        if store.alert_is_new(f"sell_loss:{p.id}", ttl_hours=72):
+            confirm.propose(
+                s, store, "sell",
+                {"league_id": world.league_id, "player_id": p.id, "sale_price": p.market_value, "player_name": p.name},
+                f"Venta recomendada (cortar pérdidas) — {p.name}\n"
+                f"Estado: {p.status} · no parece que vaya a recuperarse pronto.\n"
+                f"Mejor liquidar ya: {service.m(p.market_value)}",
+                label="🩸 CORTAR PÉRDIDAS",
+            )
 
 
 def _watch_once(store: Store, s) -> str:
@@ -178,18 +238,27 @@ def _watch_once(store: Store, s) -> str:
             # Puja de última hora: si sabemos cuándo cierra el anuncio, se propone ya (para que
             # puedas decir que sí con calma) pero se EJECUTA ~60s antes del cierre — no antes,
             # para no revelar la puja pronto y evitar que otro reaccione (ver STRATEGY.md).
+            # El importe ya incluye sobrepuja si la oportunidad lo merece (analysis.bid_amount).
+            money = analysis.bid_amount(o.item, o.score, world.my_cash)
             execute_at = o.item.expires.timestamp() - 60 if o.item.expires else None
             confirm.propose(
                 s, store, "bid",
                 {
-                    "league_id": world.league_id, "market_id": o.item.market_id, "money": o.item.price,
-                    "player_name": o.item.player.name,
+                    "league_id": world.league_id, "market_id": o.item.market_id, "money": money,
+                    "player_id": o.item.player.id, "player_name": o.item.player.name,
+                    "expires_at": o.item.expires.timestamp() if o.item.expires else None,
                 },
                 f"Fichaje — {o.item.player.name} ({o.item.player.position})\n"
-                f"Precio: {service.m(o.item.price)} · score {o.score}\n{'; '.join(o.reasons) or 'sin avisos'}",
+                f"Precio de salida: {service.m(o.item.price)} · pujamos {service.m(money)} · score {o.score}\n"
+                f"{'; '.join(o.reasons) or 'sin avisos'}",
                 execute_at=execute_at,
                 label=analysis.player_quality_label(o.score),
             )
+
+    _sell_proposals(store, s, world)
+
+    for resolved in _check_bid_resolutions(store, world):
+        notify.send_all(s, resolved, html=True)
 
     confirm.run_scheduled(s, store, api)  # por si algo se confirmó y ya toca, dentro de este mismo tick
 

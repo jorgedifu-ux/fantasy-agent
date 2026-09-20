@@ -2,7 +2,8 @@
 import unittest
 
 from fantasy_agent.analysis import (
-    Opportunity, Trend, allocate_budget, emergency_candidates, position_shortage,
+    Opportunity, Trend, allocate_budget, bid_amount, cut_loss_candidates, emergency_candidates,
+    position_shortage,
 )
 from fantasy_agent.models import MarketItem, Player, SquadSlot
 
@@ -93,6 +94,58 @@ class EmergencyCandidatesTests(unittest.TestCase):
         ]
         out = emergency_candidates(slots, market, cash=10_000_000)
         self.assertTrue(out)  # al menos uno de los dos huecos se cubre
+
+
+class BidAmountTests(unittest.TestCase):
+    def _item(self, price=1_000_000, bids=0):
+        return MarketItem(player=player("x"), price=price, expires=None, seller="LaLiga", bids=bids, market_id="m1")
+
+    def test_marginal_opportunity_bids_asking_price(self):
+        self.assertEqual(bid_amount(self._item(1_000_000), score=13, cash=10_000_000), 1_000_000)
+
+    def test_good_opportunity_overbids(self):
+        amount = bid_amount(self._item(1_000_000), score=18, cash=10_000_000)
+        self.assertEqual(amount, 1_080_000)
+
+    def test_great_opportunity_overbids_more(self):
+        amount = bid_amount(self._item(1_000_000), score=25, cash=10_000_000)
+        self.assertEqual(amount, 1_170_000)
+
+    def test_existing_competition_adds_extra(self):
+        amount = bid_amount(self._item(1_000_000, bids=2), score=25, cash=10_000_000)
+        self.assertEqual(amount, 1_220_000)
+
+    def test_never_exceeds_cap_price(self):
+        amount = bid_amount(self._item(1_000_000), score=25, cash=10_000_000, cap_price=1_050_000)
+        self.assertEqual(amount, 1_050_000)
+
+    def test_never_exceeds_cash(self):
+        amount = bid_amount(self._item(1_000_000), score=25, cash=1_100_000)
+        self.assertEqual(amount, 1_100_000)
+
+    def test_never_bids_below_asking_price(self):
+        amount = bid_amount(self._item(1_000_000), score=25, cash=500_000)
+        self.assertEqual(amount, 1_000_000)  # el saldo no llega ni al precio de salida
+
+
+class CutLossTests(unittest.TestCase):
+    def test_sustained_fall_flagged(self):
+        slots = [SquadSlot(player("p1"), "T", "yo", 0, None)]
+        trends = {"p1": (player("p1"), Trend(-10, -5, -12))}
+        self.assertEqual([sl.player.id for sl in cut_loss_candidates(slots, trends)], ["p1"])
+
+    def test_single_bad_day_not_flagged(self):
+        slots = [SquadSlot(player("p1"), "T", "yo", 0, None)]
+        trends = {"p1": (player("p1"), Trend(-6, -1, -9))}  # cae fuerte hoy pero no sostenido
+        self.assertEqual(cut_loss_candidates(slots, trends), [])
+
+    def test_injured_and_poor_form_flagged(self):
+        slots = [SquadSlot(player("p1", status="lesionado", avg=1.0), "T", "yo", 0, None)]
+        self.assertEqual([sl.player.id for sl in cut_loss_candidates(slots, {})], ["p1"])
+
+    def test_injured_but_good_form_not_flagged(self):
+        slots = [SquadSlot(player("p1", status="lesionado", avg=7.0), "T", "yo", 0, None)]
+        self.assertEqual(cut_loss_candidates(slots, {}), [])  # buena media, puede merecer esperar
 
 
 if __name__ == "__main__":
