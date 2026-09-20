@@ -62,6 +62,15 @@ ventana, cada `tick` puede refinarlo con la información más fresca hasta que c
 `LINEUP_LOCK_HOURS` (nueva variable, por defecto 24) controla el tamaño de esta ventana —
 ver `config.py` y el punto correspondiente en `cli._watch_once()`.
 
+> ⚠️ **Regla crítica, confirmada con la ayuda oficial de LaLiga Fantasy**: si en el momento en
+> que se guarda la alineación (justo antes del primer partido de la jornada) **no tienes 11
+> jugadores alineados, O tienes saldo negativo, NO PUNTÚAS NADA esa jornada — cero, no "lo que
+> puedas alinear"**. Las dos cosas son igual de graves y tienen el mismo nivel de urgencia
+> máxima: ni la plantilla incompleta ni la deuda son un "mal menor", son una jornada entera
+> perdida. Todo lo de §8 (red de seguridad) y la política de deuda deben tratarse con esta
+> urgencia — más agresivos cuanto más cerca esté el cierre, incluso si eso significa relajar
+> topes normales de gasto.
+
 ## 4. Titularidad, rotación, rival y campo
 
 Fuentes: futbolfantasy.com (seguimiento de titularidad), tuayudantefantasy.com (predictor por

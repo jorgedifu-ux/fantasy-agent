@@ -6,7 +6,7 @@ import json
 import random
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from . import analysis, auth, confirm, digest, notify, service
 from .api import FantasyAPI
@@ -105,25 +105,39 @@ def _record_status_history(store: Store, world) -> None:
         store.record_status(item.player.id, item.player.status)
 
 
+def _hours_to_deadline(world) -> float | None:
+    """Horas hasta el primer partido de la jornada (mismo instante en que se congelan las
+    cláusulas y se guarda la alineación) — None si no lo sabemos."""
+    if not world.clause_freeze:
+        return None
+    return (world.clause_freeze[1] - datetime.now(timezone.utc)).total_seconds() / 3600
+
+
 def _emergency_buy(store: Store, s, api: FantasyAPI, world) -> str | None:
     """Red de seguridad: si no puedes alinear 11 legales, ficha del mercado LIBRE (nunca
-    clausulazos) sin pedirte confirmación — tope de precio y de operaciones por semana en
-    .env (EMERGENCY_BUY_CAP_PCT, EMERGENCY_BUYS_PER_WEEK). Ver STRATEGY.md §punto 4."""
+    clausulazos) sin pedirte confirmación. No tener 11 en el momento en que se guarda la
+    alineación es JORNADA ENTERA A CERO, no un mal menor (confirmado con la ayuda oficial de
+    LaLiga Fantasy) — por eso el tope de gasto y el límite semanal se relajan cuanto más cerca
+    esté el cierre. Nunca llega a endeudarse solo: eso sigue necesitando tu confirmación."""
     shortage = analysis.position_shortage(world.my_slots)
     if not any(shortage.values()):
         return None
-    if len(store.auto_buys_this_week()) >= s.emergency_buys_per_week:
+    hours_left = _hours_to_deadline(world)
+    critical = hours_left is not None and hours_left <= s.lineup_lock_hours
+    urgent = hours_left is not None and hours_left <= 6
+    if not critical and len(store.auto_buys_this_week()) >= s.emergency_buys_per_week:
         return None
+    cap_pct = s.emergency_buy_cap_pct * (3 if urgent else 1.5 if critical else 1)
     already = {b["player_id"] for b in store.auto_buys_this_week()}
     candidates = [
-        o for o in analysis.emergency_candidates(world.my_slots, world.market, world.my_cash, s.emergency_buy_cap_pct)
+        o for o in analysis.emergency_candidates(world.my_slots, world.market, world.my_cash, min(cap_pct, 1.0))
         if o.item.player.id not in already
     ]
     if not candidates:
         return None
     pick = candidates[0]
     name = notify.esc(pick.item.player.name)
-    cap = int(world.my_cash * s.emergency_buy_cap_pct) if world.my_cash else pick.item.price
+    cap = int(world.my_cash * min(cap_pct, 1.0)) if world.my_cash else pick.item.price
     money = analysis.bid_amount(pick.item, pick.score, world.my_cash, cap_price=cap)
     try:
         api.bid(world.league_id, pick.item.market_id, money)
@@ -132,8 +146,9 @@ def _emergency_buy(store: Store, s, api: FantasyAPI, world) -> str | None:
     store.record_auto_buy(pick.item.player.id, money)
     expires_at = pick.item.expires.timestamp() if pick.item.expires else None
     store.add_market_bid(pick.item.player.id, name, money, expires_at)
+    urgencia = " · ⏰ ÚLTIMA HORA, tope de gasto ampliado" if urgent else " · tope ampliado, jornada cerca" if critical else ""
     return (
-        f"🚨 <b>FICHAJE DE EMERGENCIA</b> (sin confirmar — plantilla incompleta)\n"
+        f"🚨 <b>FICHAJE DE EMERGENCIA</b> (sin confirmar — plantilla incompleta{urgencia})\n"
         f"Puja <b>enviada</b> (pendiente de resolverse) por <b>{name}</b> ({pick.item.player.position}), "
         f"{service.m(money)}\n"
         f"Motivo: {notify.esc('; '.join(pick.reasons))}\n"
