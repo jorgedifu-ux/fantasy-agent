@@ -12,7 +12,7 @@ concurrency:
 jobs:
   tick:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 28  # deja margen para esperar al segundo exacto de un clausulazo programado (ver confirm.run_scheduled)
     steps:
       - uses: actions/checkout@v4
 

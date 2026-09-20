@@ -8,7 +8,7 @@ import sys
 import time
 from datetime import datetime
 
-from . import auth, confirm, notify, service
+from . import analysis, auth, confirm, digest, notify, service
 from .api import FantasyAPI
 from .attendance import estimate_titularidad
 from .config import load_settings
@@ -94,65 +94,115 @@ def cmd_section(args, s) -> None:
     _out(s, text, args.telegram)
 
 
+def _recovered_ids(store: Store, players) -> frozenset:
+    return frozenset(p.id for p in players if store.recently_recovered(p.id))
+
+
+def _record_status_history(store: Store, world) -> None:
+    for sl in (*world.my_slots, *world.rival_slots):
+        store.record_status(sl.player.id, sl.player.status)
+    for item in world.market:
+        store.record_status(item.player.id, item.player.status)
+
+
+def _emergency_buy(store: Store, s, api: FantasyAPI, world) -> str | None:
+    """Red de seguridad: si no puedes alinear 11 legales, ficha del mercado LIBRE (nunca
+    clausulazos) sin pedirte confirmación — tope de precio y de operaciones por semana en
+    .env (EMERGENCY_BUY_CAP_PCT, EMERGENCY_BUYS_PER_WEEK). Ver STRATEGY.md §punto 4."""
+    shortage = analysis.position_shortage(world.my_slots)
+    if not any(shortage.values()):
+        return None
+    if len(store.auto_buys_this_week()) >= s.emergency_buys_per_week:
+        return None
+    already = {b["player_id"] for b in store.auto_buys_this_week()}
+    candidates = [
+        o for o in analysis.emergency_candidates(world.my_slots, world.market, world.my_cash, s.emergency_buy_cap_pct)
+        if o.item.player.id not in already
+    ]
+    if not candidates:
+        return None
+    pick = candidates[0]
+    try:
+        api.bid(world.league_id, pick.item.market_id, pick.item.price)
+    except Exception as exc:
+        return f"❌ Fichaje de emergencia fallido para {pick.item.player.name}: {exc}"
+    store.record_auto_buy(pick.item.player.id, pick.item.price)
+    return (
+        f"🚨 FICHAJE DE EMERGENCIA (sin confirmar — plantilla incompleta)\n"
+        f"{pick.item.player.name} ({pick.item.player.position}) por {service.m(pick.item.price)}\n"
+        f"Motivo: {'; '.join(pick.reasons)}"
+    )
+
+
 def _watch_once(store: Store, s) -> str:
-    """Una pasada: alertas de cláusula siempre, informe completo si toca hoy."""
+    """Una pasada: ejecuta lo ya aprobado que caiga en esta ventana (al segundo exacto),
+    responde a tus confirmaciones, cubre huecos críticos sin preguntar (dentro del tope),
+    propone lo nuevo (máx. unas pocas decisiones, nunca un tocho), y manda como mucho un
+    parte de situación corto por franja horaria en vez de todo de golpe."""
     now = datetime.now()
-    today = now.strftime("%Y-%m-%d")
-    daily_due = now.hour >= s.report_hour and store.get("last_daily") != today
     api = FantasyAPI(s)
-    world = _world(api, s, trends=daily_due)
+
+    confirm.run_scheduled(s, store, api)  # lo confirmado con antelación, si toca ya
+
+    world = _world(api, s, trends=True)
+    _record_status_history(store, world)
+    confirm.poll_and_execute(s, store, api)
+
+    events: list[str] = []
+    emergency = _emergency_buy(store, s, api, world)
+    if emergency:
+        events.append(emergency)
+        world = _world(api, s, trends=True)  # recalcular: acabas de gastar, quiero que se note ya
 
     _, alerts = service.clauses_report(world, s)
     fresh = [a for a in alerts if store.alert_is_new(a.key)]
-    info_alerts = [a for a in fresh if a.kind != "open_affordable"]
-    if info_alerts:
-        notify.send_all(s, "🚨 ALERTAS\n" + "\n".join(a.message for a in info_alerts))
+    actionable = [a for a in fresh if a.kind == "open_affordable"][:3]  # nunca más de 3 a la vez
+    for a in actionable:
+        ratio = a.slot.clause / a.slot.player.market_value if a.slot.player.market_value else 1.0
+        confirm.propose(
+            s, store, "clause",
+            {
+                "league_id": world.league_id, "player_id": a.slot.player.id, "amount": a.slot.clause,
+                "player_name": a.slot.player.name,
+            },
+            f"Clausulazo — {a.slot.player.name} (de {a.slot.owner_name})\n"
+            f"Cláusula: {service.m(a.slot.clause)} · Valor de mercado: {service.m(a.slot.player.market_value)}",
+            label=analysis.clause_urgency_label(ratio, a.penalty),
+        )
 
-    # Cláusulas ya pagables y "lógicas" (≤1.2x valor, ver STRATEGY.md §2): se PROPONEN para
-    # confirmar, no se pagan solas — a diferencia de la alineación, es dinero irreversible.
-    for a in fresh:
-        if a.kind == "open_affordable":
+    recovered = _recovered_ids(store, [sl.player for sl in world.my_slots] + [i.player for i in world.market])
+    for o in service.top_bid_candidates(world, s, recovered_ids=recovered):
+        key = f"bid:{o.item.player.id}:{o.item.price}"
+        if store.alert_is_new(key, ttl_hours=24):
+            # Puja de última hora: si sabemos cuándo cierra el anuncio, se propone ya (para que
+            # puedas decir que sí con calma) pero se EJECUTA ~60s antes del cierre — no antes,
+            # para no revelar la puja pronto y evitar que otro reaccione (ver STRATEGY.md).
+            execute_at = o.item.expires.timestamp() - 60 if o.item.expires else None
             confirm.propose(
-                s, store, "clause",
+                s, store, "bid",
                 {
-                    "league_id": world.league_id,
-                    "player_id": a.slot.player.id,
-                    "amount": a.slot.clause,
-                    "player_name": a.slot.player.name,
+                    "league_id": world.league_id, "market_id": o.item.market_id, "money": o.item.price,
+                    "player_name": o.item.player.name,
                 },
-                f"Clausulazo — {a.slot.player.name} (de {a.slot.owner_name})\n"
-                f"Cláusula: {service.m(a.slot.clause)} · Valor de mercado: {service.m(a.slot.player.market_value)}",
+                f"Fichaje — {o.item.player.name} ({o.item.player.position})\n"
+                f"Precio: {service.m(o.item.price)} · score {o.score}\n{'; '.join(o.reasons) or 'sin avisos'}",
+                execute_at=execute_at,
+                label=analysis.player_quality_label(o.score),
             )
 
-    if daily_due:
-        # Pujas propuestas como mucho una vez al día (no cada tick): evita repetir la misma
-        # propuesta 48 veces si nadie contesta y no satura Telegram.
-        for o in service.top_bid_candidates(world):
-            key = f"bid:{o.item.player.id}:{o.item.price}"
-            if store.alert_is_new(key, ttl_hours=24):
-                confirm.propose(
-                    s, store, "bid",
-                    {
-                        "league_id": world.league_id,
-                        "market_id": o.item.market_id,
-                        "money": o.item.price,
-                        "player_name": o.item.player.name,
-                    },
-                    f"Fichaje — {o.item.player.name} ({o.item.player.position})\n"
-                    f"Precio: {service.m(o.item.price)} · score {o.score}\n{'; '.join(o.reasons) or 'sin avisos'}",
-                )
+    confirm.run_scheduled(s, store, api)  # por si algo se confirmó y ya toca, dentro de este mismo tick
 
-    confirm.poll_and_execute(s, store, api)
+    for e in events:
+        notify.send_all(s, e)  # inmediato: acabas de perder saldo, no esperas turno para saberlo
 
-    if daily_due:
-        news = None
-        try:
-            news = estimate_titularidad(api, [sl.player for sl in world.my_slots if sl.player.position_id != 5])
-        except Exception as exc:
-            print(f"[titularidad] error: {exc}")
-        notify.send_report(s, service.report_sections(world, s, news))
-        store.set("last_daily", today)
-    return f"[{now:%H:%M}] ok · {len(fresh)} alertas nuevas{' · informe diario enviado' if daily_due else ''}"
+    if digest.due(store, s):
+        notify.send_all(s, service.situational_briefing(world, s))
+        digest.mark_sent(store)
+
+    return (
+        f"[{now:%H:%M}] ok · {len(fresh)} alertas nuevas · {len(actionable)} propuestas de cláusula"
+        f"{' · ' + str(len(events)) + ' evento(s) de emergencia' if events else ''}"
+    )
 
 
 def cmd_pending(args, s) -> None:

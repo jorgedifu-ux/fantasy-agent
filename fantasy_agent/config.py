@@ -40,6 +40,11 @@ class Settings:
     watch_interval_min: int
     report_hour: int
     request_delay_s: float
+    briefing_interval_min: int
+    budget_reserve_pct: float
+    emergency_buy_cap_pct: float
+    emergency_buys_per_week: int
+    lineup_lock_hours: int
 
     @property
     def tokens_file(self) -> Path:
@@ -67,4 +72,9 @@ def load_settings() -> Settings:
         watch_interval_min=int(os.environ.get("WATCH_INTERVAL_MIN", "30")),
         report_hour=int(os.environ.get("REPORT_HOUR", "9")),
         request_delay_s=float(os.environ.get("REQUEST_DELAY_S", "0.4")),
+        briefing_interval_min=int(os.environ.get("BRIEFING_INTERVAL_MIN", "90")),
+        budget_reserve_pct=float(os.environ.get("BUDGET_RESERVE_PCT", "0.2")),
+        emergency_buy_cap_pct=float(os.environ.get("EMERGENCY_BUY_CAP_PCT", "0.15")),
+        emergency_buys_per_week=int(os.environ.get("EMERGENCY_BUYS_PER_WEEK", "3")),
+        lineup_lock_hours=int(os.environ.get("LINEUP_LOCK_HOURS", "24")),
     )

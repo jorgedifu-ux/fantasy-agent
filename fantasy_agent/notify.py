@@ -27,16 +27,31 @@ def _chunks(text: str, size: int) -> list[str]:
     return chunks
 
 
-def send_telegram(settings: Settings, text: str) -> None:
+def send_telegram(settings: Settings, text: str, *, buttons: list[tuple[str, str]] | None = None) -> None:
+    """`buttons`: lista de (texto_botón, callback_data), p.ej. [("✅ Confirmar", "confirm:a1b2")].
+    Se pone en el ÚLTIMO trozo si el mensaje se corta en varios (los botones van pegados al
+    texto que los explica)."""
     if not telegram_enabled(settings):
         raise RuntimeError("Configura TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID en el .env")
     url = f"https://api.telegram.org/bot{settings.telegram_token}/sendMessage"
-    for chunk in _chunks(text, TELEGRAM_CHUNK):
-        request_json("POST", url, json_body={
+    chunks = _chunks(text, TELEGRAM_CHUNK)
+    for i, chunk in enumerate(chunks):
+        body = {
             "chat_id": settings.telegram_chat_id,
             "text": chunk,
             "disable_web_page_preview": True,
-        })
+        }
+        if buttons and i == len(chunks) - 1:
+            body["reply_markup"] = {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in buttons]]}
+        request_json("POST", url, json_body=body)
+
+
+def answer_callback(settings: Settings, callback_query_id: str, text: str = "") -> None:
+    """Quita el "cargando..." del botón que se acaba de pulsar en Telegram."""
+    if not telegram_enabled(settings):
+        return
+    url = f"https://api.telegram.org/bot{settings.telegram_token}/answerCallbackQuery"
+    request_json("POST", url, json_body={"callback_query_id": callback_query_id, "text": text})
 
 
 def get_telegram_updates(settings: Settings, offset: int | None = None) -> list[dict]:
@@ -52,9 +67,9 @@ def get_telegram_updates(settings: Settings, offset: int | None = None) -> list[
     return resp.get("result", [])
 
 
-def send_all(settings: Settings, text: str) -> None:
+def send_all(settings: Settings, text: str, *, buttons: list[tuple[str, str]] | None = None) -> None:
     if telegram_enabled(settings):
-        send_telegram(settings, text)
+        send_telegram(settings, text, buttons=buttons)
 
 
 def send_report(settings: Settings, sections: list[str], *, telegram: bool | None = None) -> None:

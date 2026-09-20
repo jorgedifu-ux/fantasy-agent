@@ -1,5 +1,6 @@
 """Tests sin red de la cola de confirmación: proponer, confirmar, cancelar, ambigüedad."""
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -14,6 +15,8 @@ def make_settings() -> Settings:
         data_dir=Path(tempfile.mkdtemp()), league_id=None, team_id=None,
         telegram_token="TESTTOKEN", telegram_chat_id="123",
         clause_window_hours=24, watch_interval_min=30, report_hour=9, request_delay_s=0,
+        briefing_interval_min=90, budget_reserve_pct=0.2, emergency_buy_cap_pct=0.15,
+        emergency_buys_per_week=3, lineup_lock_hours=24,
     )
 
 
@@ -38,7 +41,10 @@ class Tests(unittest.TestCase):
         self.store = Store(self.s.db_file)
         self.api = FakeAPI()
         self.sent = []
-        patcher = patch("fantasy_agent.notify.send_telegram", side_effect=lambda s, t: self.sent.append(t))
+        patcher = patch(
+            "fantasy_agent.notify.send_telegram",
+            side_effect=lambda s, t, buttons=None: self.sent.append(t),
+        )
         self.mock_send = patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -88,6 +94,62 @@ class Tests(unittest.TestCase):
             confirm.poll_and_execute(self.s, self.store, self.api)
         self.assertEqual(self.api.calls, [])
         self.assertEqual(len(self.store.get_pending()), 1)
+
+    def test_confirm_far_future_schedules_instead_of_executing(self):
+        op_id = confirm.propose(
+            self.s, self.store, "clause", {"league_id": "L1", "player_id": "P1", "amount": 1},
+            "Se libera en un rato", execute_at=time.time() + 3600,
+        )
+        with patch("fantasy_agent.notify.get_telegram_updates", return_value=self._updates([f"Confirmar {op_id}"])):
+            confirm.poll_and_execute(self.s, self.store, self.api)
+        self.assertEqual(self.api.calls, [])  # no se ejecuta todavía
+        self.assertFalse(self.store.get_pending())
+        scheduled = self.store.get_scheduled()
+        self.assertEqual([s["id"] for s in scheduled], [op_id])
+
+    def test_confirm_near_future_executes_immediately(self):
+        op_id = confirm.propose(
+            self.s, self.store, "clause", {"league_id": "L1", "player_id": "P1", "amount": 1},
+            "Ya casi", execute_at=time.time() + 5,
+        )
+        with patch("fantasy_agent.notify.get_telegram_updates", return_value=self._updates([f"Confirmar {op_id}"])):
+            confirm.poll_and_execute(self.s, self.store, self.api)
+        self.assertEqual(self.api.calls, [("clause", "L1", "P1", 1)])
+        self.assertFalse(self.store.get_scheduled())
+
+    def test_run_scheduled_waits_and_executes_at_the_right_time(self):
+        op_id = confirm.propose(
+            self.s, self.store, "clause", {"league_id": "L1", "player_id": "P1", "amount": 42},
+            "Programado", execute_at=time.time() + 3600,
+        )
+        with patch("fantasy_agent.notify.get_telegram_updates", return_value=self._updates([f"Confirmar {op_id}"])):
+            confirm.poll_and_execute(self.s, self.store, self.api)
+        self.assertEqual(self.api.calls, [])
+
+        # Reprogramamos el mismo pendiente a "ya casi" para no dormir de verdad 1h en el test.
+        self.store.db.execute("UPDATE pending_ops SET execute_at = ? WHERE id = ?", (time.time() + 0.05, op_id))
+        self.store.db.commit()
+
+        before = time.time()
+        results = confirm.run_scheduled(self.s, self.store, self.api, max_wait_s=10)
+        self.assertGreaterEqual(time.time() - before, 0.04)  # de verdad ha esperado, no lo ha saltado
+        self.assertEqual(self.api.calls, [("clause", "L1", "P1", 42)])
+        self.assertEqual(len(results), 1)
+        self.assertFalse(self.store.get_scheduled())
+
+    def test_run_scheduled_ignores_far_future_ops(self):
+        confirm.propose(
+            self.s, self.store, "clause", {"league_id": "L1", "player_id": "P1", "amount": 1},
+            "Muy lejos", execute_at=time.time() + 7200,
+        )
+        op_id = self.store.get_pending()[0]["id"]
+        with patch("fantasy_agent.notify.get_telegram_updates", return_value=self._updates([f"Confirmar {op_id}"])):
+            confirm.poll_and_execute(self.s, self.store, self.api)
+
+        results = confirm.run_scheduled(self.s, self.store, self.api, max_wait_s=60)
+        self.assertEqual(results, [])
+        self.assertEqual(self.api.calls, [])
+        self.assertEqual(len(self.store.get_scheduled()), 1)  # sigue programado, para más tarde
 
 
 if __name__ == "__main__":

@@ -25,6 +25,9 @@ class World:
     fixtures: dict[str, models.Fixture] = field(default_factory=dict)
     league_top_ids: set[str] = field(default_factory=set)
     clause_freeze: tuple[datetime, datetime] | None = None
+    leader_team_id: str | None = None
+    revenge_against_team_id: str | None = None
+    recent_form: dict[str, float] = field(default_factory=dict)
     fetched_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -80,6 +83,22 @@ def next_fixtures(api: FantasyAPI, team_ids: set[str]) -> dict[str, models.Fixtu
     return out
 
 
+def recent_form(api: FantasyAPI, window: int = 3) -> dict[str, float]:
+    """Media de puntos de cada jugador en las últimas `window` jornadas YA JUGADAS (no la
+    media de toda la temporada, que puede arrastrar un mal/buen tramo de hace meses)."""
+    try:
+        current = models.to_int(models.pick(api.current_week(), "weekNumber"), default=0)
+        by_id = models.week_points_by_id(api.players())
+    except Exception:
+        return {}
+    out: dict[str, float] = {}
+    for pid, weeks in by_id.items():
+        recent = [pts for wn, pts in weeks if 0 < wn < current][-window:]
+        if recent:
+            out[pid] = sum(recent) / len(recent)
+    return out
+
+
 def league_top_ids(api: FantasyAPI, top_n: int = LEAGUE_TOP_N) -> set[str]:
     """ids de los `top_n` jugadores con más puntos totales EN CADA posición, de toda LaLiga
     (no solo tu liga privada): estos no son "para invertir", son fichajes prioritarios."""
@@ -109,6 +128,36 @@ def clause_freeze_window(api: FantasyAPI) -> tuple[datetime, datetime] | None:
     return first - timedelta(hours=24), first
 
 
+def recent_clauser_against_me(api: FantasyAPI, league_id: str, my_team_id: str, within_hours: float = 72) -> str | None:
+    """team_id de quien te haya clausulado un jugador en las últimas `within_hours` — para no
+    clausularle de vuelta por venganza (ver STRATEGY.md §2 y analysis.clause_alerts).
+
+    ⚠️ Forma del JSON de `/activity` sin verificar en vivo todavía — prueba varias claves
+    razonables (mismo patrón defensivo que el resto de `models.py`) pero, si nunca detecta
+    nada, compara con `fantasy probe /v1/competition/1/leagues/<liga>/activity/0` y ajusta las
+    claves de `pick()` aquí abajo. Si falla o no reconoce nada, simplemente no aplica esta
+    despriorización — no rompe el resto del informe."""
+    try:
+        raw = api.activity(league_id, 0)
+    except Exception:
+        return None
+    now = datetime.now(timezone.utc)
+    for item in models.as_list(raw, "activity", "elements"):
+        kind = str(models.pick(item, "type", "activityType", default="")).lower()
+        if "buyout" not in kind and "clause" not in kind and "clausula" not in kind:
+            continue
+        when = models.parse_dt(models.pick(item, "date", "createdAt", "activityDate"))
+        if not when or (now - when).total_seconds() > within_hours * 3600:
+            continue
+        affected_team = str(models.pick(item, "affectedTeam.id", "toTeam.id", "sellerTeam.id", default=""))
+        if affected_team != my_team_id:
+            continue
+        buyer_team = str(models.pick(item, "team.id", "fromTeam.id", "buyerTeam.id", default=""))
+        if buyer_team:
+            return buyer_team
+    return None
+
+
 def build_world(api: FantasyAPI, s: Settings, with_trends: bool = True) -> World:
     league_id, hinted_team, my_cash = resolve_league(api, s)
     standing = models.parse_standing(api.standing(league_id))
@@ -126,10 +175,14 @@ def build_world(api: FantasyAPI, s: Settings, with_trends: bool = True) -> World
         if item.player.team == "?" and item.player.team_id in team_names:
             item.player.team = team_names[item.player.team_id]
     fixtures = next_fixtures(api, {sl.player.team_id for sl in my_slots})
+    leader_team_id = max(standing, key=lambda r: r.points).team_id if standing else None
     world = World(
         league_id, my_team_id, my_cash, standing, my_slots, rival_slots, market,
         team_names=team_names, fixtures=fixtures,
         league_top_ids=league_top_ids(api), clause_freeze=clause_freeze_window(api),
+        leader_team_id=leader_team_id,
+        revenge_against_team_id=recent_clauser_against_me(api, league_id, my_team_id),
+        recent_form=recent_form(api),
     )
 
     if with_trends:
@@ -155,19 +208,29 @@ def _biddable(world: World) -> list[models.MarketItem]:
     return [i for i in world.market if i.seller == "LaLiga" and i.player.position_id != 5]
 
 
-def top_bid_candidates(world: World, min_score: float = 12.0, limit: int = 3) -> list[analysis.Opportunity]:
+def top_bid_candidates(
+    world: World, s: Settings, min_score: float = 12.0, limit: int = 3,
+    recovered_ids: frozenset[str] = frozenset(),
+) -> list[analysis.Opportunity]:
     """Oportunidades de fichaje lo bastante fuertes como para PROPONER pujar de verdad (no solo
     mostrarlas en el informe): umbral más exigente que `market_report` (8.0) a propósito — aquí
-    hay dinero de por medio. Puja siempre al precio de venta exacto, sin negociación de última
-    hora (ver STRATEGY.md, pendiente de afinar con `bid-plan` al estilo fantasybot)."""
-    picks = [o for o in _opportunities(world) if o.score >= min_score and o.item.market_id]
-    return picks[:limit]
+    hay dinero de por medio. Nunca propone más de lo que tu saldo permite pagar TODO junto
+    (ver `analysis.allocate_budget`, STRATEGY.md §1) — mejor 1-2 que puedas pagar de verdad
+    que 3 sueltas que en conjunto no te caben. Puja siempre al precio de venta exacto, sin
+    negociación de última hora (ver STRATEGY.md, pendiente de afinar con `bid-plan` al estilo
+    fantasybot)."""
+    picks = [o for o in _opportunities(world, recovered_ids) if o.score >= min_score and o.item.market_id]
+    return analysis.allocate_budget(picks, world.my_cash, reserve_pct=s.budget_reserve_pct, max_picks=limit)
 
 
-def _opportunities(world: World) -> list[analysis.Opportunity]:
+def _opportunities(world: World, recovered_ids: frozenset[str] = frozenset()) -> list[analysis.Opportunity]:
     neutral = analysis.Trend(0, 0, 0)
     opps = [
-        analysis.score_market_item(i, world.trends.get(i.player.id, (i.player, neutral))[1], world.my_cash)
+        analysis.score_market_item(
+            i, world.trends.get(i.player.id, (i.player, neutral))[1], world.my_cash,
+            recently_recovered=i.player.id in recovered_ids,
+            recent_form=world.recent_form.get(i.player.id),
+        )
         for i in _biddable(world)
     ]
     opps.sort(key=lambda o: o.score, reverse=True)
@@ -293,6 +356,8 @@ def clauses_report(world: World, s: Settings) -> tuple[str, list[analysis.Clause
     alerts = analysis.clause_alerts(
         world.rival_slots, world.my_cash, now, s.clause_window_hours,
         freeze=world.clause_freeze,
+        leader_team_id=world.leader_team_id,
+        revenge_against_team_id=world.revenge_against_team_id,
     )
     frozen_note = ""
     if world.clause_freeze and world.clause_freeze[0] <= now < world.clause_freeze[1]:
@@ -354,6 +419,36 @@ def lineup_report(world: World, news: dict[str, dict] | None) -> str:
             lines.append(f"{c.player.name}: {why}")
     if news is None:
         lines.append("(Sin noticias: probabilidad de titularidad por defecto 70%. Usa --news para afinarlo.)")
+    return "\n".join(lines)
+
+
+def situational_briefing(world: World, s: Settings) -> str:
+    """Parte de situación corto (4-6 líneas): saldo, huecos de plantilla, próxima cláusula.
+    Pensado para mandarse cada `BRIEFING_INTERVAL_MIN`, no como sustituto del informe completo
+    (`report`), que sigue disponible bajo demanda."""
+    now = datetime.now(timezone.utc)
+    lines = [f"📋 Situación · {now.astimezone().strftime('%d/%m %H:%M')}", f"Saldo: {m(world.my_cash)}"]
+
+    shortage = analysis.position_shortage(world.my_slots)
+    faltan = [f"{n} {models.POSITIONS[pos]}" for pos, n in shortage.items() if n > 0]
+    if faltan:
+        lines.append(f"⚠️ No puedes alinear 11 legales: faltan {', '.join(faltan)}")
+    else:
+        lines.append("✅ Plantilla suficiente para alinear")
+
+    _, alerts = clauses_report(world, s)
+    upcoming = [a for a in alerts if a.kind == "unlock_soon"]
+    if upcoming:
+        lines.append(f"⏳ Próxima cláusula libre: {upcoming[0].slot.player.name} ({upcoming[0].tier})")
+    payable = [a for a in alerts if a.kind == "open_affordable"]
+    if payable:
+        lines.append(f"🔓 {len(payable)} cláusula(s) ya pagable(s) — mira las propuestas")
+
+    my_row = next((r for r in world.standing if r.team_id == world.my_team_id), None)
+    if my_row:
+        rank = sorted(world.standing, key=lambda r: -r.points).index(my_row) + 1
+        lines.append(f"Posición: {rank}º de {len(world.standing)} · {my_row.points} pts")
+
     return "\n".join(lines)
 
 
