@@ -127,6 +127,8 @@ class SquadSlot:
     clause: int
     clause_locked_until: datetime | None
     shielded_until: datetime | None = None
+    player_team_id: str = ""  # id del HUECO de plantilla (distinto de player.id) — lo piden
+    # sell_player y pay_buyout_clause, no el id del jugador en sí (encontrado por HTTP 400 real)
 
     def clause_open(self, now: datetime) -> bool:
         if self.clause <= 0:
@@ -150,6 +152,7 @@ def parse_squad(team_payload: dict, team_id: str, owner_name: str) -> list[Squad
                 clause=to_int(pick(item, "buyoutClause", "clause")),
                 clause_locked_until=parse_dt(pick(item, "buyoutClauseLockedEndTime")),
                 shielded_until=parse_dt(pick(item, "shieldedEndDate")) if shielded else None,
+                player_team_id=str(pick(item, "playerTeamId", default="") or ""),
             )
         )
     return slots

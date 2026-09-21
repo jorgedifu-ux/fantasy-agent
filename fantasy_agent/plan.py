@@ -39,6 +39,8 @@ class PlanItem:
     manual: bool = False  # True si lo añadió el usuario en conversación, no el generador
     max_price: int | None = None
     unlock_at: float | None = None  # solo watchlist: cuándo se libera la cláusula del rival
+    player_team_id: str = ""  # id del HUECO de plantilla — lo piden sell_player/pay_buyout_clause,
+    # no player_id (que es el id del jugador en sí). Vacío en targets (aún no es tuyo).
 
 
 @dataclass
@@ -127,7 +129,8 @@ def generate_plan(world, s, store: Store) -> Plan:
 
     plan.sell_priority = _keep_manual(old.sell_priority)
     seen_sells = {i.player_id for i in plan.sell_priority}
-    mine_ids = {sl.player.id for sl in world.my_slots}
+    my_slots_by_player_id = {sl.player.id: sl for sl in world.my_slots}
+    mine_ids = set(my_slots_by_player_id)
     for p, t in analysis.sell_high_candidates(world.trends, mine_ids):
         if p.id in seen_sells:
             continue
@@ -135,6 +138,7 @@ def generate_plan(world, s, store: Store) -> Plan:
             player_id=p.id, player_name=p.name,
             reason=f"en máximo ({t.d7:+.0f}% en 7 días), aprovechar antes de que baje",
             priority="media",
+            player_team_id=my_slots_by_player_id[p.id].player_team_id,
         ))
         seen_sells.add(p.id)
     for sl, reason in analysis.cut_loss_candidates(world.my_slots, world.trends):
@@ -144,6 +148,7 @@ def generate_plan(world, s, store: Store) -> Plan:
             player_id=sl.player.id, player_name=sl.player.name,
             reason=f"cortar pérdidas: {reason}",
             priority="alta",
+            player_team_id=sl.player_team_id,
         ))
         seen_sells.add(sl.player.id)
 
@@ -162,6 +167,7 @@ def generate_plan(world, s, store: Store) -> Plan:
                 reason=f"cláusula de {slot.owner_name} a x{ratio:.2f} el valor — objetivo lógico",
                 priority="alta" if ratio <= 1.05 else "media",
                 max_price=slot.clause, unlock_at=until.timestamp(),
+                player_team_id=slot.player_team_id,
             ))
             seen_watch.add(p.id)
 

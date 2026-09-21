@@ -156,6 +156,128 @@ def _emergency_buy(store: Store, s, api: FantasyAPI, world) -> str | None:
     )
 
 
+def _emergency_debt_buy(store: Store, s, api: FantasyAPI, world, team_plan: plan_mod.Plan) -> str | None:
+    """Último recurso, solo si `_emergency_buy` ya no encuentra nada que puedas pagar sin
+    deuda y la plantilla sigue incompleta: permite endeudarte hasta el tope REAL del juego
+    (20% del valor de tu plantilla), emparejado SIEMPRE con poner a la venta ya mismo el
+    primer candidato de la lista de venta del plan, para intentar saldarlo antes de que
+    arranque la jornada.
+
+    OJO — esto no es una garantía: una venta no es instantánea (alguien tiene que comprarla,
+    ver STRATEGY.md §10), puede no resolverse a tiempo. Aun así compensa intentarlo: si la
+    venta no llega a tiempo, el resultado (cero puntos esa jornada) es EXACTAMENTE el mismo
+    que si te hubieras quedado sin fichar — nunca es peor que no hacer nada, y si la venta sí
+    llega a tiempo, sí puntúas. Se avisa siempre de que esto ha pasado, nunca en silencio."""
+    shortage = analysis.position_shortage(world.my_slots)
+    if not any(shortage.values()) or not world.my_cash:
+        return None
+    squad_value = sum(sl.player.market_value for sl in world.my_slots)
+    debt_room = int(squad_value * s.debt_ceiling_pct)
+    with_debt = analysis.emergency_candidates(world.my_slots, world.market, world.my_cash + debt_room, 1.0)
+    only_with_debt = [o for o in with_debt if o.item.price > world.my_cash]
+    if not only_with_debt:
+        return None
+    pick = only_with_debt[0]
+    name = notify.esc(pick.item.player.name)
+    try:
+        api.bid(world.league_id, pick.item.market_id, pick.item.price)
+    except Exception as exc:
+        return f"❌ Fichaje a crédito fallido para <b>{name}</b>: {notify.esc(str(exc))}"
+    store.record_auto_op("emergency_debt_buy", pick.item.player.id, pick.item.price)
+    expires_at = pick.item.expires.timestamp() if pick.item.expires else None
+    store.add_market_bid(pick.item.player.id, name, pick.item.price, expires_at)
+    debe = pick.item.price - world.my_cash
+    msg = (
+        f"🆘 <b>FICHAJE A CRÉDITO</b> (sin confirmar — última opción para no quedarte sin 11)\n"
+        f"<b>{name}</b> ({pick.item.player.position}) por {service.m(pick.item.price)} "
+        f"— esto te deja {service.m(debe)} en NEGATIVO.\n"
+    )
+    mine_ids = {sl.player.id for sl in world.my_slots}
+    sell_pick = next((i for i in plan_mod.sell_priority_ids(team_plan) if i.player_id in mine_ids), None)
+    if sell_pick:
+        slot = next((sl for sl in world.my_slots if sl.player.id == sell_pick.player_id), None)
+        try:
+            api.sell_player(world.league_id, slot.player_team_id, slot.player.market_value)
+            store.add_market_bid(sell_pick.player_id, sell_pick.player_name, slot.player.market_value, None, direction="sell")
+            msg += (
+                f"💸 Para saldarlo, puesto a la venta ya (según el plan): "
+                f"<b>{notify.esc(sell_pick.player_name)}</b> por {service.m(slot.player.market_value)}.\n"
+            )
+        except Exception as exc:
+            msg += f"⚠️ No he podido poner nada a la venta para saldarlo: {notify.esc(str(exc))} — hazlo tú.\n"
+    else:
+        msg += "⚠️ No hay ningún candidato de venta en el plan — revísalo tú para saldar antes de la jornada.\n"
+    msg += "No es una garantía: si la venta no se resuelve a tiempo, no puntuarás esta jornada igualmente."
+    return msg
+
+
+def _auto_buy(store: Store, s, api: FantasyAPI, world, recovered_ids: frozenset) -> str | None:
+    """Fichaje autónomo normal (sin confirmar), tope AUTO_BUYS_PER_WEEK — a diferencia del de
+    emergencia, este no espera a que falte plantilla: es simplemente "esta oportunidad es tan
+    buena que no hace falta preguntar", igual que ya decidiste que hiciéramos con los
+    fichajes de emergencia. Nunca se endeuda (solo `_emergency_debt_buy` lo hace, y solo
+    cuando de verdad hace falta) — respeta el mismo colchón de saldo que las propuestas
+    normales (`BUDGET_RESERVE_PCT`)."""
+    if len(store.auto_ops_this_week("auto_buy")) >= s.auto_buys_per_week:
+        return None
+    already = {b["player_id"] for b in store.auto_ops_this_week("auto_buy")}
+    picks = [
+        o for o in service.top_bid_candidates(world, s, min_score=18, recovered_ids=recovered_ids)
+        if o.item.player.id not in already
+    ]
+    if not picks:
+        return None
+    pick = picks[0]
+    name = notify.esc(pick.item.player.name)
+    money = analysis.bid_amount(pick.item, pick.score, world.my_cash)
+    if money > (world.my_cash or 0):
+        return None
+    try:
+        api.bid(world.league_id, pick.item.market_id, money)
+    except Exception as exc:
+        return f"❌ Fichaje autónomo fallido para <b>{name}</b>: {notify.esc(str(exc))}"
+    store.record_auto_op("auto_buy", pick.item.player.id, money)
+    expires_at = pick.item.expires.timestamp() if pick.item.expires else None
+    store.add_market_bid(pick.item.player.id, name, money, expires_at)
+    return (
+        f"🛒 <b>FICHAJE AUTÓNOMO</b> (sin confirmar — oportunidad muy buena, score {pick.score})\n"
+        f"Puja <b>enviada</b> (pendiente de resolverse) por <b>{name}</b> ({pick.item.player.position}), "
+        f"{service.m(money)}\nMotivo: {notify.esc('; '.join(pick.reasons)) or 'buena oportunidad'}\n"
+        f"Te aviso en cuanto se sepa si la ganas."
+    )
+
+
+def _auto_sell(store: Store, s, api: FantasyAPI, world, team_plan: plan_mod.Plan) -> str | None:
+    """Venta autónoma (sin confirmar), tope AUTO_SELLS_PER_WEEK — de la lista de venta ya
+    decidida en el Plan (no se improvisa en el momento), tal y como pediste: "que vaya
+    haciendo... tres ventas [por semana]"."""
+    if len(store.auto_ops_this_week("auto_sell")) >= s.auto_sells_per_week:
+        return None
+    already = {b["player_id"] for b in store.auto_ops_this_week("auto_sell")}
+    mine_ids = {sl.player.id for sl in world.my_slots}
+    candidates = [
+        i for i in plan_mod.sell_priority_ids(team_plan)
+        if i.player_id in mine_ids and i.player_id not in already
+    ]
+    if not candidates:
+        return None
+    pick = candidates[0]
+    slot = next(sl for sl in world.my_slots if sl.player.id == pick.player_id)
+    price = slot.player.market_value
+    name = notify.esc(pick.player_name)
+    try:
+        api.sell_player(world.league_id, slot.player_team_id, price)
+    except Exception as exc:
+        return f"❌ Venta autónoma fallida para <b>{name}</b>: {notify.esc(str(exc))}"
+    store.record_auto_op("auto_sell", pick.player_id, price)
+    store.add_market_bid(pick.player_id, name, price, None, direction="sell")
+    return (
+        f"💸 <b>VENTA AUTÓNOMA</b> (según el plan, sin confirmar)\n"
+        f"<b>{name}</b> puesto a la venta por {service.m(price)}\n"
+        f"Motivo: {notify.esc(pick.reason)}\nTe aviso en cuanto se venda de verdad."
+    )
+
+
 def _check_bid_resolutions(store: Store, world) -> list[str]:
     """Una puja "enviada" no es una puja "ganada". Compara lo pendiente con tu plantilla
     actual: si el jugador ya está en tu equipo, la ganaste; si ya pasó de sobra su hora de
@@ -178,36 +300,6 @@ def _check_bid_resolutions(store: Store, world) -> list[str]:
             store.resolve_market_bid(b["id"], "sold")
             results.append(f"💰 <b>Vendido</b>: {notify.esc(b['player_name'])} por {service.m(b['price'])}.")
     return results
-
-
-def _sell_proposals(store: Store, s, world) -> None:
-    """Recomendaciones de venta: dos motivos distintos, nunca en automático (a diferencia de
-    los fichajes de emergencia, vender sí necesita siempre tu sí, ver STRATEGY.md).
-    1) Aprovechar máximo: vender EN GANANCIA antes de que empiece a bajar.
-    2) Cortar pérdidas: caída sostenida o lesión larga sin visos de recuperación — vender
-       aunque sea perdiendo, porque esperar solo empeora las cosas."""
-    mine_ids = {sl.player.id for sl in world.my_slots}
-    for p, t in analysis.sell_high_candidates(world.trends, mine_ids)[:2]:
-        if store.alert_is_new(f"sell_profit:{p.id}", ttl_hours=48):
-            confirm.propose(
-                s, store, "sell",
-                {"league_id": world.league_id, "player_id": p.id, "sale_price": p.market_value, "player_name": p.name},
-                f"Venta recomendada — {p.name}\n"
-                f"En máximo ({t.d7:+.0f}% en 7 días, ya frenando) — va a empezar a bajar.\n"
-                f"Vender ahora: {service.m(p.market_value)}",
-                label="💰 APROVECHAR MÁXIMO",
-            )
-    for sl, reason in analysis.cut_loss_candidates(world.my_slots, world.trends)[:2]:
-        p = sl.player
-        if store.alert_is_new(f"sell_loss:{p.id}", ttl_hours=72):
-            confirm.propose(
-                s, store, "sell",
-                {"league_id": world.league_id, "player_id": p.id, "sale_price": p.market_value, "player_name": p.name},
-                f"Venta recomendada (cortar pérdidas) — {p.name}\n"
-                f"Motivo: {reason}.\n"
-                f"Mejor liquidar ya: {service.m(p.market_value)}",
-                label="🩸 CORTAR PÉRDIDAS",
-            )
 
 
 def _sync_plan(store: Store, s, world) -> plan_mod.Plan:
@@ -247,9 +339,22 @@ def _watch_once(store: Store, s) -> str:
 
     events: list[str] = []
     emergency = _emergency_buy(store, s, api, world)
+    if not emergency:
+        emergency = _emergency_debt_buy(store, s, api, world, team_plan)  # último recurso, ver docstring
     if emergency:
         events.append(emergency)
         world = _world(api, s, trends=True)  # recalcular: acabas de gastar, quiero que se note ya
+
+    recovered = _recovered_ids(store, [sl.player for sl in world.my_slots] + [i.player for i in world.market])
+    auto_bought = _auto_buy(store, s, api, world, recovered)
+    if auto_bought:
+        events.append(auto_bought)
+        world = _world(api, s, trends=True)
+
+    auto_sold = _auto_sell(store, s, api, world, team_plan)
+    if auto_sold:
+        events.append(auto_sold)
+        world = _world(api, s, trends=True)
 
     _, alerts = service.clauses_report(world, s)
     fresh = [a for a in alerts if store.alert_is_new(a.key)]
@@ -262,7 +367,7 @@ def _watch_once(store: Store, s) -> str:
         confirm.propose(
             s, store, "clause",
             {
-                "league_id": world.league_id, "player_id": a.slot.player.id, "amount": a.slot.clause,
+                "league_id": world.league_id, "player_id": a.slot.player_team_id, "amount": a.slot.clause,
                 "player_name": a.slot.player.name,
             },
             f"Clausulazo — {a.slot.player.name} (de {a.slot.owner_name})\n"
@@ -271,8 +376,10 @@ def _watch_once(store: Store, s) -> str:
             label=analysis.clause_urgency_label(ratio, a.penalty),
         )
 
-    recovered = _recovered_ids(store, [sl.player for sl in world.my_slots] + [i.player for i in world.market])
+    bought_autonomously = {b["player_id"] for b in store.auto_ops_this_week("auto_buy")}
     for o in service.top_bid_candidates(world, s, recovered_ids=recovered):
+        if o.item.player.id in bought_autonomously:
+            continue  # ya se fichó solo por encima del umbral autónomo, no lo propongas también
         key = f"bid:{o.item.player.id}:{o.item.price}"
         if store.alert_is_new(key, ttl_hours=24):
             # Puja de última hora: si sabemos cuándo cierra el anuncio, se propone ya (para que
@@ -294,8 +401,6 @@ def _watch_once(store: Store, s) -> str:
                 execute_at=execute_at,
                 label=analysis.player_quality_label(o.score),
             )
-
-    _sell_proposals(store, s, world)
 
     for resolved in _check_bid_resolutions(store, world):
         notify.send_all(s, resolved, html=True)

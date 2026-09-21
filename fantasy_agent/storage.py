@@ -32,6 +32,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS auto_buys (
                 player_id TEXT NOT NULL,
                 price INTEGER NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'emergency_buy',
                 executed_at REAL NOT NULL
             );
             CREATE TABLE IF NOT EXISTS market_bids (
@@ -56,6 +57,10 @@ class Store:
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(market_bids)")}
         if "direction" not in cols:
             self.db.execute("ALTER TABLE market_bids ADD COLUMN direction TEXT NOT NULL DEFAULT 'buy'")
+            self.db.commit()
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(auto_buys)")}
+        if "kind" not in cols:
+            self.db.execute("ALTER TABLE auto_buys ADD COLUMN kind TEXT NOT NULL DEFAULT 'emergency_buy'")
             self.db.commit()
 
     def alert_is_new(self, key: str, ttl_hours: float = 72) -> bool:
@@ -155,21 +160,28 @@ class Store:
         bad = {"injured", "suspended", "lesionado", "sancionado", "doubtful", "duda"}
         return cur_status.lower() == "ok" and prev_status.lower() in bad and cur_ts >= cutoff
 
-    # ---- fichajes de emergencia (huecos en plantilla), tope semanal ----
-    def record_auto_buy(self, player_id: str, price: int) -> None:
+    # ---- operaciones autónomas (sin confirmación): emergencia, compra o venta, tope semanal cada una ----
+    def record_auto_op(self, kind: str, player_id: str, price: int) -> None:
         self.db.execute(
-            "INSERT INTO auto_buys(player_id, price, executed_at) VALUES (?, ?, ?)",
-            (player_id, price, time.time()),
+            "INSERT INTO auto_buys(player_id, price, kind, executed_at) VALUES (?, ?, ?, ?)",
+            (player_id, price, kind, time.time()),
         )
         self.db.commit()
 
-    def auto_buys_this_week(self) -> list[dict[str, Any]]:
+    def auto_ops_this_week(self, kind: str) -> list[dict[str, Any]]:
         cutoff = time.time() - 7 * 86400
         rows = self.db.execute(
-            "SELECT player_id, price, executed_at FROM auto_buys WHERE executed_at >= ?",
-            (cutoff,),
+            "SELECT player_id, price, executed_at FROM auto_buys WHERE kind = ? AND executed_at >= ?",
+            (kind, cutoff),
         ).fetchall()
         return [{"player_id": r[0], "price": r[1], "executed_at": r[2]} for r in rows]
+
+    # Alias retro-compatibles (siguen usándose para el caso 'emergency_buy' específicamente).
+    def record_auto_buy(self, player_id: str, price: int) -> None:
+        self.record_auto_op("emergency_buy", player_id, price)
+
+    def auto_buys_this_week(self) -> list[dict[str, Any]]:
+        return self.auto_ops_this_week("emergency_buy")
 
     # ---- seguimiento de pujas/ventas: "enviada" no es "ganada"/"vendida" — hay que saber en qué queda ----
     def add_market_bid(
