@@ -322,12 +322,23 @@ def _sync_plan(store: Store, s, world) -> plan_mod.Plan:
     return plan_mod.load_plan(store)
 
 
-def _auto_shield(store: Store, s, api: FantasyAPI, world) -> str | None:
+def _auto_shield(store: Store, s, api: FantasyAPI, world) -> tuple[str | None, str]:
     """Blindaje automático: protege GRATIS a tu jugador más vulnerable a que un rival te lo
-    clausule (misma regla de "riesgo propio" ≤1.25x el valor). Sin coste ni riesgo de dinero
-    — si falla (ya blindado, límite de 1 vez por jornada ya usado, o el servidor exige de
-    verdad ver el anuncio — sin confirmar en vivo todavía), no pasa nada, solo se avisa."""
+    clausule (misma regla de "riesgo propio" ≤1.25x el valor). Límites reales del juego
+    (investigados, no en vivo): dura 24h (48h si premium), solo 1 vez por jornada, y solo
+    sobre una cláusula abierta ahora mismo — según las guías, solo tiene sentido activarlo en
+    la ventana entre el cierre de la jornada anterior y el inicio de la siguiente (justo
+    cuando las cláusulas vuelven a ser pagables). Dos salvaguardas por la incertidumbre real
+    de dónde cae exactamente esa ventana:
+    1) Nunca se intenta DURANTE la congelación de cláusulas (`world.clause_freeze`) — si están
+       congeladas, nadie puede clausularte de todos modos, no hace falta blindar ahí.
+    2) Cooldown de 4 días (no 20h): más conservador que "una vez por jornada" real, para no
+       arriesgarnos a superar el límite del juego por un cálculo nuestro de más.
+    Sin coste ni riesgo de dinero si falla (servidor exige de verdad ver el anuncio, sin
+    confirmar en vivo todavía) — no pasa nada, solo se avisa."""
     now = datetime.now(timezone.utc)
+    if world.clause_freeze and world.clause_freeze[0] <= now < world.clause_freeze[1]:
+        return None, ""  # cláusulas congeladas: nadie puede clausularte ahora, no hace falta
     risky = []
     for sl in world.my_slots:
         p = sl.player
@@ -337,29 +348,81 @@ def _auto_shield(store: Store, s, api: FantasyAPI, world) -> str | None:
         if ratio <= 1.25:
             risky.append((ratio, sl))
     if not risky:
-        return None
+        return None, ""
     risky.sort(key=lambda t: t[0])
     _, target = risky[0]
-    if not store.alert_is_new(f"shield:{target.player.id}", ttl_hours=20):
-        return None
+    if not store.alert_is_new(f"shield:{target.player.id}", ttl_hours=96):
+        # En cooldown, no protegido de verdad: no lo excluimos de _auto_increase_clause.
+        return None, ""
     name = notify.esc(target.player.name)
     try:
         api.shield_player(world.league_id, target.player_team_id)
     except Exception as exc:
-        return (
+        # Ha fallado, no está protegido de verdad: tampoco lo excluimos del fallback de pago.
+        msg = (
             f"🛡️ Intento de blindaje fallido para <b>{name}</b>: {notify.esc(str(exc))}\n"
             f"Sin coste — puede que haga falta activarlo a mano desde la app la primera vez."
         )
-    return f"🛡️ <b>BLINDADO</b>: {name} protegido de clausulazos (gratis, automático)."
+        return msg, ""
+    return f"🛡️ <b>BLINDADO</b>: {name} protegido de clausulazos (gratis, automático).", target.player.id
+
+
+def _auto_increase_clause(store: Store, s, api: FantasyAPI, world, skip_player_id: str = "") -> str | None:
+    """Alternativa DE PAGO al blindaje (solo cuando este está en cooldown/no disponible):
+    sube tu propia cláusula a 1.5x el valor de mercado — por encima del umbral "lógico"
+    (1.2x) que usamos nosotros mismos para juzgar cláusulas de rivales, así que deja de ser
+    un objetivo razonable. Criterio conservador a propósito, porque cuesta dinero de verdad:
+    - Solo piezas realmente valiosas (media ≥5 pts/partido) — no merece la pena pagar por
+      proteger a alguien mediocre.
+    - Solo si la cláusula está MUY barata (≤1.15x), no cualquier "riesgo propio" normal.
+    - Coste investigado (no confirmado en la API): aproximadamente la mitad del incremento,
+      cargado a tu saldo — solo se intenta si cabe dentro del colchón normal (BUDGET_RESERVE_PCT)."""
+    now = datetime.now(timezone.utc)
+    if world.clause_freeze and world.clause_freeze[0] <= now < world.clause_freeze[1]:
+        return None
+    candidates = []
+    for sl in world.my_slots:
+        p = sl.player
+        if p.id == skip_player_id or not p.market_value or sl.clause <= 0 or not sl.clause_open(now):
+            continue
+        ratio = sl.clause / p.market_value
+        if ratio <= 1.15 and p.avg_points >= 5.0:
+            candidates.append((ratio, sl))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda t: t[0])
+    _, target = candidates[0]
+    p = target.player
+    if not store.alert_is_new(f"raise_clause:{p.id}", ttl_hours=96):
+        return None
+    new_clause = round(p.market_value * 1.5)
+    est_cost = round((new_clause - target.clause) / 2)  # ratio 1:2 investigado, sin confirmar
+    reserve = world.my_cash * s.budget_reserve_pct if world.my_cash else 0
+    if not world.my_cash or est_cost > (world.my_cash - reserve):
+        return None  # no tocamos el colchón por esto
+    name = notify.esc(p.name)
+    try:
+        api.increase_buyout_clause(world.league_id, target.player_team_id, new_clause)
+    except Exception as exc:
+        return f"❌ Intento de subir la cláusula de <b>{name}</b> fallido: {notify.esc(str(exc))}"
+    return (
+        f"⬆️ <b>CLÁUSULA SUBIDA</b> (sin confirmar — blindaje no disponible)\n"
+        f"<b>{name}</b>: cláusula a {service.m(new_clause)} (~{service.m(est_cost)} de coste estimado)\n"
+        f"Ya no es un objetivo lógico para ningún rival."
+    )
 
 
 def _check_and_accept_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
-    """Revisa las ofertas recibidas en tus anuncios de venta pendientes y acepta la mejor si
-    supera el umbral mínimo — distinto según por qué se puso en venta, ver
-    analysis.min_acceptable_offer (respondiendo a tu pregunta de "cuánto % por encima").
+    """Revisa las ofertas recibidas en tus anuncios de venta pendientes.
 
-    ⚠️ Forma de la oferta sin confirmar en vivo todavía (nunca ha llegado una real que probar).
-    Si esto no detecta nada aun viendo `numberOfOffers > 0` en el mercado, compara con
+    Dos tipos de oferta, trato distinto (según lo que pediste): las que hace un RIVAL de tu
+    liga se RECHAZAN casi siempre (raramente te conviene lo que ofrece alguien que juega
+    contra ti); las que genera el propio "Fantasy" (cerca del valor de mercado real) se
+    evalúan contra el umbral normal (`analysis.min_acceptable_offer`).
+
+    ⚠️ Forma de la oferta sin confirmar en vivo todavía (nunca ha llegado una real que probar),
+    incluida la heurística para distinguir rival vs. sistema (`Offer.is_system`). Si esto no
+    detecta nada aun viendo `numberOfOffers > 0` en el mercado, compara con
     `fantasy probe /v1/competition/1/league/<liga>/market` y ajusta `models._parse_offers`."""
     my_listings = {item.player.id: item for item in world.market if item.seller_team_id == world.my_team_id}
     results: list[str] = []
@@ -367,7 +430,24 @@ def _check_and_accept_offers(store: Store, s, api: FantasyAPI, world) -> list[st
         item = my_listings.get(b["player_id"])
         if not item or not item.offers:
             continue
-        best = max(item.offers, key=lambda o: o.money)
+
+        for rival_offer in [o for o in item.offers if not o.is_system]:
+            if not store.alert_is_new(f"declined:{rival_offer.id}", ttl_hours=48):
+                continue
+            try:
+                api.decline_offer(world.league_id, item.market_id, rival_offer.id)
+                results.append(
+                    f"🙅 Oferta de <b>{notify.esc(rival_offer.from_manager)}</b> rechazada por "
+                    f"<b>{notify.esc(b['player_name'])}</b> ({service.m(rival_offer.money)}) — las de rivales de "
+                    f"la liga casi nunca convienen."
+                )
+            except Exception as exc:
+                results.append(f"❌ No he podido rechazar una oferta de rival: {notify.esc(str(exc))}")
+
+        system_offers = [o for o in item.offers if o.is_system]
+        if not system_offers:
+            continue
+        best = max(system_offers, key=lambda o: o.money)
         threshold = analysis.min_acceptable_offer(b["price"], b["sell_kind"] or "")
         if best.money < threshold:
             continue
@@ -422,9 +502,12 @@ def _watch_once(store: Store, s) -> str:
         events.append(auto_sold)
         world = _world(api, s, trends=True)
 
-    shielded = _auto_shield(store, s, api, world)
+    shielded, shielded_player_id = _auto_shield(store, s, api, world)
     if shielded:
         events.append(shielded)
+    raised_clause = _auto_increase_clause(store, s, api, world, skip_player_id=shielded_player_id)
+    if raised_clause:
+        events.append(raised_clause)
 
     _, alerts = service.clauses_report(world, s)
     fresh = [a for a in alerts if store.alert_is_new(a.key)]

@@ -190,6 +190,8 @@ class Offer:
     id: str
     money: int
     from_manager: str
+    is_system: bool = False  # True si la oferta la genera el propio juego (~valor de mercado),
+    # no un rival de tu liga — ⚠️ heurística sin confirmar en vivo (ver _parse_offers)
 
 
 @dataclass
@@ -212,8 +214,13 @@ def _parse_offers(item: Any) -> list[Offer]:
         oid = pick(o, "id", "offerId")
         if oid is None:
             continue
-        manager = pick(o, "team.manager.managerName", "fromTeam.manager.managerName", "managerName", default="?")
-        out.append(Offer(id=str(oid), money=to_int(pick(o, "offerMoney", "money", "amount")), from_manager=str(manager)))
+        manager_raw = pick(o, "team.manager.managerName", "fromTeam.manager.managerName", "managerName")
+        is_system = not manager_raw or str(manager_raw).strip().lower() in ("laliga", "fantasy", "system", "juego")
+        out.append(Offer(
+            id=str(oid), money=to_int(pick(o, "offerMoney", "money", "amount")),
+            from_manager=str(manager_raw) if manager_raw else "LaLiga Fantasy",
+            is_system=is_system,
+        ))
     return out
 
 
