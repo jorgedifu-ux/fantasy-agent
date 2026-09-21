@@ -43,6 +43,8 @@ class Store:
                 expires_at REAL,
                 status TEXT NOT NULL DEFAULT 'pending',
                 direction TEXT NOT NULL DEFAULT 'buy',
+                sell_kind TEXT,
+                market_id TEXT,
                 created_at REAL NOT NULL
             );
             """
@@ -57,6 +59,12 @@ class Store:
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(market_bids)")}
         if "direction" not in cols:
             self.db.execute("ALTER TABLE market_bids ADD COLUMN direction TEXT NOT NULL DEFAULT 'buy'")
+            self.db.commit()
+        if "sell_kind" not in cols:
+            self.db.execute("ALTER TABLE market_bids ADD COLUMN sell_kind TEXT")
+            self.db.commit()
+        if "market_id" not in cols:
+            self.db.execute("ALTER TABLE market_bids ADD COLUMN market_id TEXT")
             self.db.commit()
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(auto_buys)")}
         if "kind" not in cols:
@@ -186,21 +194,26 @@ class Store:
     # ---- seguimiento de pujas/ventas: "enviada" no es "ganada"/"vendida" — hay que saber en qué queda ----
     def add_market_bid(
         self, player_id: str, player_name: str, price: int, expires_at: float | None, direction: str = "buy",
+        sell_kind: str | None = None, market_id: str | None = None,
     ) -> None:
         self.db.execute(
-            "INSERT INTO market_bids(player_id, player_name, price, expires_at, status, direction, created_at) "
-            "VALUES (?, ?, ?, ?, 'pending', ?, ?)",
-            (player_id, player_name, price, expires_at, direction, time.time()),
+            "INSERT INTO market_bids(player_id, player_name, price, expires_at, status, direction, "
+            "sell_kind, market_id, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
+            (player_id, player_name, price, expires_at, direction, sell_kind, market_id, time.time()),
         )
         self.db.commit()
 
     def unresolved_market_bids(self, direction: str = "buy") -> list[dict[str, Any]]:
         rows = self.db.execute(
-            "SELECT id, player_id, player_name, price, expires_at FROM market_bids "
+            "SELECT id, player_id, player_name, price, expires_at, sell_kind, market_id FROM market_bids "
             "WHERE status = 'pending' AND direction = ?",
             (direction,),
         ).fetchall()
-        return [{"id": r[0], "player_id": r[1], "player_name": r[2], "price": r[3], "expires_at": r[4]} for r in rows]
+        return [
+            {"id": r[0], "player_id": r[1], "player_name": r[2], "price": r[3], "expires_at": r[4],
+             "sell_kind": r[5], "market_id": r[6]}
+            for r in rows
+        ]
 
     def resolve_market_bid(self, bid_id: int, status: str) -> None:
         self.db.execute("UPDATE market_bids SET status = ? WHERE id = ?", (status, bid_id))

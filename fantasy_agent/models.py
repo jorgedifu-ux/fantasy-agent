@@ -186,6 +186,13 @@ def parse_standing(payload: Any) -> list[TeamStanding]:
 
 
 @dataclass
+class Offer:
+    id: str
+    money: int
+    from_manager: str
+
+
+@dataclass
 class MarketItem:
     player: Player
     price: int
@@ -194,6 +201,20 @@ class MarketItem:
     bids: int
     market_id: str = ""  # id del ANUNCIO (no del jugador) — lo pide la API para pujar; sin
     # verificar en vivo todavía, ver aviso en api.py
+    offers_count: int = 0  # solo en TUS propios anuncios: cuántas ofertas has recibido
+    offers: list["Offer"] = field(default_factory=list)  # ⚠️ forma sin confirmar, ver parse_market
+    seller_team_id: str = ""  # compara con tu team_id para saber si el anuncio es tuyo (no por nombre)
+
+
+def _parse_offers(item: Any) -> list[Offer]:
+    out = []
+    for o in as_list(item, "offers", "pendingOffers"):
+        oid = pick(o, "id", "offerId")
+        if oid is None:
+            continue
+        manager = pick(o, "team.manager.managerName", "fromTeam.manager.managerName", "managerName", default="?")
+        out.append(Offer(id=str(oid), money=to_int(pick(o, "offerMoney", "money", "amount")), from_manager=str(manager)))
+    return out
 
 
 def parse_market(payload: Any) -> list[MarketItem]:
@@ -206,8 +227,11 @@ def parse_market(payload: Any) -> list[MarketItem]:
                 price=to_int(pick(item, "salePrice", "price")),
                 expires=parse_dt(pick(item, "expirationDate", "expirationTime")),
                 seller=str(seller) if seller else "LaLiga",
-                bids=to_int(pick(item, "numberOfBids", "bidsCount", "offersCount")),
+                bids=to_int(pick(item, "numberOfBids", "bidsCount")),
                 market_id=str(pick(item, "id", "marketId", "saleId", default="") or ""),
+                offers_count=to_int(pick(item, "numberOfOffers", default=0)),
+                offers=_parse_offers(item),
+                seller_team_id=str(pick(item, "sellerTeam.id", default="") or ""),
             )
         )
     return items

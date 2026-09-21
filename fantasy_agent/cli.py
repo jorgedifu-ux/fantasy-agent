@@ -270,7 +270,7 @@ def _auto_sell(store: Store, s, api: FantasyAPI, world, team_plan: plan_mod.Plan
     except Exception as exc:
         return f"❌ Venta autónoma fallida para <b>{name}</b>: {notify.esc(str(exc))}"
     store.record_auto_op("auto_sell", pick.player_id, price)
-    store.add_market_bid(pick.player_id, name, price, None, direction="sell")
+    store.add_market_bid(pick.player_id, name, price, None, direction="sell", sell_kind=pick.sell_kind)
     return (
         f"💸 <b>VENTA AUTÓNOMA</b> (según el plan, sin confirmar)\n"
         f"<b>{name}</b> puesto a la venta por {service.m(price)}\n"
@@ -320,6 +320,41 @@ def _sync_plan(store: Store, s, world) -> plan_mod.Plan:
                 notify.pin_message(s, new_id)
         return plan
     return plan_mod.load_plan(store)
+
+
+def _check_and_accept_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
+    """Revisa las ofertas recibidas en tus anuncios de venta pendientes y acepta la mejor si
+    supera el umbral mínimo — distinto según por qué se puso en venta, ver
+    analysis.min_acceptable_offer (respondiendo a tu pregunta de "cuánto % por encima").
+
+    ⚠️ Forma de la oferta sin confirmar en vivo todavía (nunca ha llegado una real que probar).
+    Si esto no detecta nada aun viendo `numberOfOffers > 0` en el mercado, compara con
+    `fantasy probe /v1/competition/1/league/<liga>/market` y ajusta `models._parse_offers`."""
+    my_listings = {item.player.id: item for item in world.market if item.seller_team_id == world.my_team_id}
+    results: list[str] = []
+    for b in store.unresolved_market_bids("sell"):
+        item = my_listings.get(b["player_id"])
+        if not item or not item.offers:
+            continue
+        best = max(item.offers, key=lambda o: o.money)
+        threshold = analysis.min_acceptable_offer(b["price"], b["sell_kind"] or "")
+        if best.money < threshold:
+            continue
+        try:
+            api.accept_offer(world.league_id, item.market_id, best.id, best.money)
+        except Exception as exc:
+            results.append(
+                f"❌ No he podido aceptar la oferta por <b>{notify.esc(b['player_name'])}</b>: "
+                f"{notify.esc(str(exc))}"
+            )
+            continue
+        store.resolve_market_bid(b["id"], "sold")
+        results.append(
+            f"💰 <b>Oferta aceptada</b>: {notify.esc(b['player_name'])} vendido a "
+            f"{notify.esc(best.from_manager)} por {service.m(best.money)} "
+            f"(mínimo exigido: {service.m(threshold)})."
+        )
+    return results
 
 
 def _watch_once(store: Store, s) -> str:
@@ -401,6 +436,9 @@ def _watch_once(store: Store, s) -> str:
                 execute_at=execute_at,
                 label=analysis.player_quality_label(o.score),
             )
+
+    for accepted in _check_and_accept_offers(store, s, api, world):
+        notify.send_all(s, accepted, html=True)
 
     for resolved in _check_bid_resolutions(store, world):
         notify.send_all(s, resolved, html=True)

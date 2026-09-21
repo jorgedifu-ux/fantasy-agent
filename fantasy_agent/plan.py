@@ -41,6 +41,8 @@ class PlanItem:
     unlock_at: float | None = None  # solo watchlist: cuándo se libera la cláusula del rival
     player_team_id: str = ""  # id del HUECO de plantilla — lo piden sell_player/pay_buyout_clause,
     # no player_id (que es el id del jugador en sí). Vacío en targets (aún no es tuyo).
+    sell_kind: str = ""  # solo sell_priority: "cut_loss" | "profit_take" — decide el umbral
+    # mínimo de oferta a aceptar, ver analysis.min_acceptable_offer
 
 
 @dataclass
@@ -139,6 +141,7 @@ def generate_plan(world, s, store: Store) -> Plan:
             reason=f"en máximo ({t.d7:+.0f}% en 7 días), aprovechar antes de que baje",
             priority="media",
             player_team_id=my_slots_by_player_id[p.id].player_team_id,
+            sell_kind="profit_take",
         ))
         seen_sells.add(p.id)
     for sl, reason in analysis.cut_loss_candidates(world.my_slots, world.trends):
@@ -149,6 +152,7 @@ def generate_plan(world, s, store: Store) -> Plan:
             reason=f"cortar pérdidas: {reason}",
             priority="alta",
             player_team_id=sl.player_team_id,
+            sell_kind="cut_loss",
         ))
         seen_sells.add(sl.player.id)
 

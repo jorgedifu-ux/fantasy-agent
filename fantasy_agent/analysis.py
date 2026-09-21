@@ -236,6 +236,21 @@ def player_quality_label(score: float) -> str:
     return "🤔 A VALORAR"
 
 
+def min_acceptable_offer(listed_price: int, sell_kind: str) -> int:
+    """Umbral mínimo para aceptar una oferta sobre un jugador que has puesto en venta, según
+    POR QUÉ está en venta — no es el mismo umbral para "toca cortar pérdidas ya" que para
+    "solo por si cae una oferta muy buena":
+    - cortar pérdidas: el objetivo es salir, no esperar más — se acepta cualquier oferta
+      razonable aunque sea algo por debajo del precio puesto (90%).
+    - aprovechar máximo: ya vendemos en ganancia; se acepta desde el propio precio puesto
+      (100%) — esperar más arriesga perder la ventana antes de que baje.
+    - resto de la plantilla (listado "por si acaso", no era un candidato activo de venta):
+      hace falta una prima real para compensar desprenderte de alguien que no querías vender
+      (110%)."""
+    pct = {"cut_loss": 0.90, "profit_take": 1.00}.get(sell_kind, 1.10)
+    return round(listed_price * pct)
+
+
 def _fmt_m(amount: int) -> str:
     return f"{amount / 1_000_000:.2f}M"
 

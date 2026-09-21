@@ -112,6 +112,16 @@ class FantasyAPI:
         return self._write("POST", f"{COMP}/league/{league_id}/market/sell",
                             {"playerId": player_id, "salePrice": sale_price})
 
+    def accept_offer(self, league_id: str, market_id: str, offer_id: str, money: int) -> Any:
+        """⚠️ Sin verificar en vivo todavía (no ha llegado ninguna oferta real que probar) —
+        misma ruta que usan otros clientes de este backend. Compara con `probe` en cuanto
+        `numberOfOffers` de un anuncio tuyo sea > 0."""
+        return self._write("POST", f"{COMP}/league/{league_id}/market/{market_id}/offer/{offer_id}/accept",
+                            {"offerMoney": money})
+
+    def decline_offer(self, league_id: str, market_id: str, offer_id: str) -> Any:
+        return self._write("POST", f"{COMP}/league/{league_id}/market/{market_id}/offer/{offer_id}/reject")
+
     def pay_buyout_clause(self, league_id: str, player_id: str, amount: int) -> Any:
         return self._write("POST", f"{COMP}/league/{league_id}/buyout/{player_id}/pay",
                             {"buyoutClauseToPay": amount})

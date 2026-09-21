@@ -2,6 +2,7 @@
 import unittest
 
 from fantasy_agent.analysis import (
+    min_acceptable_offer,
     Opportunity, Trend, allocate_budget, bid_amount, cut_loss_candidates, emergency_candidates,
     position_shortage,
 )
@@ -154,3 +155,14 @@ class CutLossTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MinAcceptableOfferTests(unittest.TestCase):
+    def test_cut_loss_accepts_below_asking(self):
+        self.assertEqual(min_acceptable_offer(1_000_000, "cut_loss"), 900_000)
+
+    def test_profit_take_requires_full_price(self):
+        self.assertEqual(min_acceptable_offer(1_000_000, "profit_take"), 1_000_000)
+
+    def test_unknown_kind_requires_premium(self):
+        self.assertEqual(min_acceptable_offer(1_000_000, ""), 1_100_000)
