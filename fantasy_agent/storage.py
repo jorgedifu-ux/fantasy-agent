@@ -177,7 +177,15 @@ class Store:
         self.db.commit()
 
     def auto_ops_this_week(self, kind: str) -> list[dict[str, Any]]:
-        cutoff = time.time() - 7 * 86400
+        return self._auto_ops_since(kind, 7 * 86400)
+
+    def auto_ops_today(self, kind: str) -> list[dict[str, Any]]:
+        """Últimas 24h reales (no "desde medianoche") — más simple y consistente con el
+        resto del proyecto, que ya usa ventanas móviles en vez de reinicios de calendario."""
+        return self._auto_ops_since(kind, 86400)
+
+    def _auto_ops_since(self, kind: str, seconds: float) -> list[dict[str, Any]]:
+        cutoff = time.time() - seconds
         rows = self.db.execute(
             "SELECT player_id, price, executed_at FROM auto_buys WHERE kind = ? AND executed_at >= ?",
             (kind, cutoff),

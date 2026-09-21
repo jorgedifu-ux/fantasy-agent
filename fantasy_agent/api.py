@@ -126,6 +126,25 @@ class FantasyAPI:
         return self._write("POST", f"{COMP}/league/{league_id}/buyout/{player_id}/pay",
                             {"buyoutClauseToPay": amount})
 
+    def check_shield(self, league_id: str, player_team_id: str) -> Any:
+        """GET: si el jugador ya está blindado (null si no lo está)."""
+        return self.get(f"{COMP}/league/{league_id}/player-team/{player_team_id}/check-shield")
+
+    def shield_player(self, league_id: str, player_team_id: str) -> Any:
+        """Blindaje: protege a uno de tus jugadores de que le claususlen. GRATIS, 1 vez por
+        jornada, solo funciona sobre una cláusula que esté abierta ahora mismo. ⚠️ Sin
+        verificar en vivo todavía — en la app real pasa por ver un anuncio (rewarded ad); no
+        sabemos si el servidor exige esa parte o basta con esta llamada. Si falla, no pasa
+        nada (no gasta dinero), solo avisa y prueba en la app la primera vez."""
+        return self._write("PUT", f"{COMP}/league/{league_id}/shield/player",
+                            {"playerId": player_team_id, "rewardedAdType": "Blindaje", "rewardedAd": 1})
+
+    def increase_buyout_clause(self, league_id: str, player_team_id: str, new_clause: int) -> Any:
+        """Sube tu propia cláusula pagando — alternativa de PAGO al blindaje (gratis). Preferir
+        siempre blindaje si está disponible."""
+        return self._write("POST", f"{COMP}/league/{league_id}/buyout/{player_team_id}/increase",
+                            {"buyoutClause": new_clause})
+
     def update_lineup(self, team_id: str, lineup_data: dict) -> Any:
         """⚠️ Payload sin verificar en vivo todavía — ver aviso en la cabecera del módulo.
         No la llames en automático hasta comparar `lineup_data` con un `probe` real."""

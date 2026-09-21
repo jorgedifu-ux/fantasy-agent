@@ -218,9 +218,9 @@ def _auto_buy(store: Store, s, api: FantasyAPI, world, recovered_ids: frozenset)
     fichajes de emergencia. Nunca se endeuda (solo `_emergency_debt_buy` lo hace, y solo
     cuando de verdad hace falta) — respeta el mismo colchón de saldo que las propuestas
     normales (`BUDGET_RESERVE_PCT`)."""
-    if len(store.auto_ops_this_week("auto_buy")) >= s.auto_buys_per_week:
+    if len(store.auto_ops_today("auto_buy")) >= s.auto_buys_per_day:
         return None
-    already = {b["player_id"] for b in store.auto_ops_this_week("auto_buy")}
+    already = {b["player_id"] for b in store.auto_ops_today("auto_buy")}
     picks = [
         o for o in service.top_bid_candidates(world, s, min_score=18, recovered_ids=recovered_ids)
         if o.item.player.id not in already
@@ -251,9 +251,9 @@ def _auto_sell(store: Store, s, api: FantasyAPI, world, team_plan: plan_mod.Plan
     """Venta autónoma (sin confirmar), tope AUTO_SELLS_PER_WEEK — de la lista de venta ya
     decidida en el Plan (no se improvisa en el momento), tal y como pediste: "que vaya
     haciendo... tres ventas [por semana]"."""
-    if len(store.auto_ops_this_week("auto_sell")) >= s.auto_sells_per_week:
+    if len(store.auto_ops_today("auto_sell")) >= s.auto_sells_per_day:
         return None
-    already = {b["player_id"] for b in store.auto_ops_this_week("auto_sell")}
+    already = {b["player_id"] for b in store.auto_ops_today("auto_sell")}
     mine_ids = {sl.player.id for sl in world.my_slots}
     candidates = [
         i for i in plan_mod.sell_priority_ids(team_plan)
@@ -320,6 +320,37 @@ def _sync_plan(store: Store, s, world) -> plan_mod.Plan:
                 notify.pin_message(s, new_id)
         return plan
     return plan_mod.load_plan(store)
+
+
+def _auto_shield(store: Store, s, api: FantasyAPI, world) -> str | None:
+    """Blindaje automático: protege GRATIS a tu jugador más vulnerable a que un rival te lo
+    clausule (misma regla de "riesgo propio" ≤1.25x el valor). Sin coste ni riesgo de dinero
+    — si falla (ya blindado, límite de 1 vez por jornada ya usado, o el servidor exige de
+    verdad ver el anuncio — sin confirmar en vivo todavía), no pasa nada, solo se avisa."""
+    now = datetime.now(timezone.utc)
+    risky = []
+    for sl in world.my_slots:
+        p = sl.player
+        if not p.market_value or sl.clause <= 0 or not sl.clause_open(now):
+            continue
+        ratio = sl.clause / p.market_value
+        if ratio <= 1.25:
+            risky.append((ratio, sl))
+    if not risky:
+        return None
+    risky.sort(key=lambda t: t[0])
+    _, target = risky[0]
+    if not store.alert_is_new(f"shield:{target.player.id}", ttl_hours=20):
+        return None
+    name = notify.esc(target.player.name)
+    try:
+        api.shield_player(world.league_id, target.player_team_id)
+    except Exception as exc:
+        return (
+            f"🛡️ Intento de blindaje fallido para <b>{name}</b>: {notify.esc(str(exc))}\n"
+            f"Sin coste — puede que haga falta activarlo a mano desde la app la primera vez."
+        )
+    return f"🛡️ <b>BLINDADO</b>: {name} protegido de clausulazos (gratis, automático)."
 
 
 def _check_and_accept_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
@@ -391,6 +422,10 @@ def _watch_once(store: Store, s) -> str:
         events.append(auto_sold)
         world = _world(api, s, trends=True)
 
+    shielded = _auto_shield(store, s, api, world)
+    if shielded:
+        events.append(shielded)
+
     _, alerts = service.clauses_report(world, s)
     fresh = [a for a in alerts if store.alert_is_new(a.key)]
     actionable = [a for a in fresh if a.kind == "open_affordable"][:3]  # nunca más de 3 a la vez
@@ -411,7 +446,7 @@ def _watch_once(store: Store, s) -> str:
             label=analysis.clause_urgency_label(ratio, a.penalty),
         )
 
-    bought_autonomously = {b["player_id"] for b in store.auto_ops_this_week("auto_buy")}
+    bought_autonomously = {b["player_id"] for b in store.auto_ops_today("auto_buy")}
     for o in service.top_bid_candidates(world, s, recovered_ids=recovered):
         if o.item.player.id in bought_autonomously:
             continue  # ya se fichó solo por encima del umbral autónomo, no lo propongas también

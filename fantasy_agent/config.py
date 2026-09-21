@@ -45,8 +45,8 @@ class Settings:
     emergency_buy_cap_pct: float
     emergency_buys_per_week: int
     lineup_lock_hours: int
-    auto_buys_per_week: int
-    auto_sells_per_week: int
+    auto_buys_per_day: int
+    auto_sells_per_day: int
     debt_ceiling_pct: float
     debt_min_hours_lead: float
 
@@ -81,8 +81,8 @@ def load_settings() -> Settings:
         emergency_buy_cap_pct=float(os.environ.get("EMERGENCY_BUY_CAP_PCT", "0.15")),
         emergency_buys_per_week=int(os.environ.get("EMERGENCY_BUYS_PER_WEEK", "3")),
         lineup_lock_hours=int(os.environ.get("LINEUP_LOCK_HOURS", "24")),
-        auto_buys_per_week=int(os.environ.get("AUTO_BUYS_PER_WEEK", "3")),
-        auto_sells_per_week=int(os.environ.get("AUTO_SELLS_PER_WEEK", "3")),
+        auto_buys_per_day=int(os.environ.get("AUTO_BUYS_PER_DAY", "2")),
+        auto_sells_per_day=int(os.environ.get("AUTO_SELLS_PER_DAY", "2")),
         debt_ceiling_pct=float(os.environ.get("DEBT_CEILING_PCT", "0.20")),
         debt_min_hours_lead=float(os.environ.get("DEBT_MIN_HOURS_LEAD", "36")),
     )
