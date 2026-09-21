@@ -129,19 +129,23 @@ class BidAmountTests(unittest.TestCase):
 
 
 class CutLossTests(unittest.TestCase):
-    def test_sustained_fall_flagged(self):
+    def test_sustained_fall_flagged_with_price_reason(self):
         slots = [SquadSlot(player("p1"), "T", "yo", 0, None)]
         trends = {"p1": (player("p1"), Trend(-10, -5, -12))}
-        self.assertEqual([sl.player.id for sl in cut_loss_candidates(slots, trends)], ["p1"])
+        out = cut_loss_candidates(slots, trends)
+        self.assertEqual([sl.player.id for sl, _ in out], ["p1"])
+        self.assertIn("caída sostenida", out[0][1])  # el motivo real, no "estado: ok"
 
     def test_single_bad_day_not_flagged(self):
         slots = [SquadSlot(player("p1"), "T", "yo", 0, None)]
         trends = {"p1": (player("p1"), Trend(-6, -1, -9))}  # cae fuerte hoy pero no sostenido
         self.assertEqual(cut_loss_candidates(slots, trends), [])
 
-    def test_injured_and_poor_form_flagged(self):
+    def test_injured_and_poor_form_flagged_with_status_reason(self):
         slots = [SquadSlot(player("p1", status="lesionado", avg=1.0), "T", "yo", 0, None)]
-        self.assertEqual([sl.player.id for sl in cut_loss_candidates(slots, {})], ["p1"])
+        out = cut_loss_candidates(slots, {})
+        self.assertEqual([sl.player.id for sl, _ in out], ["p1"])
+        self.assertIn("lesionado", out[0][1])
 
     def test_injured_but_good_form_not_flagged(self):
         slots = [SquadSlot(player("p1", status="lesionado", avg=7.0), "T", "yo", 0, None)]

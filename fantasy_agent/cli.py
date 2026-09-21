@@ -8,7 +8,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-from . import analysis, auth, confirm, digest, notify, service
+from . import analysis, auth, confirm, digest, notify, plan as plan_mod, service
 from .api import FantasyAPI
 from .attendance import estimate_titularidad
 from .config import load_settings
@@ -197,17 +197,37 @@ def _sell_proposals(store: Store, s, world) -> None:
                 f"Vender ahora: {service.m(p.market_value)}",
                 label="💰 APROVECHAR MÁXIMO",
             )
-    for sl in analysis.cut_loss_candidates(world.my_slots, world.trends)[:2]:
+    for sl, reason in analysis.cut_loss_candidates(world.my_slots, world.trends)[:2]:
         p = sl.player
         if store.alert_is_new(f"sell_loss:{p.id}", ttl_hours=72):
             confirm.propose(
                 s, store, "sell",
                 {"league_id": world.league_id, "player_id": p.id, "sale_price": p.market_value, "player_name": p.name},
                 f"Venta recomendada (cortar pérdidas) — {p.name}\n"
-                f"Estado: {p.status} · no parece que vaya a recuperarse pronto.\n"
+                f"Motivo: {reason}.\n"
                 f"Mejor liquidar ya: {service.m(p.market_value)}",
                 label="🩸 CORTAR PÉRDIDAS",
             )
+
+
+def _sync_plan(store: Store, s, world) -> plan_mod.Plan:
+    """Regenera el plan si toca (una vez por semana, no cada tick — ver plan.py) y mantiene
+    un ÚNICO mensaje fijado en Telegram con el plan actual, editándolo en el sitio en vez de
+    mandar uno nuevo cada vez. Siempre devuelve el plan vigente (aunque no toque regenerar),
+    para que el resto del tick pueda consultar targets/sell_priority/watchlist."""
+    if plan_mod.due_for_refresh(store):
+        plan = plan_mod.generate_plan(world, s, store)
+        plan_mod.save_plan(store, plan)
+        text = plan_mod.render_plan_text(plan)
+        msg_id = store.get(plan_mod.PLAN_MESSAGE_ID_KEY)
+        edited = notify.edit_message(s, int(msg_id), text) if msg_id else False
+        if not edited:
+            new_id = notify.send_all(s, text, html=True)
+            if new_id:
+                store.set(plan_mod.PLAN_MESSAGE_ID_KEY, str(new_id))
+                notify.pin_message(s, new_id)
+        return plan
+    return plan_mod.load_plan(store)
 
 
 def _watch_once(store: Store, s) -> str:
@@ -223,6 +243,7 @@ def _watch_once(store: Store, s) -> str:
     world = _world(api, s, trends=True)
     _record_status_history(store, world)
     confirm.poll_and_execute(s, store, api)
+    team_plan = _sync_plan(store, s, world)
 
     events: list[str] = []
     emergency = _emergency_buy(store, s, api, world)
@@ -233,8 +254,11 @@ def _watch_once(store: Store, s) -> str:
     _, alerts = service.clauses_report(world, s)
     fresh = [a for a in alerts if store.alert_is_new(a.key)]
     actionable = [a for a in fresh if a.kind == "open_affordable"][:3]  # nunca más de 3 a la vez
+    watch_ids = plan_mod.watchlist_ids(team_plan)
     for a in actionable:
         ratio = a.slot.clause / a.slot.player.market_value if a.slot.player.market_value else 1.0
+        en_plan = "\n📐 Según el plan de vigilancia." if a.slot.player.id in watch_ids else \
+            "\n⚠️ Fuera de plan — surge ahora, no estaba previsto."
         confirm.propose(
             s, store, "clause",
             {
@@ -242,7 +266,8 @@ def _watch_once(store: Store, s) -> str:
                 "player_name": a.slot.player.name,
             },
             f"Clausulazo — {a.slot.player.name} (de {a.slot.owner_name})\n"
-            f"Cláusula: {service.m(a.slot.clause)} · Valor de mercado: {service.m(a.slot.player.market_value)}",
+            f"Cláusula: {service.m(a.slot.clause)} · Valor de mercado: {service.m(a.slot.player.market_value)}"
+            f"{en_plan}",
             label=analysis.clause_urgency_label(ratio, a.penalty),
         )
 
@@ -298,6 +323,28 @@ def cmd_pending(args, s) -> None:
         return
     for r in rows:
         print(f"[{r['id']}] {r['kind']}\n{r['description']}\n")
+
+
+def cmd_plan(args, s) -> None:
+    store = Store(s.db_file)
+    api = FantasyAPI(s)
+    world = _world(api, s, trends=True)
+    if args.refresh:
+        team_plan = plan_mod.generate_plan(world, s, store)
+        plan_mod.save_plan(store, team_plan)
+    else:
+        team_plan = plan_mod.load_plan(store)
+    text = plan_mod.render_plan_text(team_plan)
+    # Quita las etiquetas HTML para la Terminal (Telegram sí las interpreta, la consola no).
+    import re
+    print(re.sub(r"</?[bi]>", "", text))
+    if args.telegram:
+        msg_id = store.get(plan_mod.PLAN_MESSAGE_ID_KEY)
+        if not (msg_id and notify.edit_message(s, int(msg_id), text)):
+            new_id = notify.send_all(s, text, html=True)
+            if new_id:
+                store.set(plan_mod.PLAN_MESSAGE_ID_KEY, str(new_id))
+                notify.pin_message(s, new_id)
 
 
 def cmd_tick(args, s) -> None:
@@ -359,6 +406,11 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("watch", help="Vigilancia continua con alertas por Telegram").set_defaults(func=cmd_watch)
     sub.add_parser("tick", help="Una sola pasada de vigilancia (para cron / GitHub Actions)").set_defaults(func=cmd_tick)
     sub.add_parser("pending", help="Propuestas (pujas/cláusulas) esperando tu confirmación").set_defaults(func=cmd_pending)
+
+    p = sub.add_parser("plan", help="Plan de equipo: fichajes objetivo, venta priorizada, vigilancia de rivales")
+    p.add_argument("--refresh", action="store_true", help="regenerar ahora (por defecto, una vez por semana)")
+    p.add_argument("--telegram", action="store_true", help="fijar/actualizar el panel en Telegram")
+    p.set_defaults(func=cmd_plan)
 
     args = parser.parse_args(argv)
     settings = load_settings()

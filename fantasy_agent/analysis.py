@@ -149,21 +149,27 @@ def sell_high_candidates(trends: dict[str, tuple[Player, Trend]], mine: set[str]
     return sorted(out, key=lambda x: -x[1].d7)[:5]
 
 
-def cut_loss_candidates(my_slots: list[SquadSlot], trends: dict[str, tuple[Player, Trend]]) -> list[SquadSlot]:
+def cut_loss_candidates(
+    my_slots: list[SquadSlot], trends: dict[str, tuple[Player, Trend]],
+) -> list[tuple[SquadSlot, str]]:
     """Jugadores tuyos que probablemente NO se van a recuperar: caída sostenida (no un mal día
     suelto) o lesión/sanción larga con un rendimiento ya de por sí flojo. A diferencia de
     `sell_high_candidates` (vender GANANDO), aquí se vende aunque sea con pérdida — mejor
     liquidar ahora que seguir esperando a alguien que no va a volver a su nivel. Deliberadamente
     conservador: exige caída sostenida (7 días Y 3 días, no un susto de un solo día) o un
-    jugador claramente descartado (lesionado y ya de flojo rendimiento antes de lesionarse)."""
+    jugador claramente descartado (lesionado y ya de flojo rendimiento antes de lesionarse).
+    Devuelve el motivo REAL de cada uno (no siempre es el mismo) para no confundir "cae de
+    precio" con "está lesionado" en el mensaje."""
     out = []
     for sl in my_slots:
         p = sl.player
         trend = trends.get(p.id, (p, Trend(0, 0, 0)))[1]
         sustained_fall = trend.d7 <= -8 and trend.d3 <= -2
         written_off = p.status.lower() in ("injured", "suspended", "lesionado", "sancionado") and p.avg_points < 2.0
-        if sustained_fall or written_off:
-            out.append(sl)
+        if written_off:
+            out.append((sl, f"{p.status}, con media floja ({p.avg_points:.1f} pts) — no va a recuperar valor así"))
+        elif sustained_fall:
+            out.append((sl, f"caída sostenida de precio ({trend.d7:+.0f}% en 7 días, {trend.d3:+.0f}% en 3 días)"))
     return out
 
 
