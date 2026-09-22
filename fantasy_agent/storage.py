@@ -109,6 +109,24 @@ class Store:
             for r in rows
         ]
 
+    def supersede_pending_for_player(self, kind: str, player_id: str) -> int:
+        """Cancela cualquier propuesta PENDIENTE del mismo tipo para el mismo jugador antes de
+        crear una nueva — evita acumular dos "Confirmar/Cancelar" para lo mismo (p.ej. la
+        misma cláusula subió de precio y salió una propuesta nueva sin retirar la vieja).
+        Devuelve cuántas se han retirado."""
+        rows = self.db.execute(
+            "SELECT id, payload FROM pending_ops WHERE status = 'pending' AND kind = ?", (kind,)
+        ).fetchall()
+        n = 0
+        for op_id, payload_json in rows:
+            payload = json.loads(payload_json)
+            if payload.get("player_id") == player_id:
+                self.db.execute("UPDATE pending_ops SET status = 'superseded' WHERE id = ?", (op_id,))
+                n += 1
+        if n:
+            self.db.commit()
+        return n
+
     def schedule(self, op_id: str) -> None:
         """Confirmado por el usuario pero con `execute_at` en el futuro: se ejecutará solo
         en ese momento exacto (ver confirm.run_scheduled), sin volver a preguntar."""

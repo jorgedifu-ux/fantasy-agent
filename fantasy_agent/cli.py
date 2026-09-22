@@ -529,10 +529,17 @@ def _watch_once(store: Store, s) -> str:
             label=analysis.clause_urgency_label(ratio, a.penalty),
         )
 
-    bought_autonomously = {b["player_id"] for b in store.auto_ops_today("auto_buy")}
+    # Nunca proponer una puja para alguien en quien ya tienes algo en marcha por otra vía
+    # (autónomo, emergencia, o una puja ya enviada pendiente de resolverse).
+    already_in_play = (
+        {b["player_id"] for b in store.auto_ops_today("auto_buy")}
+        | {b["player_id"] for b in store.auto_ops_this_week("emergency_buy")}
+        | {b["player_id"] for b in store.auto_ops_this_week("emergency_debt_buy")}
+        | {b["player_id"] for b in store.unresolved_market_bids("buy")}
+    )
     for o in service.top_bid_candidates(world, s, recovered_ids=recovered):
-        if o.item.player.id in bought_autonomously:
-            continue  # ya se fichó solo por encima del umbral autónomo, no lo propongas también
+        if o.item.player.id in already_in_play:
+            continue
         key = f"bid:{o.item.player.id}:{o.item.price}"
         if store.alert_is_new(key, ttl_hours=24):
             # Puja de última hora: si sabemos cuándo cierra el anuncio, se propone ya (para que

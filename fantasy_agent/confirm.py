@@ -37,6 +37,9 @@ def propose(
     se ejecuta al momento — se programa para ese instante exacto (ver `run_scheduled`).
     `label`: etiqueta de urgencia/calidad ya formateada (ver analysis.clause_urgency_label /
     player_quality_label) para que sepas de un vistazo qué tan buena es la operación."""
+    player_id = payload.get("player_id")
+    if player_id:
+        store.supersede_pending_for_player(kind, player_id)  # nunca dos propuestas vivas del mismo jugador
     op_id = secrets.token_hex(2)  # 4 caracteres: cómodo de escribir a mano si el botón falla
     store.add_pending(op_id, kind, payload, description, execute_at=execute_at)
     when_note = ""
