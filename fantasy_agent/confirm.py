@@ -104,60 +104,75 @@ def poll_and_execute(settings: Settings, store: Store, api: FantasyAPI) -> list[
     pending = {p["id"]: p for p in store.get_pending()}
 
     for upd in updates:
+        # Avanzamos el offset PRIMERO, pase lo que pase — si un update concreto revienta algo
+        # más abajo, no queremos reprocesarlo en bucle para siempre en el próximo tick.
         store.set("telegram_last_update_id", str(upd["update_id"]))
+        try:
+            _process_update(settings, store, api, pending, results, upd)
+        except Exception as exc:
+            # Un update raro (Telegram rechazando algo, lo que sea) nunca debe tumbar el
+            # resto de la cola — lo descubrimos en vivo: un solo fallo aquí paraba TODO el
+            # tick, incluida la red de seguridad de plantilla/deuda que corre después.
+            notify.send_all(settings, f"⚠️ Fallo procesando un mensaje de Telegram: {notify.esc(str(exc))}", html=True)
 
-        cq = upd.get("callback_query")
-        if cq:
-            # Botón pulsado: "confirm:<id>" o "cancel:<id>", siempre con código explícito.
-            data = cq.get("data", "")
-            action, _, cq_op_id = data.partition(":")
-            notify.answer_callback(settings, cq["id"])
-            if action not in ("confirm", "cancel") or not cq_op_id:
-                continue
-            cancel, op_id = action == "cancel", cq_op_id
+    return results
+
+
+def _process_update(
+    settings: Settings, store: Store, api: FantasyAPI, pending: dict, results: list[str], upd: dict,
+) -> None:
+    cq = upd.get("callback_query")
+    if cq:
+        # Botón pulsado: "confirm:<id>" o "cancel:<id>", siempre con código explícito.
+        data = cq.get("data", "")
+        action, _, cq_op_id = data.partition(":")
+        notify.answer_callback(settings, cq["id"])
+        if action not in ("confirm", "cancel") or not cq_op_id:
+            return
+        cancel, op_id = action == "cancel", cq_op_id
+    else:
+        text = (upd.get("message") or {}).get("text", "")
+        if not text:
+            return
+        m_confirm = CONFIRM_RE.match(text)
+        m_cancel = CANCEL_RE.match(text)
+        if not (m_confirm or m_cancel):
+            return
+        cancel = bool(m_cancel) and not m_confirm
+        op_id = (m_cancel or m_confirm).group(2)
+
+    if op_id is None:
+        if len(pending) == 1:
+            op_id = next(iter(pending))
+        elif not pending:
+            notify.send_all(settings, "No hay ninguna propuesta pendiente.")
+            return
         else:
-            text = (upd.get("message") or {}).get("text", "")
-            if not text:
-                continue
-            m_confirm = CONFIRM_RE.match(text)
-            m_cancel = CANCEL_RE.match(text)
-            if not (m_confirm or m_cancel):
-                continue
-            cancel = bool(m_cancel) and not m_confirm
-            op_id = (m_cancel or m_confirm).group(2)
+            codes = ", ".join(pending)
+            notify.send_all(settings, f"Hay varias propuestas pendientes, indica el código: {codes}")
+            return
 
-        if op_id is None:
-            if len(pending) == 1:
-                op_id = next(iter(pending))
-            elif not pending:
-                notify.send_all(settings, "No hay ninguna propuesta pendiente.")
-                continue
-            else:
-                codes = ", ".join(pending)
-                notify.send_all(settings, f"Hay varias propuestas pendientes, indica el código: {codes}")
-                continue
+    op = pending.get(op_id)
+    if op is None:
+        notify.send_all(settings, f"No encuentro la propuesta [{op_id}] (¿ya resuelta o caducada?).")
+        return
 
-        op = pending.get(op_id)
-        if op is None:
-            notify.send_all(settings, f"No encuentro la propuesta [{op_id}] (¿ya resuelta o caducada?).")
-            continue
-
-        if cancel:
-            store.resolve_pending(op_id, "cancelled")
-            del pending[op_id]
-            notify.send_all(settings, f"🚫 Cancelado [{op_id}].")
-            continue
-
-        execute_at = op.get("execute_at")
-        if execute_at and execute_at - time.time() > IMMEDIATE_WINDOW_S:
-            store.schedule(op_id)
-            when = time.strftime("%d/%m %H:%M", time.localtime(execute_at))
-            msg = f"👍 Programado [{op_id}] para el {when}. No hace falta que hagas nada más."
-            notify.send_all(settings, msg)
-            results.append(msg)
-        else:
-            results.append(_run_and_report(settings, store, api, op_id, op))
+    if cancel:
+        store.resolve_pending(op_id, "cancelled")
         del pending[op_id]
+        notify.send_all(settings, f"🚫 Cancelado [{op_id}].")
+        return
+
+    execute_at = op.get("execute_at")
+    if execute_at and execute_at - time.time() > IMMEDIATE_WINDOW_S:
+        store.schedule(op_id)
+        when = time.strftime("%d/%m %H:%M", time.localtime(execute_at))
+        msg = f"👍 Programado [{op_id}] para el {when}. No hace falta que hagas nada más."
+        notify.send_all(settings, msg)
+        results.append(msg)
+    else:
+        results.append(_run_and_report(settings, store, api, op_id, op))
+    del pending[op_id]
 
     return results
 

@@ -159,6 +159,21 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(self.store.get_scheduled()), 1)  # sigue programado, para más tarde
 
 
+    def test_one_bad_update_does_not_stop_processing_the_rest(self):
+        """Bug real encontrado en vivo: answerCallbackQuery fallando (query caducada) tumbaba
+        TODO el tick, incluidas confirmaciones válidas en la misma tanda de updates."""
+        id1 = confirm.propose(self.s, self.store, "clause", {"league_id": "L1", "player_id": "P1", "amount": 1}, "A")
+        id2 = confirm.propose(self.s, self.store, "clause", {"league_id": "L1", "player_id": "P2", "amount": 2}, "B")
+        updates = [
+            {"update_id": 1, "callback_query": {"id": "cbq1", "data": f"confirm:{id1}"}},
+            {"update_id": 2, "callback_query": {"id": "cbq2", "data": f"confirm:{id2}"}},
+        ]
+        with patch("fantasy_agent.notify.answer_callback", side_effect=[RuntimeError("query too old"), None]):
+            with patch("fantasy_agent.notify.get_telegram_updates", return_value=updates):
+                confirm.poll_and_execute(self.s, self.store, self.api)
+        # La primera falló al contestar el botón, pero la segunda debe haberse procesado igual.
+        self.assertEqual(self.api.calls, [("clause", "L1", "P2", 2)])
+
     def test_bid_execution_is_tracked_as_pending_not_done(self):
         op_id = confirm.propose(self.s, self.store, "bid", BID_PAYLOAD, "Fichaje de prueba")
         with patch("fantasy_agent.notify.get_telegram_updates", return_value=self._updates([f"Confirmar {op_id}"])):

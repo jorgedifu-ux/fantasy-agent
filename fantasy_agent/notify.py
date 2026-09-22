@@ -98,11 +98,17 @@ def pin_message(settings: Settings, message_id: int) -> None:
 
 
 def answer_callback(settings: Settings, callback_query_id: str, text: str = "") -> None:
-    """Quita el "cargando..." del botón que se acaba de pulsar en Telegram."""
+    """Quita el "cargando..." del botón que se acaba de pulsar en Telegram. Puramente
+    cosmético — si Telegram la rechaza (p.ej. "query is too old" cuando ha pasado tiempo
+    desde que se pulsó, algo que descubrimos en vivo), NUNCA debe tumbar el resto del
+    proceso: silenciarlo aquí es intencional, no un descuido."""
     if not telegram_enabled(settings):
         return
     url = f"https://api.telegram.org/bot{settings.telegram_token}/answerCallbackQuery"
-    request_json("POST", url, json_body={"callback_query_id": callback_query_id, "text": text})
+    try:
+        request_json("POST", url, json_body={"callback_query_id": callback_query_id, "text": text})
+    except Exception:
+        pass
 
 
 def get_telegram_updates(settings: Settings, offset: int | None = None) -> list[dict]:
