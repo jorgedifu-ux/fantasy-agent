@@ -113,11 +113,20 @@ class FantasyAPI:
                             {"playerId": player_id, "salePrice": sale_price})
 
     def accept_offer(self, league_id: str, market_id: str, offer_id: str, money: int) -> Any:
-        """⚠️ Sin verificar en vivo todavía (no ha llegado ninguna oferta real que probar) —
-        misma ruta que usan otros clientes de este backend. Compara con `probe` en cuanto
-        `numberOfOffers` de un anuncio tuyo sea > 0."""
+        """⚠️ Sin verificar en vivo todavía — la ruta real ("marketPlayerTeam") no necesita
+        offer_id, ver `accept_only_offer`. Se deja por si algún día aparece un `offer.id` de
+        verdad en el JSON del mercado (no lo hay ahora mismo)."""
         return self._write("POST", f"{COMP}/league/{league_id}/market/{market_id}/offer/{offer_id}/accept",
                             {"offerMoney": money})
+
+    def accept_only_offer(self, league_id: str, market_id: str, money: int) -> Any:
+        """⚠️ CONFIRMADO EN VIVO QUE NO ES ESTA (22/09/2026, Musso, 2,024,749): devuelve
+        403 Forbidden, no un error de payload — probablemente el lado "comprador" de hacer
+        una oferta, no el "vendedor" de aceptarla (la ruta existe, `GET` da 405 con
+        `Allow: POST`, pero este método no es la operación correcta). Se deja documentado
+        como pista para cuando se localice la ruta real (ver ESTADO.md); no la llames en
+        automático — `cli._notify_new_offers` avisa con un umbral en su lugar mientras tanto."""
+        return self._write("POST", f"{COMP}/league/{league_id}/market/{market_id}/offer", {"offerMoney": money})
 
     def decline_offer(self, league_id: str, market_id: str, offer_id: str) -> Any:
         return self._write("POST", f"{COMP}/league/{league_id}/market/{market_id}/offer/{offer_id}/reject")

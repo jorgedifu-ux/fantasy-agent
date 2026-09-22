@@ -128,33 +128,32 @@ def clause_freeze_window(api: FantasyAPI) -> tuple[datetime, datetime] | None:
     return first - timedelta(hours=24), first
 
 
-def recent_clauser_against_me(api: FantasyAPI, league_id: str, my_team_id: str, within_hours: float = 72) -> str | None:
-    """team_id de quien te haya clausulado un jugador en las últimas `within_hours` — para no
-    clausularle de vuelta por venganza (ver STRATEGY.md §2 y analysis.clause_alerts).
+def recent_clauser_manager_id(api: FantasyAPI, league_id: str, my_manager_id: str, within_hours: float = 72) -> str | None:
+    """manager_id (¡no team_id!) de quien te haya clausulado un jugador en las últimas
+    `within_hours` — para no clausularle de vuelta por venganza (ver STRATEGY.md §2 y
+    analysis.clause_alerts). `build_world` lo convierte a team_id con el standing.
 
-    ⚠️ Forma del JSON de `/activity` sin verificar en vivo todavía — prueba varias claves
-    razonables (mismo patrón defensivo que el resto de `models.py`) pero, si nunca detecta
-    nada, compara con `fantasy probe /v1/competition/1/leagues/<liga>/activity/0` y ajusta las
-    claves de `pick()` aquí abajo. Si falla o no reconoce nada, simplemente no aplica esta
-    despriorización — no rompe el resto del informe."""
+    Confirmado en vivo (22/09/2026) con datos reales — ya no es una suposición:
+    `/activity` es una lista plana de `{activityTypeId, user1Id, user2Id, playerMasterId,
+    amount, createdAt}`. `activityTypeId == 1` es un pago de cláusula: `user1Id` = quien
+    paga, `user2Id` = a quién se la pagan (el dueño anterior, la víctima)."""
     try:
         raw = api.activity(league_id, 0)
     except Exception:
         return None
     now = datetime.now(timezone.utc)
     for item in models.as_list(raw, "activity", "elements"):
-        kind = str(models.pick(item, "type", "activityType", default="")).lower()
-        if "buyout" not in kind and "clause" not in kind and "clausula" not in kind:
+        if models.to_int(models.pick(item, "activityTypeId")) != 1:
             continue
-        when = models.parse_dt(models.pick(item, "date", "createdAt", "activityDate"))
+        when = models.parse_dt(models.pick(item, "createdAt"))
         if not when or (now - when).total_seconds() > within_hours * 3600:
             continue
-        affected_team = str(models.pick(item, "affectedTeam.id", "toTeam.id", "sellerTeam.id", default=""))
-        if affected_team != my_team_id:
+        victim = str(models.pick(item, "user2Id", default=""))
+        if victim != my_manager_id:
             continue
-        buyer_team = str(models.pick(item, "team.id", "fromTeam.id", "buyerTeam.id", default=""))
-        if buyer_team:
-            return buyer_team
+        buyer_manager_id = str(models.pick(item, "user1Id", default=""))
+        if buyer_manager_id:
+            return buyer_manager_id
     return None
 
 
@@ -176,12 +175,17 @@ def build_world(api: FantasyAPI, s: Settings, with_trends: bool = True) -> World
             item.player.team = team_names[item.player.team_id]
     fixtures = next_fixtures(api, {sl.player.team_id for sl in my_slots})
     leader_team_id = max(standing, key=lambda r: r.points).team_id if standing else None
+    my_manager_id = next((r.manager_id for r in standing if r.team_id == my_team_id), None)
+    clauser_manager_id = recent_clauser_manager_id(api, league_id, my_manager_id) if my_manager_id else None
+    revenge_against_team_id = next(
+        (r.team_id for r in standing if r.manager_id == clauser_manager_id), None
+    ) if clauser_manager_id else None
     world = World(
         league_id, my_team_id, my_cash, standing, my_slots, rival_slots, market,
         team_names=team_names, fixtures=fixtures,
         league_top_ids=league_top_ids(api), clause_freeze=clause_freeze_window(api),
         leader_team_id=leader_team_id,
-        revenge_against_team_id=recent_clauser_against_me(api, league_id, my_team_id),
+        revenge_against_team_id=revenge_against_team_id,
         recent_form=recent_form(api),
     )
 

@@ -34,7 +34,7 @@ de emergencia gira en torno a evitar esos dos escenarios.
 | Fichaje a crédito (deuda) | Solo si no hay otra forma, tope 20% del valor de plantilla | Último recurso, emparejado con una venta del plan — no es garantía |
 | Compra autónoma (oportunidad muy buena, score≥18) | 2/día | Pediste no depender de que confirmes todo |
 | Venta autónoma (según el Plan: cortar pérdidas / aprovechar máximo) | 2/día | Igual que arriba |
-| Aceptar ofertas del SISTEMA sobre tus ventas | Umbral 90-110% según motivo | Ver tabla abajo |
+| Aceptar ofertas del SISTEMA sobre tus ventas | **De momento NO** — solo avisa con el umbral, ver abajo | La API no deja leer el importe exacto, decides tú viendo la app |
 | Rechazar ofertas de RIVALES de tu liga | Casi siempre | Rara vez convienen |
 | Blindaje (proteger tu jugador más vulnerable) | 1 intento / 4 días, gratis | Nueva funcionalidad, sin coste |
 | Subir tu propia cláusula (pago) | Solo si blindaje no disponible, pieza valiosa | Alternativa de pago al blindaje |
@@ -51,6 +51,16 @@ de emergencia gira en torno a evitar esos dos escenarios.
 | 🩸 Cortar pérdidas | 90% del precio puesto |
 | 💰 Aprovechar máximo (ganancia) | 100% |
 | Cualquier otro caso | 110% |
+
+**Por qué de momento lo aceptas tú a mano**: la API expone `numberOfOffers` (cuántas ofertas
+hay) pero no el importe exacto de una oferta sobre un anuncio "marketPlayerTeam" — se
+comprobó en vivo (Musso/Tárrega, 22/09) que el JSON del mercado nunca trae el array `offers`
+con detalle, y el único endpoint candidato para leer/aceptar
+(`POST /market/{id}/offer`) devuelve **403 Forbidden** (probado en vivo con Musso, importe
+2,024,749 — no es un bloqueo temporal, es que ese no es el endpoint correcto, probablemente
+es el lado "comprador" de una oferta, no el "vendedor"). Mientras no aparezca la ruta
+correcta: en cuanto llega una oferta nueva (el contador sube), Telegram te avisa con el
+umbral que deberías exigir para que decidas tú mirando la cifra real en la app.
 
 ## Decisiones y políticas acordadas contigo (con el motivo)
 
@@ -73,12 +83,27 @@ de emergencia gira en torno a evitar esos dos escenarios.
 - **Alineación automática**: bloqueada a propósito. El primer intento de guardar el once dio
   error 500 — necesita comparar el JSON real de `probe /v1/competition/1/teams/<id>/lineup`
   antes de activarse. Mientras tanto, la fijas tú a mano en la app.
-- **Ofertas de rival vs. del sistema** (`Offer.is_system`): heurística sin confirmar, nunca ha
-  llegado una oferta real que probar.
+- **Ofertas de rival vs. del sistema** (`Offer.is_system`): heurística sin confirmar — y en la
+  práctica nunca se ejecuta, porque el mercado nunca trae el array `offers` con detalle (ver
+  más abajo), así que este código está listo pero inactivo hasta que aparezca esa ruta.
+- **Aceptar/rechazar una oferta por API**: **confirmado que NO funciona todavía** —
+  `POST /league/{id}/market/{marketId}/offer` da 403 Forbidden (probado en vivo, ver arriba).
+  Sigue siendo el mayor hueco funcional: de momento, siempre lo aceptas tú a mano en la app.
 - **Blindaje / subir cláusula**: nunca se han disparado contra una situación real.
-- **`/activity` para saber quién te clausuló** (evitar venganza): forma del JSON sin verificar.
 - Si algo de esto falla o no hace lo que debería, el error de la API suele venir en el propio
   mensaje de Telegram — pégamelo y lo ajustamos con el JSON real.
+
+## ✅ Confirmado en vivo con datos reales (22/09/2026)
+
+- **`/activity`** (para saber quién te clausuló y evitar venganza): es una **lista plana** de
+  `{activityTypeId, user1Id, user2Id, playerMasterId, amount, createdAt}` — nada de campos
+  anidados. `activityTypeId == 1` es un pago de cláusula (`user1Id` paga, `user2Id` es la
+  víctima), `activityTypeId == 33` una venta de mercado resuelta. `user1Id`/`user2Id` son
+  **manager_id, no team_id** — `service.recent_clauser_manager_id` ya usa las claves reales, y
+  `build_world` convierte el resultado a team_id con el `standing` antes de guardarlo en
+  `World.revenge_against_team_id`.
+- **Bug de IDs (ya corregido)**: `sell_player`/`pay_buyout_clause` necesitan `playerTeamId`
+  (id del hueco en tu plantilla), no el id del jugador — con el id equivocado daba HTTP 400.
 
 ## Incidente de hoy (22/09) — ya resuelto
 
@@ -94,12 +119,16 @@ commits, no solo `git commit` — si no, la nube se queda desactualizada en sile
 
 ## Próximos pasos (pendientes, sin empezar)
 
-1. Verificar en vivo la alineación automática (necesita tu sesión logueada + un `probe`).
-2. Bonus local/visitante y corte de fase económica→competitiva en `STRATEGY.md` (documentado,
+1. **Encontrar la ruta real de aceptar/rechazar una oferta** (la única candidata da 403) — sin
+   esto, la venta con oferta nunca puede ser 100% autónoma, solo avisar con el umbral como
+   ahora. Si algún día se localiza (p.ej. viendo las peticiones de la app con un proxy), es el
+   cambio de mayor impacto pendiente.
+2. Verificar en vivo la alineación automática (necesita tu sesión logueada + un `probe`).
+3. Bonus local/visitante y corte de fase económica→competitiva en `STRATEGY.md` (documentado,
    no implementado).
-3. Estimar el saldo de los rivales a partir de `/activity` para priorizar clausulazos donde no
+4. Estimar el saldo de los rivales a partir de `/activity` para priorizar clausulazos donde no
    puedan reponerse.
-4. La primera vez que se dispare blindaje/subir cláusula/una oferta de rival de verdad,
+5. La primera vez que se dispare blindaje/subir cláusula/una oferta de rival de verdad,
    revisar que el resultado sea el esperado.
 
 ## Dónde está todo
@@ -109,5 +138,5 @@ commits, no solo `git commit` — si no, la nube se queda desactualizada en sile
   corazón), `service.py`/`models.py`/`api.py` (datos y escritura).
 - `STRATEGY.md` — el razonamiento estratégico detallado, sección por sección.
 - `CLAUDE.md` — normas de desarrollo del proyecto (para cuando se edite el código).
-- `tests/` — 63 tests, todos sin red (`python3 -m unittest discover -s tests -v`).
+- `tests/` — 73 tests, todos sin red (`python3 -m unittest discover -s tests -v`).
 - `.env` — tus credenciales (Telegram, nunca se sube a git).

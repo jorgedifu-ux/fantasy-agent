@@ -468,6 +468,42 @@ def _check_and_accept_offers(store: Store, s, api: FantasyAPI, world) -> list[st
     return results
 
 
+def _notify_new_offers(store: Store, s, world) -> list[str]:
+    """Avisa en cuanto detecta una oferta nueva en uno de tus anuncios de venta pendientes.
+
+    La API no expone el importe exacto de una oferta "marketPlayerTeam" en el listado general
+    del mercado — solo `numberOfOffers` (confirmado en vivo, ver ESTADO.md) — así que no puedo
+    decirte con la cifra real si es buena o mala. Lo que sí puedo darte es el umbral que
+    deberías exigir según nuestros propios criterios (`analysis.min_acceptable_offer`, el mismo
+    que usa `_check_and_accept_offers` si algún día la API expone el importe): compara ese
+    número con lo que veas en la app y decide tú. Dedupe por (id del anuncio, nº de ofertas)
+    para no repetir el aviso en cada tick mientras siga pendiente la misma oferta."""
+    my_listings = {item.player.id: item for item in world.market if item.seller_team_id == world.my_team_id}
+    results: list[str] = []
+    for b in store.unresolved_market_bids("sell"):
+        item = my_listings.get(b["player_id"])
+        if not item or item.offers_count <= 0:
+            continue
+        key = f"offer_seen:{b['id']}:{item.offers_count}"
+        if not store.alert_is_new(key, ttl_hours=24 * 7):
+            continue
+        threshold = analysis.min_acceptable_offer(b["price"], b["sell_kind"] or "")
+        reason = {
+            "cut_loss": "cortar pérdidas cuanto antes",
+            "profit_take": "ya vendíamos en ganancia, aprovechar al máximo",
+        }.get(b["sell_kind"] or "", "estaba listado por si acaso, sin prisa por vender")
+        plural = "s" if item.offers_count != 1 else ""
+        results.append(
+            f"📩 <b>Oferta recibida</b> por <b>{notify.esc(b['player_name'])}</b> "
+            f"({item.offers_count} oferta{plural} en total)\n"
+            f"Precio puesto: {service.m(b['price'])} · Motivo de la venta: {reason}\n"
+            f"👉 Acéptala si en la app te ofrecen <b>{service.m(threshold)} o más</b>; "
+            f"si no llega a esa cifra, recházala.\n"
+            f"<i>Aún no puedo leer el importe exacto de la oferta — decide tú con este umbral.</i>"
+        )
+    return results
+
+
 def _watch_once(store: Store, s) -> str:
     """Una pasada: ejecuta lo ya aprobado que caiga en esta ventana (al segundo exacto),
     responde a tus confirmaciones, cubre huecos críticos sin preguntar (dentro del tope),
@@ -564,6 +600,9 @@ def _watch_once(store: Store, s) -> str:
 
     for accepted in _check_and_accept_offers(store, s, api, world):
         notify.send_all(s, accepted, html=True)
+
+    for offer_notice in _notify_new_offers(store, s, world):
+        notify.send_all(s, offer_notice, html=True)
 
     for resolved in _check_bid_resolutions(store, world):
         notify.send_all(s, resolved, html=True)
