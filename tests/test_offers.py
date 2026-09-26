@@ -2,7 +2,7 @@
 (confirmada en vivo el 26/09/2026 con las ofertas por Sangante e Iván Martín)."""
 import unittest
 
-from fantasy_agent.models import parse_player_offers
+from fantasy_agent.models import parse_player_offers, parse_results
 
 REAL = [
     {"id": "132884932", "money": 6622211, "status": "pending", "createdAt": "2026-09-25T20:53:10+02:00",
@@ -27,6 +27,15 @@ class OfferParsingTests(unittest.TestCase):
 
     def test_missing_id_is_skipped(self):
         self.assertEqual(parse_player_offers([{"money": 1}]), [])
+
+
+class ResultsTests(unittest.TestCase):
+    def test_only_finished_matches(self):
+        cal = [
+            {"localId": 20, "visitorId": 11, "matchState": 7, "localScore": 3, "visitorScore": 1},
+            {"localId": 1, "visitorId": 2, "matchState": 1},
+        ]
+        self.assertEqual(parse_results(cal), [("20", "11", 3, 1)])
 
 
 if __name__ == "__main__":

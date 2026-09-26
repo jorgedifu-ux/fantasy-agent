@@ -8,7 +8,7 @@ Los métodos de escritura (puja, cláusula, venta, ofertas, alineación, blindaj
 juego de verdad y algunos gastan dinero de forma irreversible. Los usa el piloto automático
 (`cli._watch_once`, decisiones en `autopilot.py`). Verificadas en vivo: bid, pay_buyout_clause,
 sell_player, player_team_offers, accept_offer, update_lineup. Sin efecto real por API:
-shield_player (responde bien pero no blinda). Sin probar: decline_offer, increase_buyout_clause.
+shield_player (responde bien pero no blinda). Sin probar: decline_offer, increase_buyout_clause, cancel_bid (rutas de Externoak/LaLigaApp).
 """
 from __future__ import annotations
 
@@ -126,23 +126,23 @@ class FantasyAPI:
                             {"buyoutClauseToPay": amount})
 
     def check_shield(self, league_id: str, player_team_id: str) -> Any:
-        """GET: si el jugador ya está blindado (null si no lo está)."""
+        """GET previo al blindaje: 400 si ahora no se puede blindar (p.ej. "Player team shield
+        limit reached": el equipo ya gastó su blindaje de la jornada)."""
         return self.get(f"{COMP}/league/{league_id}/player-team/{player_team_id}/check-shield")
 
     def shield_player(self, league_id: str, player_team_id: str) -> Any:
-        """Blindaje: protege a uno de tus jugadores de que le claususlen. GRATIS, 1 vez por
-        jornada, solo funciona sobre una cláusula que esté abierta ahora mismo. ⚠️ Sin
-        verificar en vivo todavía — en la app real pasa por ver un anuncio (rewarded ad); no
-        sabemos si el servidor exige esa parte o basta con esta llamada. Si falla, no pasa
-        nada (no gasta dinero), solo avisa y prueba en la app la primera vez."""
+        """Blindaje (gratis, 1 por equipo y jornada). En la app pasa por un anuncio; el 26/09
+        respondió bien sin blindar: `cli._auto_shield` comprueba antes `check_shield` y
+        verifica después releyendo la plantilla."""
         return self._write("PUT", f"{COMP}/league/{league_id}/shield/player",
                             {"playerId": player_team_id, "rewardedAdType": "Blindaje", "rewardedAd": 1})
 
-    def increase_buyout_clause(self, league_id: str, player_team_id: str, new_clause: int) -> Any:
-        """Sube tu propia cláusula pagando — alternativa de PAGO al blindaje (gratis). Preferir
-        siempre blindaje si está disponible."""
-        return self._write("POST", f"{COMP}/league/{league_id}/buyout/{player_team_id}/increase",
-                            {"buyoutClause": new_clause})
+    def increase_buyout_clause(self, league_id: str, player_team_id: str, value_to_increase: int) -> Any:
+        """Sube tu propia cláusula pagando la mitad de lo que sube (factor 2), según el
+        cliente de la comunidad Externoak/LaLigaApp. `cli._auto_increase_clause` verifica
+        releyendo la plantilla que de verdad subió."""
+        return self._write("PUT", f"{COMP}/league/{league_id}/buyout/player",
+                            {"factor": 2.0, "playerId": player_team_id, "valueToIncrease": value_to_increase})
 
     def update_lineup(self, team_id: str, lineup_data: dict) -> Any:
         """La forma exacta del cuerpo no está documentada: `cli._apply_lineup` prueba las

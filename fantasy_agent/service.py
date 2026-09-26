@@ -28,6 +28,7 @@ class World:
     leader_team_id: str | None = None
     revenge_against_team_id: str | None = None
     recent_form: dict[str, float] = field(default_factory=dict)
+    laliga_rank: dict[str, int] = field(default_factory=dict)  # team_id real -> puesto en LaLiga
     fetched_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -99,6 +100,28 @@ def recent_form(api: FantasyAPI, window: int = 3) -> dict[str, float]:
     return out
 
 
+def laliga_ranks(api: FantasyAPI) -> dict[str, int]:
+    """Clasificación real de LaLiga (team_id -> puesto) a partir de los resultados del
+    calendario: 3 puntos por victoria, 1 por empate, desempate por diferencia de goles."""
+    try:
+        current = models.to_int(models.pick(api.current_week(), "weekNumber"), default=0)
+    except Exception:
+        return {}
+    table: dict[str, list[int]] = {}
+    for wk in range(1, current + 1):
+        try:
+            results = models.parse_results(api.calendar(wk))
+        except Exception:
+            continue
+        for local, visitor, gl, gv in results:
+            for team, gf, gc in ((local, gl, gv), (visitor, gv, gl)):
+                row = table.setdefault(team, [0, 0])
+                row[0] += 3 if gf > gc else 1 if gf == gc else 0
+                row[1] += gf - gc
+    ordered = sorted(table, key=lambda t: (-table[t][0], -table[t][1]))
+    return {team: i + 1 for i, team in enumerate(ordered)}
+
+
 def league_top_ids(api: FantasyAPI, top_n: int = LEAGUE_TOP_N) -> set[str]:
     """ids de los `top_n` jugadores con más puntos totales EN CADA posición, de toda LaLiga
     (no solo tu liga privada): estos no son "para invertir", son fichajes prioritarios."""
@@ -157,6 +180,36 @@ def recent_clauser_manager_id(api: FantasyAPI, league_id: str, my_manager_id: st
     return None
 
 
+def rival_bid_premiums(api: FantasyAPI, league_id: str, my_manager_id: str, days: int = 30, pages: int = 4) -> list[float]:
+    """Cuánto sobre el valor de mercado (1.09 = +9%) pagaron los rivales en las pujas que
+    ganaron (`activityTypeId` 31) los últimos `days` días, comparando con el valor del
+    jugador ese mismo día. Pensado para calcularse una vez al día (muchas peticiones)."""
+    now = datetime.now(timezone.utc)
+    out: list[float] = []
+    for page in range(pages):
+        try:
+            items = models.as_list(api.activity(league_id, page), "activity", "elements")
+        except Exception:
+            break
+        if not items:
+            break
+        for a in items:
+            if models.to_int(models.pick(a, "activityTypeId")) != 31 or str(models.pick(a, "user1Id")) == my_manager_id:
+                continue
+            when = models.parse_dt(models.pick(a, "createdAt"))
+            amount = models.to_int(models.pick(a, "amount"))
+            if not when or not amount or (now - when).days > days:
+                continue
+            try:
+                hist = models.parse_value_history(api.market_value_history(models.pick(a, "playerMasterId")))
+            except Exception:
+                continue
+            before = [v for d, v in hist if d <= when]
+            if before and before[-1]:
+                out.append(amount / before[-1])
+    return out
+
+
 def build_world(api: FantasyAPI, s: Settings, with_trends: bool = True) -> World:
     league_id, hinted_team, my_cash = resolve_league(api, s)
     standing = models.parse_standing(api.standing(league_id))
@@ -187,6 +240,7 @@ def build_world(api: FantasyAPI, s: Settings, with_trends: bool = True) -> World
         leader_team_id=leader_team_id,
         revenge_against_team_id=revenge_against_team_id,
         recent_form=recent_form(api),
+        laliga_rank=laliga_ranks(api),
     )
 
     if with_trends:

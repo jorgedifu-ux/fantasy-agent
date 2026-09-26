@@ -122,8 +122,8 @@ jugador). Reglas adicionales de esta investigación:
 | Horizonte de reventa: 14 días de blindaje | `analysis.py::project_value` |
 | Congelación de cláusulas: 24h antes de la jornada | `service.py::clause_freeze_window` |
 | Once no se aplica en automático hasta 24h antes de la jornada | `config.py::LINEUP_LOCK_HOURS` (**pendiente de añadir**) |
-| Corte fase económica → competitiva | **pendiente de añadir** (`SEASON_PHASE_CUTOFF`) |
-| Bonus local/visitante | **pendiente de añadir** en `lineup.py` |
+| Corte fase económica → competitiva | descartado: el usuario prioriza puntos siempre |
+| Bonus local/visitante y dificultad del rival | `autopilot.py::fixture_factor` (en la alineación) |
 | Penalización por rotación europea | **pendiente** (dato externo, no hay endpoint fiable) |
 
 ## 7. Cartera de presupuesto, no fichajes sueltos

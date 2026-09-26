@@ -179,6 +179,44 @@ class SaleLossTests(unittest.TestCase):
         self.assertFalse(ap.breaks_eleven(eleven() + [player("gk2", 1)], "gk"))
 
 
+class RivalPremiumTests(unittest.TestCase):
+    def test_high_gain_target_bids_like_rivals_pay(self):
+        it = item(player("x", 3, 9.0, 10_000_000))
+        rivals = ap.RivalPremium(median=1.09, p75=1.18)
+        self.assertEqual(ap.bid_amount(it, gain=4.0, rivals=rivals), round(10_000_000 * 1.18))
+
+    def test_never_above_cap_even_if_rivals_pay_more(self):
+        it = item(player("x", 3, 9.0, 10_000_000))
+        rivals = ap.RivalPremium(median=1.3, p75=1.6)
+        self.assertEqual(ap.bid_amount(it, gain=4.0, rivals=rivals), round(10_000_000 * (1 + ap.MAX_OVERBID)))
+
+    def test_small_gain_ignores_rival_premium(self):
+        it = item(player("x", 3, 9.0, 10_000_000))
+        rivals = ap.RivalPremium(median=1.15, p75=1.2)
+        self.assertEqual(ap.bid_amount(it, gain=0.8, rivals=rivals), round(10_000_000 * 1.05))
+
+
+class MoreOfferRulesTests(unittest.TestCase):
+    offer = Offer(id="o", money=10_600_000, from_manager="LaLiga", is_system=True)
+
+    def test_starter_not_sold_right_before_the_jornada(self):
+        self.assertEqual(ap.offer_decision(self.offer, player("p", 3), loss=1.5, hours_to_deadline=30)[0], "hold")
+        self.assertEqual(ap.offer_decision(self.offer, player("p", 3), loss=1.5, hours_to_deadline=100)[0], "accept")
+
+    def test_bench_player_sold_at_value_when_squad_is_full(self):
+        cheap = Offer(id="o", money=9_800_000, from_manager="LaLiga", is_system=True)
+        self.assertEqual(ap.offer_decision(cheap, player("p", 3), loss=0.2, squad_full=True)[0], "accept")
+        self.assertEqual(ap.offer_decision(cheap, player("p", 3), loss=0.2, squad_full=False)[0], "hold")
+
+
+class FixtureFactorTests(unittest.TestCase):
+    def test_home_against_the_worst_team_is_best(self):
+        self.assertGreater(ap.fixture_factor(True, 20), ap.fixture_factor(False, 1))
+
+    def test_unknown_fixture_is_neutral(self):
+        self.assertEqual(ap.fixture_factor(None, None), 1.0)
+
+
 class LineupPayloadTests(unittest.TestCase):
     ids = {1: ["g"], 2: ["d1", "d2", "d3", "d4"], 3: ["m1", "m2", "m3"], 4: ["f1", "f2", "f3"]}
 

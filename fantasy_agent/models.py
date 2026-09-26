@@ -205,6 +205,7 @@ class MarketItem:
     offers_count: int = 0  # solo en TUS propios anuncios: cuántas ofertas has recibido
     seller_team_id: str = ""  # compara con tu team_id para saber si el anuncio es tuyo (no por nombre)
     my_bid: int = 0  # tu puja ya enviada sobre este anuncio (0 si no has pujado)
+    my_bid_id: str = ""
     player_team_id: str = ""  # en anuncios de un mánager: id del hueco en su plantilla
 
 
@@ -243,6 +244,7 @@ def parse_market(payload: Any) -> list[MarketItem]:
                 offers_count=to_int(pick(item, "numberOfOffers", default=0)),
                 seller_team_id=str(pick(item, "sellerTeam.id", default="") or ""),
                 my_bid=to_int(pick(item, "bid.money", "myBid.money", default=0)),
+                my_bid_id=str(pick(item, "bid.id", default="") or ""),
                 player_team_id=str(pick(item, "playerTeam.playerTeamId", default="") or ""),
             )
         )
@@ -255,6 +257,19 @@ class Fixture:
     rival_id: str
     home: bool
     when: datetime | None
+
+
+def parse_results(payload: Any) -> list[tuple[str, str, int, int]]:
+    """(local, visitante, goles local, goles visitante) de los partidos ya terminados
+    (`matchState` 7, confirmado en vivo)."""
+    out = []
+    for m in as_list(payload, "matches", "elements"):
+        if to_int(pick(m, "matchState")) != 7:
+            continue
+        local, visitor = str(pick(m, "localId", default="")), str(pick(m, "visitorId", default=""))
+        if local and visitor:
+            out.append((local, visitor, to_int(pick(m, "localScore")), to_int(pick(m, "visitorScore"))))
+    return out
 
 
 def parse_calendar(payload: Any) -> list[Fixture]:

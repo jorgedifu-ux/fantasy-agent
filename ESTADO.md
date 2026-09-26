@@ -35,16 +35,19 @@ Los límites son **económicos**, no de número de operaciones (quitados los "2 
 
 | Acción | Regla |
 |---|---|
-| Fichar (puja) y clausular | Cartera en `autopilot.plan_acquisitions`: elige lo que más **puntos por jornada suma a tu once** por recurso gastado (dinero Y plaza de plantilla, para no llenarla de baratos flojos). Completar el once va siempre primero. Solo cláusulas "lógicas" (≤1,2× valor). Sobrepuja +5% a +20% según cuánto mejora el once y si hay competencia |
+| Fichar (puja) y clausular | Cartera en `autopilot.plan_acquisitions`: elige lo que más **puntos por jornada suma a tu once** por recurso gastado (dinero Y plaza de plantilla, para no llenarla de baratos flojos). Completar el once va siempre primero. Solo cláusulas "lógicas" (≤1,2× valor) |
+| Cuánto pujar | +5% a +20% según cuánto mejora el once y si hay competencia; para los fichajes importantes, **lo que suelen pagar los rivales** (mediana / percentil 75 de sus pujas ganadas en 30 días, recalculado a diario: hoy +9% / +23%). Techo +20% |
+| Pujas por lesionados | Si un jugador por el que has pujado se lesiona antes de resolverse, se cancela la puja |
 | Saldo | Nunca gasta más que saldo − 5% de colchón − pujas vivas − dinero reservado para cláusulas que se liberan en <24h. Nunca puede quedar en negativo |
 | Cláusula que se libera pronto | Reserva su dinero; si se libera dentro de la misma pasada (≤25 min), espera al segundo exacto y paga |
 | Líder / venganza | Clausular al líder o a quien te acaba de clausular se puede, pero con menos prioridad (×0,6) |
 | Poner a la venta | **Todos tus jugadores siempre en venta** (a 1,1× su valor): así la liga manda una oferta diaria por cada uno. Estar en venta no obliga a vender |
-| Ofertas de la liga | Acepta desde **1,05× el valor**; 0,97× si está en caída/lesionado; **1,25× si es clave** (quitarlo baja el once ≥3 pts/jornada). Nunca si te deja sin 11 a <48h de la jornada |
+| Ofertas de la liga | Acepta desde **1,05× el valor**; 0,97× si está en caída/lesionado o es un suplente con la plantilla llena; **1,25× si es clave** (quitarlo baja el once ≥3 pts/jornada) o si es titular y faltan <48h para la jornada. Nunca si te deja sin 11 a <48h |
 | Venta antes de perder la protección | Si la cláusula de un jugador tuyo es atractiva (≤1,2× valor), empieza a intentar venderlo **3 días antes** de que acabe su protección: exige 1,03× a 3 días y baja hasta 0,98× el último día (+7% si es clave) |
 | Ofertas de rivales | Se rechazan, salvo que paguen ≥1,3× el valor |
-| Alineación | El mejor once por puntos esperados × probabilidad de titularidad; se guarda y se **verifica releyéndola**. No se toca con la jornada en juego |
-| Blindaje | Se intenta, pero **la API no lo aplica** (en la app requiere ver un anuncio): el bot te avisa para que lo hagas tú si quieres |
+| Alineación | El mejor once por puntos esperados × probabilidad de titularidad × **partido** (casa +5% / fuera −5%, rival del 1º al último de LaLiga −10% a +10%, con la tabla real calculada de los resultados); se guarda y se **verifica releyéndola**. No se toca con la jornada en juego |
+| Blindaje | Pregunta antes a `check-shield` (si el equipo ya gastó el de la jornada, no insiste) y verifica después. El 26/09 la API respondió bien sin blindar (en la app pide ver un anuncio): si vuelve a pasar, te avisa para que lo hagas tú |
+| Subir tu cláusula (pago) | Tus jugadores de media ≥5 cuya protección acaba en <24h y no se han vendido: cláusula a 1,5× su valor (pagas la mitad de la subida), solo si cabe sin tocar el colchón; se verifica releyendo |
 | Fichaje a crédito | Último recurso a <24h de la jornada con plantilla incompleta (tope 20% del valor) |
 | Te clausulan a alguien | Te avisa (compara la plantilla entre pasadas) |
 
@@ -69,12 +72,13 @@ Todas las cifras están como constantes al principio de `fantasy_agent/autopilot
 - **Blindaje**: `PUT /shield/player` responde bien pero no blinda; `check-shield` → 400
   "Player team shield limit reached".
 
-## Sin probar todavía
+## Sin probar todavía (rutas del cliente Externoak/LaLigaApp, la referencia más cuidada)
 
-- **Rechazar una oferta** (`.../offer/{id}/reject`): ruta de la comunidad, aún no ha llegado
-  ninguna oferta de un rival.
-- **Subir tu cláusula** (`/buyout/{id}/increase`): nunca se ha dado el caso.
-- Fase económica→competitiva y bonus local/visitante (`STRATEGY.md`): documentado, sin implementar.
+- **Rechazar una oferta**: `POST .../offer/{id}/reject` sin cuerpo ni Content-Type (si no, 400).
+- **Subir tu cláusula**: `PUT .../buyout/player` con `{factor: 2, playerId, valueToIncrease}` (la
+  ruta que teníamos antes era incorrecta).
+- **Cancelar una puja**: `DELETE .../market/{marketId}/bid/{bidId}/cancel`.
+- **Fase económica→competitiva**: descartada — tu directriz es ir a por puntos ("jugadores buenos").
 
 ## Cron fiable (recomendado)
 
@@ -115,6 +119,8 @@ cierre de las 20:53, cláusulas que se liberan) lo fiable es dispararlo desde fu
 2. Revisar el primer rechazo real de una oferta de rival y la primera subida de cláusula.
 3. Estimar el saldo de los rivales a partir de `/activity` para priorizar clausulazos donde no
    puedan reponerse.
+4. El Plan fijado en Telegram aún usa la puntuación antigua (informativo): que refleje el plan
+   real del piloto (cláusulas reservadas, pujas vivas, jugadores en riesgo).
 
 ## Dónde está todo
 

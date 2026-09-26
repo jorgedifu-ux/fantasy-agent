@@ -30,6 +30,11 @@ LEAGUE_OFFER_MIN = 1.05      # oferta de la liga: vender desde +5% sobre el valo
 CUT_LOSS_OFFER_MIN = 0.97    # jugador en caída/lesionado: salir aunque sea a ~valor
 KEY_PLAYER_OFFER_MIN = 1.25  # jugador clave: solo por una oferta muy alta
 KEY_PLAYER_LOSS = 3.0        # "clave" = quitarlo baja el once ≥3 pts/jornada
+STARTER_LOSS = 1.0           # titular: a <48h de la jornada solo se vende por mucho
+BENCH_LOSS = 0.5             # suplente que apenas suma
+BENCH_OFFER_MIN = 0.97       # con la plantilla llena, un suplente se vende a ~su valor
+HOME_FACTOR = 1.05           # jugar en casa suma algo, fuera resta algo
+RIVAL_DIFFICULTY = 0.10      # ±10% según la posición del rival en la tabla de LaLiga
 RIVAL_OFFER_MIN = 1.30       # ofertas de rivales: casi nunca convienen
 AT_RISK_HOURS = 72           # se empieza a intentar vender 3 días antes de que acabe su
 # protección: la liga genera una oferta al día (~20:53), así hay 3 oportunidades
@@ -126,9 +131,18 @@ def bid_moves(market: list[MarketItem], skip_player_ids: frozenset[str] = frozen
     return out
 
 
-def bid_amount(item: MarketItem, gain: float) -> int:
+@dataclass(frozen=True)
+class RivalPremium:
+    """Cuánto por encima del valor de mercado pagan los rivales en las pujas que ganan
+    (1.09 = +9%), aprendido de la actividad de la liga (ver service.rival_bid_premium)."""
+    median: float
+    p75: float
+
+
+def bid_amount(item: MarketItem, gain: float, rivals: RivalPremium | None = None) -> int:
     """Pujar para ganar, sin pagar disparates: más empuje cuanto más mejora tu once y si ya
-    hay otras pujas compitiendo, con un techo de +20% sobre el precio de salida."""
+    hay otras pujas compitiendo. Para los fichajes que más mejoran el once, al menos lo que
+    suelen pagar los rivales (mediana; percentil 75 si mejora ≥3 pts). Techo: +20%."""
     overbid = 0.05
     if gain >= 1.5:
         overbid += 0.05
@@ -136,12 +150,14 @@ def bid_amount(item: MarketItem, gain: float) -> int:
         overbid += 0.05
     if item.bids > 0:
         overbid += 0.05
+    if rivals and gain >= 1.5:
+        overbid = max(overbid, (rivals.p75 if gain >= 3.0 else rivals.median) - 1)
     return round(item.price * (1 + min(overbid, MAX_OVERBID)))
 
 
 def plan_acquisitions(
     mine: list[Player], moves: list[Move], budget: int, *,
-    form: dict[str, float] | None = None, max_squad: int = 16,
+    form: dict[str, float] | None = None, max_squad: int = 16, rivals: RivalPremium | None = None,
 ) -> list[Move]:
     """Cartera de compras: en cada paso elige la que más puntos suma por recurso gastado (con
     penalización si alimenta al líder o es venganza), la añade a la plantilla simulada y
@@ -164,7 +180,7 @@ def plan_acquisitions(
             gain = squad_value(roster + [m.player], form) - base
             if gain < MIN_GAIN:
                 continue
-            cost = bid_amount(m.item, gain) if m.kind == "bid" and m.item else m.cost
+            cost = bid_amount(m.item, gain, rivals) if m.kind == "bid" and m.item else m.cost
             if cost > left:
                 continue
             eff = gain / (cost / 1_000_000 + slot_cost + 0.25) * (PENALTY_FACTOR if m.penalized else 1.0)
@@ -222,6 +238,7 @@ def at_risk_min(hours_left: float, key: bool) -> float:
 def offer_decision(
     offer: Offer, player: Player, *, loss: float, cut_loss: bool = False, trend_d7: float = 0.0,
     breaks_xi: bool = False, hours_to_deadline: float | None = None, exposed_in: float | None = None,
+    squad_full: bool = False,
 ) -> tuple[str, str]:
     """("accept" | "reject" | "hold", motivo). "hold" = no hacer nada y dejar que caduque."""
     value = player.market_value
@@ -240,8 +257,12 @@ def offer_decision(
         why = f"{cuando}: mejor venderlo que ver cómo se lo lleva un rival"
     elif key:
         need, why = KEY_PLAYER_OFFER_MIN, "jugador clave"
+    elif loss >= STARTER_LOSS and hours_to_deadline is not None and hours_to_deadline < 48:
+        need, why = KEY_PLAYER_OFFER_MIN, "titular y la jornada empieza en <48h, sin tiempo de reponerlo"
     elif cut_loss:
         need, why = CUT_LOSS_OFFER_MIN, "en caída/lesionado, conviene salir"
+    elif squad_full and loss < BENCH_LOSS:
+        need, why = BENCH_OFFER_MIN, "suplente con la plantilla llena: libera sitio para un fichaje mejor"
     else:
         need, why = LEAGUE_OFFER_MIN, "oferta por encima de su valor"
     if trend_d7 > 5 and not at_risk:
@@ -249,6 +270,17 @@ def offer_decision(
     if ratio >= need:
         return "accept", f"{why}: x{ratio:.2f} el valor (mínimo x{need:.2f})"
     return "hold", f"x{ratio:.2f} el valor, exijo x{need:.2f} ({why})"
+
+
+def fixture_factor(home: bool | None, rival_rank: int | None, n_teams: int = 20) -> float:
+    """Multiplicador de puntos esperados para la próxima jornada: casa/fuera y lo fuerte que
+    es el rival (1º de la tabla → -10%, último → +10%)."""
+    factor = 1.0
+    if home is not None:
+        factor *= HOME_FACTOR if home else 2 - HOME_FACTOR
+    if rival_rank and n_teams > 1:
+        factor *= 1 - RIVAL_DIFFICULTY + 2 * RIVAL_DIFFICULTY * (rival_rank - 1) / (n_teams - 1)
+    return round(factor, 3)
 
 
 def listing_price(player: Player) -> int:
