@@ -1,16 +1,11 @@
 # ⚽ fantasy-agent
 
-Tu analista de **LaLiga Fantasy**: estudia el mercado, las plantillas y cláusulas de tus
-rivales, las subidas y bajadas de valor, estima titularidades por histórico de jornadas y te
-propone el once. Te lo manda por **Telegram**, con alertas cuando una cláusula
-interesante se desbloquea o te pueden clausular a uno de los tuyos.
+Piloto automático para **LaLiga Fantasy**: ficha, clausula, vende, acepta o rechaza ofertas
+y monta la alineación **solo, sin pedir confirmación**, con reglas económicas (ver
+`fantasy_agent/autopilot.py` y `ESTADO.md`). Te cuenta por **Telegram** lo que ha hecho.
 
-> **Pujas y clausulazos: proponen, no ejecutan solos.** Cada oportunidad fuerte (mercado o
-> cláusula lógica ≤1.2x valor) se manda por Telegram como propuesta con un código; solo se
-> ejecuta de verdad si respondes **"Confirmar"** (o "Cancelar"). La alineación está pensada
-> para fijarse sola (gratis y reversible hasta el cierre de mercado) pero **todavía no está
-> conectada**: falta verificar en vivo la forma exacta del PUT de `update_lineup` — ver
-> "Pendiente antes de ir en automático" más abajo.
+> **Todo se ejecuta solo.** Antes de cambiar una regla, `python3 -m fantasy_agent tick
+> --dry-run` enseña qué haría el bot ahora mismo sin escribir nada en ninguna parte.
 
 > ⚠️ **Aviso.** Usa la API *interna* de la app (no oficial ni documentada). Automatizarla
 > probablemente incumple las condiciones de LaLiga Fantasy y podría acarrear sanciones en
@@ -88,33 +83,13 @@ y ajusta la clave en `fantasy_agent/models.py` (o pídeselo a Claude Code pegán
    el `chat.id` va a `TELEGRAM_CHAT_ID`.
 3. `python3 -m fantasy_agent clauses --telegram`
 
-## 4. Confirmar pujas y clausulazos por Telegram
+## 4. Piloto automático
 
-Cuando `watch`/`tick` detecta una oportunidad que cumple el umbral (cláusula lógica ya
-pagable, o fichaje con score alto — ver `STRATEGY.md`), manda algo así:
-
-```
-❓ PROPUESTA [a1b2]
-
-Clausulazo — Fulanito (de Pepe)
-Cláusula: 8.80M · Valor de mercado: 8.00M
-
-Responde "Confirmar a1b2" o "Cancelar a1b2"
-(o solo "Confirmar"/"Cancelar" si es tu única propuesta pendiente).
-```
-
-Respondes en el chat de Telegram y en el siguiente `tick`
-(máx. ~30 min) se ejecuta de verdad y te confirma con ✅ o ❌. Nada se paga sin tu respuesta
-explícita. `python -m fantasy_agent pending` lista lo que está esperando.
-
-## 4bis. Pendiente antes de ir 100% en automático
-
-- **Verificar el payload de `update_lineup`** (la única acción sin confirmación): antes de
-  activarla, ejecuta `python -m fantasy_agent probe /v1/competition/1/teams/<teamId>/lineup`
-  ya logueado y pásame el JSON — con eso termino `lineup.lineup_payload()` y lo conecto.
-- **Primera puja/clausulazo real**: las rutas de escritura (`api.py`) siguen el patrón de
-  otros clientes de este backend pero no se han probado en vivo contra tu cuenta — la primera
-  vez, revisa en la app que el resultado sea el esperado antes de confiar en el automatismo.
+Cada `tick` (GitHub Actions) lee tus ofertas y las acepta/rechaza, ficha y clausula lo que más
+puntos suma a tu once dentro del saldo, pone a la venta a toda tu plantilla (para recibir
+ofertas diarias de la liga), vende antes de que acabe la protección de un jugador y guarda el
+mejor once. Todas las reglas y cifras: `ESTADO.md` ("Qué hace solo") y las constantes al
+principio de `fantasy_agent/autopilot.py`.
 
 ## 5. Titularidad estimada
 
@@ -128,8 +103,8 @@ motivo si no juega (lesión, sanción, suplente...) — para eso ya se usa el es
 
 **Opción A — GitHub Actions (gratis, sin servidor propio).** El repo debe ser público (el
 código no tiene datos personales; tu sesión y tokens van en Secrets, nunca en el repo). El
-workflow `.github/workflows/watch.yml` ejecuta `python -m fantasy_agent tick` cada ~30 min
-(una sola pasada de `watch`) y persiste `data/` (sesión + dedupe de alertas) con
+workflow `.github/workflows/watch.yml` ejecuta `python -m fantasy_agent tick` (una pasada del
+piloto automático; GitHub no garantiza la frecuencia, ver `ESTADO.md` "Cron fiable") y persiste `data/` (sesión + dedupe de alertas) con
 `actions/cache` entre ejecuciones. Secrets necesarios: `TELEGRAM_BOT_TOKEN` +
 `TELEGRAM_CHAT_ID`, además de `FANTASY_TOKENS_JSON` (contenido inicial de `data/tokens.json`
 tras tu login local, para arrancar la sesión la primera vez), y opcionalmente
@@ -161,8 +136,5 @@ o como servicio con `deploy/fantasy-watch.service`. Alternativa con cron:
 
 Todos los umbrales están en `analysis.py` y `lineup.py`: ajústalos a tu liga.
 
-## Próximos pasos con Claude Code
-- Estimar el **saldo de los rivales** a partir del historial de fichajes (`/activity`) para
-  saber quién puede pagarte una cláusula.
-- Recomendación de **puja máxima** según tendencia y competencia.
-- Panel web con histórico en SQLite.
+## Próximos pasos
+Ver `ESTADO.md`.

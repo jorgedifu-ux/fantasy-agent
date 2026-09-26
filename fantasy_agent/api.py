@@ -4,13 +4,11 @@ Rutas documentadas por la comunidad para la temporada 26/27. Ojo con la inconsis
 de la propia app: clasificación y plantillas cuelgan de /leagues/{id}/..., mercado de /league/{id}/...
 Si algo cambia, usa `fantasy probe <ruta>` para ver el JSON crudo y ajusta este archivo.
 
-Los métodos de escritura (puja, cláusula, venta, alineación) modifican el juego de verdad y
-gastan dinero de forma irreversible en algunos casos. Nunca se llaman directamente desde el
-motor de análisis: pasan por `confirm.py`, que exige tu confirmación explícita antes de
-ejecutarlas (excepto la alineación, ver `confirm.py`). Sus rutas siguen el mismo patrón que
-otros clientes de este backend, pero no se han probado aún en vivo — antes de fiarte del todo,
-compara con `fantasy probe /v1/competition/1/teams/<teamId>/lineup` (o la ruta que corresponda)
-la primera vez que uses cada una.
+Los métodos de escritura (puja, cláusula, venta, ofertas, alineación, blindaje) modifican el
+juego de verdad y algunos gastan dinero de forma irreversible. Los usa el piloto automático
+(`cli._watch_once`, decisiones en `autopilot.py`). Verificadas en vivo: bid, pay_buyout_clause,
+sell_player, player_team_offers, accept_offer, update_lineup. Sin efecto real por API:
+shield_player (responde bien pero no blinda). Sin probar: decline_offer, increase_buyout_clause.
 """
 from __future__ import annotations
 
@@ -84,14 +82,13 @@ class FantasyAPI:
         return self.get(f"{COMP}/leagues/{league_id}/activity/{index}", cache=True)
 
     def lineup(self, team_id: str) -> dict:
-        """GET de tu alineación actual. Úsala con `probe` para ver la forma exacta del JSON
-        antes de fiarte de `update_lineup` en automático (ver aviso en la cabecera del módulo)."""
+        """Sin caché a propósito: se relee justo después de guardar para verificar el cambio."""
         return self.get(f"{COMP}/teams/{team_id}/lineup")
 
     def clear_cache(self) -> None:
         self._cache.clear()
 
-    # --- escritura: solo se llaman desde confirm.py, nunca desde el análisis ---
+    # --- escritura: las usa el piloto automático (cli._watch_once) ---
     def _write(self, method: str, path: str, body: dict | None = None) -> Any:
         wait = self.s.request_delay_s - (time.time() - self._last_call)
         if wait > 0:
@@ -112,21 +109,14 @@ class FantasyAPI:
         return self._write("POST", f"{COMP}/league/{league_id}/market/sell",
                             {"playerId": player_id, "salePrice": sale_price})
 
+    def player_team_offers(self, league_id: str, player_team_id: str) -> Any:
+        """Ofertas recibidas por uno de tus jugadores en venta (id + importe + si es de la
+        liga). El listado general del mercado solo trae `numberOfOffers`, no el detalle."""
+        return self.get(f"{COMP}/league/{league_id}/playerTeam/{player_team_id}/offer")
+
     def accept_offer(self, league_id: str, market_id: str, offer_id: str, money: int) -> Any:
-        """⚠️ Sin verificar en vivo todavía — la ruta real ("marketPlayerTeam") no necesita
-        offer_id, ver `accept_only_offer`. Se deja por si algún día aparece un `offer.id` de
-        verdad en el JSON del mercado (no lo hay ahora mismo)."""
         return self._write("POST", f"{COMP}/league/{league_id}/market/{market_id}/offer/{offer_id}/accept",
                             {"offerMoney": money})
-
-    def accept_only_offer(self, league_id: str, market_id: str, money: int) -> Any:
-        """⚠️ CONFIRMADO EN VIVO QUE NO ES ESTA (22/09/2026, Musso, 2,024,749): devuelve
-        403 Forbidden, no un error de payload — probablemente el lado "comprador" de hacer
-        una oferta, no el "vendedor" de aceptarla (la ruta existe, `GET` da 405 con
-        `Allow: POST`, pero este método no es la operación correcta). Se deja documentado
-        como pista para cuando se localice la ruta real (ver ESTADO.md); no la llames en
-        automático — `cli._notify_new_offers` avisa con un umbral en su lugar mientras tanto."""
-        return self._write("POST", f"{COMP}/league/{league_id}/market/{market_id}/offer", {"offerMoney": money})
 
     def decline_offer(self, league_id: str, market_id: str, offer_id: str) -> Any:
         return self._write("POST", f"{COMP}/league/{league_id}/market/{market_id}/offer/{offer_id}/reject")
@@ -155,6 +145,7 @@ class FantasyAPI:
                             {"buyoutClause": new_clause})
 
     def update_lineup(self, team_id: str, lineup_data: dict) -> Any:
-        """⚠️ Payload sin verificar en vivo todavía — ver aviso en la cabecera del módulo.
-        No la llames en automático hasta comparar `lineup_data` con un `probe` real."""
+        """La forma exacta del cuerpo no está documentada: `cli._apply_lineup` prueba las
+        variantes de `autopilot.lineup_payload` y da por buena solo la que, al volver a leer
+        la alineación, se ha guardado de verdad."""
         return self._write("PUT", f"{COMP}/teams/{team_id}/lineup", lineup_data)

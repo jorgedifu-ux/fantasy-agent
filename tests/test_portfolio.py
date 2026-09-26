@@ -2,8 +2,7 @@
 import unittest
 
 from fantasy_agent.analysis import (
-    min_acceptable_offer,
-    Opportunity, Trend, allocate_budget, bid_amount, cut_loss_candidates, emergency_candidates,
+    Opportunity, Trend, allocate_budget, cut_loss_candidates, emergency_candidates,
     position_shortage,
 )
 from fantasy_agent.models import MarketItem, Player, SquadSlot
@@ -97,38 +96,6 @@ class EmergencyCandidatesTests(unittest.TestCase):
         self.assertTrue(out)  # al menos uno de los dos huecos se cubre
 
 
-class BidAmountTests(unittest.TestCase):
-    def _item(self, price=1_000_000, bids=0):
-        return MarketItem(player=player("x"), price=price, expires=None, seller="LaLiga", bids=bids, market_id="m1")
-
-    def test_marginal_opportunity_bids_asking_price(self):
-        self.assertEqual(bid_amount(self._item(1_000_000), score=13, cash=10_000_000), 1_000_000)
-
-    def test_good_opportunity_overbids(self):
-        amount = bid_amount(self._item(1_000_000), score=18, cash=10_000_000)
-        self.assertEqual(amount, 1_080_000)
-
-    def test_great_opportunity_overbids_more(self):
-        amount = bid_amount(self._item(1_000_000), score=25, cash=10_000_000)
-        self.assertEqual(amount, 1_170_000)
-
-    def test_existing_competition_adds_extra(self):
-        amount = bid_amount(self._item(1_000_000, bids=2), score=25, cash=10_000_000)
-        self.assertEqual(amount, 1_220_000)
-
-    def test_never_exceeds_cap_price(self):
-        amount = bid_amount(self._item(1_000_000), score=25, cash=10_000_000, cap_price=1_050_000)
-        self.assertEqual(amount, 1_050_000)
-
-    def test_never_exceeds_cash(self):
-        amount = bid_amount(self._item(1_000_000), score=25, cash=1_100_000)
-        self.assertEqual(amount, 1_100_000)
-
-    def test_never_bids_below_asking_price(self):
-        amount = bid_amount(self._item(1_000_000), score=25, cash=500_000)
-        self.assertEqual(amount, 1_000_000)  # el saldo no llega ni al precio de salida
-
-
 class CutLossTests(unittest.TestCase):
     def test_sustained_fall_flagged_with_price_reason(self):
         slots = [SquadSlot(player("p1"), "T", "yo", 0, None)]
@@ -155,14 +122,3 @@ class CutLossTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class MinAcceptableOfferTests(unittest.TestCase):
-    def test_cut_loss_accepts_below_asking(self):
-        self.assertEqual(min_acceptable_offer(1_000_000, "cut_loss"), 900_000)
-
-    def test_profit_take_requires_full_price(self):
-        self.assertEqual(min_acceptable_offer(1_000_000, "profit_take"), 1_000_000)
-
-    def test_unknown_kind_requires_premium(self):
-        self.assertEqual(min_acceptable_offer(1_000_000, ""), 1_100_000)

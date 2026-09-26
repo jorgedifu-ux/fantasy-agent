@@ -194,63 +194,6 @@ class ClauseAlert:
         return f"{self.kind}:{self.tier}:{self.slot.owner_team_id}:{self.slot.player.id}:{self.slot.clause}:{lock}"
 
 
-def clause_urgency_label(ratio: float, penalty: float) -> str:
-    """4 niveles, como pidió el usuario: cuánto de bueno es el precio (ratio cláusula/valor)
-    matizado por si alimenta al líder o es venganza (penalty > 0 baja el nivel)."""
-    if penalty > 0:
-        return "🟡 RECOMENDABLE" if ratio <= 1.1 else "⚪ NO URGENTE"
-    if ratio <= 1.0:
-        return "🔴 MUY URGENTE"
-    if ratio <= 1.1:
-        return "🟠 URGENTE"
-    return "🟡 RECOMENDABLE"
-
-
-def bid_amount(item: MarketItem, score: float, cash: int | None, cap_price: int | None = None) -> int:
-    """Cuánto pujar DE VERDAD, no solo el precio de salida. Solo compensa ofrecer de más en
-    oportunidades buenas o muy buenas (mismos umbrales que `player_quality_label` — un score
-    "a valorar" no merece pagar de más). Si ya hay otras pujas compitiendo (`item.bids > 0`),
-    un empujón extra. Nunca pasa de `cap_price` (si se da, p.ej. el tope de emergencia) ni
-    del saldo disponible."""
-    if score >= 22:
-        overbid_pct = 0.17  # 🔥 chollo: merece la pena pelearlo
-    elif score >= 16:
-        overbid_pct = 0.08  # ✅ buena opción: un empujón moderado
-    else:
-        overbid_pct = 0.0   # 🤔 a valorar: al precio de salida, sin forzar
-    if item.bids > 0:
-        overbid_pct += 0.05
-    target = round(item.price * (1 + overbid_pct))
-    ceiling = cash if cash is not None else target
-    if cap_price is not None:
-        ceiling = min(ceiling, cap_price)
-    return max(item.price, min(target, ceiling))
-
-
-def player_quality_label(score: float) -> str:
-    """Mismo estilo que usan las guías de fantasy en español: chollo > buena opción > a valorar."""
-    if score >= 22:
-        return "🔥 CHOLLO"
-    if score >= 16:
-        return "✅ BUENA OPCIÓN"
-    return "🤔 A VALORAR"
-
-
-def min_acceptable_offer(listed_price: int, sell_kind: str) -> int:
-    """Umbral mínimo para aceptar una oferta sobre un jugador que has puesto en venta, según
-    POR QUÉ está en venta — no es el mismo umbral para "toca cortar pérdidas ya" que para
-    "solo por si cae una oferta muy buena":
-    - cortar pérdidas: el objetivo es salir, no esperar más — se acepta cualquier oferta
-      razonable aunque sea algo por debajo del precio puesto (90%).
-    - aprovechar máximo: ya vendemos en ganancia; se acepta desde el propio precio puesto
-      (100%) — esperar más arriesga perder la ventana antes de que baje.
-    - resto de la plantilla (listado "por si acaso", no era un candidato activo de venta):
-      hace falta una prima real para compensar desprenderte de alguien que no querías vender
-      (110%)."""
-    pct = {"cut_loss": 0.90, "profit_take": 1.00}.get(sell_kind, 1.10)
-    return round(listed_price * pct)
-
-
 def _fmt_m(amount: int) -> str:
     return f"{amount / 1_000_000:.2f}M"
 

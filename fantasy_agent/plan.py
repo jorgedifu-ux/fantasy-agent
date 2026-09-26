@@ -41,8 +41,7 @@ class PlanItem:
     unlock_at: float | None = None  # solo watchlist: cuándo se libera la cláusula del rival
     player_team_id: str = ""  # id del HUECO de plantilla — lo piden sell_player/pay_buyout_clause,
     # no player_id (que es el id del jugador en sí). Vacío en targets (aún no es tuyo).
-    sell_kind: str = ""  # solo sell_priority: "cut_loss" | "profit_take" — decide el umbral
-    # mínimo de oferta a aceptar, ver analysis.min_acceptable_offer
+    sell_kind: str = ""  # solo sell_priority: "cut_loss" | "profit_take"
 
 
 @dataclass

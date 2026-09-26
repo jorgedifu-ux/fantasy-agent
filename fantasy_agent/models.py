@@ -190,8 +190,8 @@ class Offer:
     id: str
     money: int
     from_manager: str
-    is_system: bool = False  # True si la oferta la genera el propio juego (~valor de mercado),
-    # no un rival de tu liga — ⚠️ heurística sin confirmar en vivo (ver _parse_offers)
+    is_system: bool = False  # True = oferta de la propia liga (`isFromMarket`), no de un rival
+    expires: datetime | None = None
 
 
 @dataclass
@@ -201,25 +201,29 @@ class MarketItem:
     expires: datetime | None
     seller: str  # "LaLiga" si lo pone el juego; nombre del mánager si es de un rival
     bids: int
-    market_id: str = ""  # id del ANUNCIO (no del jugador) — lo pide la API para pujar; sin
-    # verificar en vivo todavía, ver aviso en api.py
+    market_id: str = ""  # id del ANUNCIO (no del jugador) — lo pide la API para pujar
     offers_count: int = 0  # solo en TUS propios anuncios: cuántas ofertas has recibido
-    offers: list["Offer"] = field(default_factory=list)  # ⚠️ forma sin confirmar, ver parse_market
     seller_team_id: str = ""  # compara con tu team_id para saber si el anuncio es tuyo (no por nombre)
+    my_bid: int = 0  # tu puja ya enviada sobre este anuncio (0 si no has pujado)
+    player_team_id: str = ""  # en anuncios de un mánager: id del hueco en su plantilla
 
 
-def _parse_offers(item: Any) -> list[Offer]:
+def parse_player_offers(payload: Any) -> list[Offer]:
+    """`GET /league/{id}/playerTeam/{playerTeamId}/offer` — confirmado en vivo (26/09/2026):
+    lista de `{id, money, status, isFromMarket, expirationDate, ...}`. `isFromMarket: true` es
+    la oferta que genera la propia liga; si es de un mánager rival, viene a false."""
     out = []
-    for o in as_list(item, "offers", "pendingOffers"):
+    for o in as_list(payload, "offers", "elements"):
         oid = pick(o, "id", "offerId")
-        if oid is None:
+        if oid is None or str(pick(o, "status", default="pending")).lower() != "pending":
             continue
-        manager_raw = pick(o, "team.manager.managerName", "fromTeam.manager.managerName", "managerName")
-        is_system = not manager_raw or str(manager_raw).strip().lower() in ("laliga", "fantasy", "system", "juego")
+        from_market = bool(pick(o, "isFromMarket", default=False))
+        manager = pick(o, "team.manager.managerName", "manager.managerName", "fromTeam.manager.managerName")
         out.append(Offer(
-            id=str(oid), money=to_int(pick(o, "offerMoney", "money", "amount")),
-            from_manager=str(manager_raw) if manager_raw else "LaLiga Fantasy",
-            is_system=is_system,
+            id=str(oid), money=to_int(pick(o, "money", "offerMoney", "amount")),
+            from_manager="LaLiga" if from_market else str(manager or "un rival"),
+            is_system=from_market,
+            expires=parse_dt(pick(o, "expirationDate")),
         ))
     return out
 
@@ -237,8 +241,9 @@ def parse_market(payload: Any) -> list[MarketItem]:
                 bids=to_int(pick(item, "numberOfBids", "bidsCount")),
                 market_id=str(pick(item, "id", "marketId", "saleId", default="") or ""),
                 offers_count=to_int(pick(item, "numberOfOffers", default=0)),
-                offers=_parse_offers(item),
                 seller_team_id=str(pick(item, "sellerTeam.id", default="") or ""),
+                my_bid=to_int(pick(item, "bid.money", "myBid.money", default=0)),
+                player_team_id=str(pick(item, "playerTeam.playerTeamId", default="") or ""),
             )
         )
     return items

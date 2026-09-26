@@ -8,9 +8,9 @@ import sys
 import time
 from datetime import datetime, timezone
 
-from . import analysis, auth, confirm, digest, notify, plan as plan_mod, service
+from . import analysis, auth, autopilot as ap, confirm, digest, lineup, models, notify, plan as plan_mod, service
 from .api import FantasyAPI
-from .attendance import estimate_titularidad
+from .attendance import estimate_start_probability, estimate_titularidad
 from .config import load_settings
 from .storage import Store
 
@@ -94,10 +94,6 @@ def cmd_section(args, s) -> None:
     _out(s, text, args.telegram)
 
 
-def _recovered_ids(store: Store, players) -> frozenset:
-    return frozenset(p.id for p in players if store.recently_recovered(p.id))
-
-
 def _record_status_history(store: Store, world) -> None:
     for sl in (*world.my_slots, *world.rival_slots):
         store.record_status(sl.player.id, sl.player.status)
@@ -111,49 +107,6 @@ def _hours_to_deadline(world) -> float | None:
     if not world.clause_freeze:
         return None
     return (world.clause_freeze[1] - datetime.now(timezone.utc)).total_seconds() / 3600
-
-
-def _emergency_buy(store: Store, s, api: FantasyAPI, world) -> str | None:
-    """Red de seguridad: si no puedes alinear 11 legales, ficha del mercado LIBRE (nunca
-    clausulazos) sin pedirte confirmación. No tener 11 en el momento en que se guarda la
-    alineación es JORNADA ENTERA A CERO, no un mal menor (confirmado con la ayuda oficial de
-    LaLiga Fantasy) — por eso el tope de gasto y el límite semanal se relajan cuanto más cerca
-    esté el cierre. Nunca llega a endeudarse solo: eso sigue necesitando tu confirmación."""
-    shortage = analysis.position_shortage(world.my_slots)
-    if not any(shortage.values()):
-        return None
-    hours_left = _hours_to_deadline(world)
-    critical = hours_left is not None and hours_left <= s.lineup_lock_hours
-    urgent = hours_left is not None and hours_left <= 6
-    if not critical and len(store.auto_buys_this_week()) >= s.emergency_buys_per_week:
-        return None
-    cap_pct = s.emergency_buy_cap_pct * (3 if urgent else 1.5 if critical else 1)
-    already = {b["player_id"] for b in store.auto_buys_this_week()}
-    candidates = [
-        o for o in analysis.emergency_candidates(world.my_slots, world.market, world.my_cash, min(cap_pct, 1.0))
-        if o.item.player.id not in already
-    ]
-    if not candidates:
-        return None
-    pick = candidates[0]
-    name = notify.esc(pick.item.player.name)
-    cap = int(world.my_cash * min(cap_pct, 1.0)) if world.my_cash else pick.item.price
-    money = analysis.bid_amount(pick.item, pick.score, world.my_cash, cap_price=cap)
-    try:
-        api.bid(world.league_id, pick.item.market_id, money)
-    except Exception as exc:
-        return f"❌ Fichaje de emergencia fallido para <b>{name}</b>: {notify.esc(str(exc))}"
-    store.record_auto_buy(pick.item.player.id, money)
-    expires_at = pick.item.expires.timestamp() if pick.item.expires else None
-    store.add_market_bid(pick.item.player.id, name, money, expires_at)
-    urgencia = " · ⏰ ÚLTIMA HORA, tope de gasto ampliado" if urgent else " · tope ampliado, jornada cerca" if critical else ""
-    return (
-        f"🚨 <b>FICHAJE DE EMERGENCIA</b> (sin confirmar — plantilla incompleta{urgencia})\n"
-        f"Puja <b>enviada</b> (pendiente de resolverse) por <b>{name}</b> ({pick.item.player.position}), "
-        f"{service.m(money)}\n"
-        f"Motivo: {notify.esc('; '.join(pick.reasons))}\n"
-        f"Te aviso en cuanto se sepa si la ganas."
-    )
 
 
 def _emergency_debt_buy(store: Store, s, api: FantasyAPI, world, team_plan: plan_mod.Plan) -> str | None:
@@ -211,73 +164,6 @@ def _emergency_debt_buy(store: Store, s, api: FantasyAPI, world, team_plan: plan
     return msg
 
 
-def _auto_buy(store: Store, s, api: FantasyAPI, world, recovered_ids: frozenset) -> str | None:
-    """Fichaje autónomo normal (sin confirmar), tope AUTO_BUYS_PER_WEEK — a diferencia del de
-    emergencia, este no espera a que falte plantilla: es simplemente "esta oportunidad es tan
-    buena que no hace falta preguntar", igual que ya decidiste que hiciéramos con los
-    fichajes de emergencia. Nunca se endeuda (solo `_emergency_debt_buy` lo hace, y solo
-    cuando de verdad hace falta) — respeta el mismo colchón de saldo que las propuestas
-    normales (`BUDGET_RESERVE_PCT`)."""
-    if len(store.auto_ops_today("auto_buy")) >= s.auto_buys_per_day:
-        return None
-    already = {b["player_id"] for b in store.auto_ops_today("auto_buy")}
-    picks = [
-        o for o in service.top_bid_candidates(world, s, min_score=18, recovered_ids=recovered_ids)
-        if o.item.player.id not in already
-    ]
-    if not picks:
-        return None
-    pick = picks[0]
-    name = notify.esc(pick.item.player.name)
-    money = analysis.bid_amount(pick.item, pick.score, world.my_cash)
-    if money > (world.my_cash or 0):
-        return None
-    try:
-        api.bid(world.league_id, pick.item.market_id, money)
-    except Exception as exc:
-        return f"❌ Fichaje autónomo fallido para <b>{name}</b>: {notify.esc(str(exc))}"
-    store.record_auto_op("auto_buy", pick.item.player.id, money)
-    expires_at = pick.item.expires.timestamp() if pick.item.expires else None
-    store.add_market_bid(pick.item.player.id, name, money, expires_at)
-    return (
-        f"🛒 <b>FICHAJE AUTÓNOMO</b> (sin confirmar — oportunidad muy buena, score {pick.score})\n"
-        f"Puja <b>enviada</b> (pendiente de resolverse) por <b>{name}</b> ({pick.item.player.position}), "
-        f"{service.m(money)}\nMotivo: {notify.esc('; '.join(pick.reasons)) or 'buena oportunidad'}\n"
-        f"Te aviso en cuanto se sepa si la ganas."
-    )
-
-
-def _auto_sell(store: Store, s, api: FantasyAPI, world, team_plan: plan_mod.Plan) -> str | None:
-    """Venta autónoma (sin confirmar), tope AUTO_SELLS_PER_WEEK — de la lista de venta ya
-    decidida en el Plan (no se improvisa en el momento), tal y como pediste: "que vaya
-    haciendo... tres ventas [por semana]"."""
-    if len(store.auto_ops_today("auto_sell")) >= s.auto_sells_per_day:
-        return None
-    already = {b["player_id"] for b in store.auto_ops_today("auto_sell")}
-    mine_ids = {sl.player.id for sl in world.my_slots}
-    candidates = [
-        i for i in plan_mod.sell_priority_ids(team_plan)
-        if i.player_id in mine_ids and i.player_id not in already
-    ]
-    if not candidates:
-        return None
-    pick = candidates[0]
-    slot = next(sl for sl in world.my_slots if sl.player.id == pick.player_id)
-    price = slot.player.market_value
-    name = notify.esc(pick.player_name)
-    try:
-        api.sell_player(world.league_id, slot.player_team_id, price)
-    except Exception as exc:
-        return f"❌ Venta autónoma fallida para <b>{name}</b>: {notify.esc(str(exc))}"
-    store.record_auto_op("auto_sell", pick.player_id, price)
-    store.add_market_bid(pick.player_id, name, price, None, direction="sell", sell_kind=pick.sell_kind)
-    return (
-        f"💸 <b>VENTA AUTÓNOMA</b> (según el plan, sin confirmar)\n"
-        f"<b>{name}</b> puesto a la venta por {service.m(price)}\n"
-        f"Motivo: {notify.esc(pick.reason)}\nTe aviso en cuanto se venda de verdad."
-    )
-
-
 def _check_bid_resolutions(store: Store, world) -> list[str]:
     """Una puja "enviada" no es una puja "ganada". Compara lo pendiente con tu plantilla
     actual: si el jugador ya está en tu equipo, la ganaste; si ya pasó de sobra su hora de
@@ -297,8 +183,7 @@ def _check_bid_resolutions(store: Store, world) -> list[str]:
             )
     for b in store.unresolved_market_bids("sell"):
         if b["player_id"] not in my_ids:
-            store.resolve_market_bid(b["id"], "sold")
-            results.append(f"💰 <b>Vendido</b>: {notify.esc(b['player_name'])} por {service.m(b['price'])}.")
+            store.resolve_market_bid(b["id"], "gone")  # el aviso lo da _resolve_offers / _squad_changes
     return results
 
 
@@ -364,6 +249,14 @@ def _auto_shield(store: Store, s, api: FantasyAPI, world) -> tuple[str | None, s
             f"Sin coste — puede que haga falta activarlo a mano desde la app la primera vez."
         )
         return msg, ""
+    # La API puede responder bien sin blindar de verdad (visto en vivo el 26/09: en la app
+    # pasa por ver un anuncio). Solo se da por hecho si la plantilla lo refleja.
+    squad = models.parse_squad(api.team(world.league_id, world.my_team_id), world.my_team_id, "")
+    if not any(sl.player_team_id == target.player_team_id and sl.shielded_until for sl in squad):
+        return (
+            f"🛡️ No he podido blindar a <b>{name}</b>: la API no lo aplica sin ver el anuncio de la "
+            f"app. Si quieres protegerlo, blíndalo tú desde la app (es gratis)."
+        ), ""
     return f"🛡️ <b>BLINDADO</b>: {name} protegido de clausulazos (gratis, automático).", target.player.id
 
 
@@ -412,214 +305,297 @@ def _auto_increase_clause(store: Store, s, api: FantasyAPI, world, skip_player_i
     )
 
 
-def _check_and_accept_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
-    """Revisa las ofertas recibidas en tus anuncios de venta pendientes.
+SNIPE_WINDOW_S = 25 * 60  # dentro del mismo job de GitHub (timeout 28 min)
 
-    Dos tipos de oferta, trato distinto (según lo que pediste): las que hace un RIVAL de tu
-    liga se RECHAZAN casi siempre (raramente te conviene lo que ofrece alguien que juega
-    contra ti); las que genera el propio "Fantasy" (cerca del valor de mercado real) se
-    evalúan contra el umbral normal (`analysis.min_acceptable_offer`).
 
-    ⚠️ Forma de la oferta sin confirmar en vivo todavía (nunca ha llegado una real que probar),
-    incluida la heurística para distinguir rival vs. sistema (`Offer.is_system`). Si esto no
-    detecta nada aun viendo `numberOfOffers > 0` en el mercado, compara con
-    `fantasy probe /v1/competition/1/league/<liga>/market` y ajusta `models._parse_offers`."""
-    my_listings = {item.player.id: item for item in world.market if item.seller_team_id == world.my_team_id}
-    results: list[str] = []
-    for b in store.unresolved_market_bids("sell"):
-        item = my_listings.get(b["player_id"])
-        if not item or not item.offers:
-            continue
+def _committed_bids(store: Store, world) -> tuple[int, list]:
+    """Dinero ya comprometido en pujas vivas (si las ganas, se cobran) y los jugadores que
+    llegarían con ellas — cuentan para el saldo y para la plantilla simulada del planificador."""
+    now = time.time()
+    market = {it.player.id: it for it in world.market}
+    by_player: dict[str, tuple[int, object]] = {
+        it.player.id: (it.my_bid, it.player) for it in world.market if it.my_bid
+    }
+    for b in store.unresolved_market_bids("buy"):
+        it = market.get(b["player_id"])
+        if it and b["player_id"] not in by_player and (not b["expires_at"] or b["expires_at"] > now):
+            by_player[b["player_id"]] = (b["price"], it.player)
+    return sum(v for v, _ in by_player.values()), [pl for _, pl in by_player.values()]
 
-        for rival_offer in [o for o in item.offers if not o.is_system]:
-            if not store.alert_is_new(f"declined:{rival_offer.id}", ttl_hours=48):
-                continue
-            try:
-                api.decline_offer(world.league_id, item.market_id, rival_offer.id)
-                results.append(
-                    f"🙅 Oferta de <b>{notify.esc(rival_offer.from_manager)}</b> rechazada por "
-                    f"<b>{notify.esc(b['player_name'])}</b> ({service.m(rival_offer.money)}) — las de rivales de "
-                    f"la liga casi nunca convienen."
+
+def _acquire(store: Store, s, api: FantasyAPI, world) -> tuple[list[str], list[ap.Move]]:
+    """Fichajes y clausulazos autónomos (ver autopilot.plan_acquisitions). Devuelve también
+    las cláusulas que se liberan pronto y ya tienen su dinero reservado (para `_snipe`)."""
+    now = datetime.now(timezone.utc)
+    committed, incoming = _committed_bids(store, world)
+    budget = int((world.my_cash or 0) * (1 - s.budget_reserve_pct)) - committed
+    if budget <= 0:
+        return [], []
+    mine = [sl.player for sl in world.my_slots] + incoming
+    avoid = frozenset(t for t in (world.leader_team_id, world.revenge_against_team_id) if t)
+    moves = ap.clause_moves(world.rival_slots, now, freeze=world.clause_freeze, avoid_team_ids=avoid) + \
+        ap.bid_moves(world.market, skip_player_ids=frozenset(pl.id for pl in incoming))
+    plan = ap.plan_acquisitions(mine, moves, budget, form=world.recent_form, max_squad=s.max_squad)
+    events: list[str] = []
+    for mv in plan:
+        name, pos = notify.esc(mv.player.name), mv.player.position
+        if not mv.executable_now:
+            if store.alert_is_new(f"reserve:{mv.player.id}:{mv.cost}", ttl_hours=24):
+                when = mv.unlock_at.astimezone().strftime("%d/%m %H:%M")
+                events.append(
+                    f"⏳ Reservo {service.m(mv.cost)} para clausular a <b>{name}</b> ({pos}, de "
+                    f"{notify.esc(mv.slot.owner_name)}) cuando se libere el {when} · +{mv.gain} pts/jornada"
                 )
-            except Exception as exc:
-                results.append(f"❌ No he podido rechazar una oferta de rival: {notify.esc(str(exc))}")
-
-        system_offers = [o for o in item.offers if o.is_system]
-        if not system_offers:
-            continue
-        best = max(system_offers, key=lambda o: o.money)
-        threshold = analysis.min_acceptable_offer(b["price"], b["sell_kind"] or "")
-        if best.money < threshold:
             continue
         try:
-            api.accept_offer(world.league_id, item.market_id, best.id, best.money)
+            if mv.kind == "clause":
+                api.pay_buyout_clause(world.league_id, mv.slot.player_team_id, mv.cost)
+                store.record_auto_op("clause", mv.player.id, mv.cost)
+                events.append(
+                    f"⚡ <b>Clausulazo</b>: {name} ({pos}, de {notify.esc(mv.slot.owner_name)}) por "
+                    f"{service.m(mv.cost)} · +{mv.gain} pts/jornada al once"
+                )
+            else:
+                api.bid(world.league_id, mv.item.market_id, mv.cost)
+                expires = mv.item.expires.timestamp() if mv.item.expires else None
+                store.add_market_bid(mv.player.id, mv.player.name, mv.cost, expires)
+                cierre = mv.item.expires.astimezone().strftime("%H:%M") if mv.item.expires else "?"
+                events.append(
+                    f"🛒 <b>Puja</b>: {name} ({pos}) {service.m(mv.cost)} (salida {service.m(mv.item.price)}) "
+                    f"· +{mv.gain} pts/jornada · se resuelve a las {cierre}"
+                )
         except Exception as exc:
-            results.append(
-                f"❌ No he podido aceptar la oferta por <b>{notify.esc(b['player_name'])}</b>: "
-                f"{notify.esc(str(exc))}"
+            events.append(f"❌ {'Clausulazo' if mv.kind == 'clause' else 'Puja'} fallido por <b>{name}</b>: {notify.esc(str(exc))}")
+    return events, [mv for mv in plan if not mv.executable_now]
+
+
+def _snipe(store: Store, api: FantasyAPI, world, reserved: list[ap.Move]) -> list[str]:
+    """Cláusulas con dinero ya reservado que se liberan dentro de este mismo job: espera al
+    segundo exacto y paga, antes de que otro rival se adelante."""
+    events: list[str] = []
+    now = datetime.now(timezone.utc)
+    soon = sorted(
+        (mv for mv in reserved if mv.kind == "clause" and 0 < (mv.unlock_at - now).total_seconds() <= SNIPE_WINDOW_S),
+        key=lambda mv: mv.unlock_at,
+    )
+    for mv in soon:
+        name = notify.esc(mv.player.name)
+        wait = (mv.unlock_at - datetime.now(timezone.utc)).total_seconds() + 2
+        if wait > 0:
+            time.sleep(wait)
+        last_exc = None
+        for _ in range(3):
+            try:
+                api.pay_buyout_clause(world.league_id, mv.slot.player_team_id, mv.cost)
+                store.record_auto_op("clause", mv.player.id, mv.cost)
+                events.append(
+                    f"⚡ <b>Clausulazo al segundo</b>: {name} ({mv.player.position}) por {service.m(mv.cost)} "
+                    f"nada más liberarse · +{mv.gain} pts/jornada"
+                )
+                last_exc = None
+                break
+            except Exception as exc:
+                last_exc = exc
+                time.sleep(5)
+        if last_exc:
+            events.append(f"❌ No he podido clausular a <b>{name}</b> al liberarse: {notify.esc(str(last_exc))}")
+    return events
+
+
+def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
+    """Ofertas recibidas por tus jugadores en venta: aceptar, rechazar o dejar caducar según
+    `autopilot.offer_decision` (incluida la regla de vender antes de que acabe su protección)."""
+    now = datetime.now(timezone.utc)
+    mine = [sl.player for sl in world.my_slots]
+    listed = {it.player.id: it for it in world.market if it.seller_team_id == world.my_team_id}
+    cut = {sl.player.id for sl, _ in analysis.cut_loss_candidates(world.my_slots, world.trends)}
+    hours = _hours_to_deadline(world)
+    sold = set(json.loads(store.get("sold_ids") or "[]"))
+    events: list[str] = []
+    for sl in world.my_slots:
+        it = listed.get(sl.player.id)
+        if not it or it.offers_count <= 0:
+            continue
+        name, pid = notify.esc(sl.player.name), sl.player.id
+        try:
+            offers = models.parse_player_offers(api.player_team_offers(world.league_id, sl.player_team_id))
+        except Exception as exc:
+            events.append(f"❌ No he podido leer las ofertas por <b>{name}</b>: {notify.esc(str(exc))}")
+            continue
+        trend = world.trends.get(pid, (None, analysis.Trend(0, 0, 0)))[1]
+        done = False
+        for o in sorted(offers, key=lambda o: -o.money):
+            decision, why = ap.offer_decision(
+                o, sl.player, loss=ap.sale_loss(mine, pid, world.recent_form), cut_loss=pid in cut,
+                trend_d7=trend.d7, breaks_xi=ap.breaks_eleven(mine, pid), hours_to_deadline=hours,
+                exposed_in=ap.hours_until_exposed(sl, now),
             )
-            continue
-        store.resolve_market_bid(b["id"], "sold")
-        results.append(
-            f"💰 <b>Oferta aceptada</b>: {notify.esc(b['player_name'])} vendido a "
-            f"{notify.esc(best.from_manager)} por {service.m(best.money)} "
-            f"(mínimo exigido: {service.m(threshold)})."
-        )
-    return results
+            if decision == "accept" and not done:
+                try:
+                    api.accept_offer(world.league_id, it.market_id, o.id, o.money)
+                except Exception as exc:
+                    events.append(f"❌ No he podido aceptar la oferta por <b>{name}</b>: {notify.esc(str(exc))}")
+                    continue
+                done = True
+                sold.add(pid)
+                mine = [pl for pl in mine if pl.id != pid]
+                events.append(
+                    f"💰 <b>Vendido</b> {name} a {notify.esc(o.from_manager)} por {service.m(o.money)} "
+                    f"(valor {service.m(sl.player.market_value)}) — {notify.esc(why)}"
+                )
+            elif decision == "reject" or decision == "accept":
+                if store.alert_is_new(f"offer_rejected:{o.id}", ttl_hours=72):
+                    try:
+                        api.decline_offer(world.league_id, it.market_id, o.id)
+                        events.append(f"🙅 Rechazada oferta por <b>{name}</b> ({service.m(o.money)}): {notify.esc(why)}")
+                    except Exception as exc:
+                        events.append(f"❌ No he podido rechazar una oferta por <b>{name}</b>: {notify.esc(str(exc))}")
+            elif store.alert_is_new(f"offer_hold:{o.id}", ttl_hours=72):
+                events.append(f"⏸️ Oferta por <b>{name}</b> de {service.m(o.money)}: no la acepto — {notify.esc(why)}")
+    store.set("sold_ids", json.dumps(sorted(sold)))
+    return events
 
 
-def _notify_new_offers(store: Store, s, world) -> list[str]:
-    """Avisa en cuanto detecta una oferta nueva en uno de tus anuncios de venta pendientes.
+def _list_for_sale(store: Store, api: FantasyAPI, world) -> list[str]:
+    """Todos tus jugadores siempre en venta: así la liga manda una oferta diaria por cada uno
+    y `_resolve_offers` decide. Estar en venta no obliga a vender nada."""
+    listed = {it.player.id for it in world.market if it.seller_team_id == world.my_team_id}
+    done: list[str] = []
+    for sl in world.my_slots:
+        p = sl.player
+        if p.id in listed or not p.market_value or not sl.player_team_id or p.position_id not in ap.FIELD_POSITIONS:
+            continue
+        price = ap.listing_price(p)
+        try:
+            api.sell_player(world.league_id, sl.player_team_id, price)
+            done.append(f"{notify.esc(p.name)} ({service.m(price)})")
+        except Exception as exc:
+            if store.alert_is_new(f"list_fail:{p.id}", ttl_hours=24):
+                done.append(f"{notify.esc(p.name)} ❌ {notify.esc(str(exc))[:120]}")
+    if not done:
+        return []
+    return ["🏷️ En venta (solo se vende si llega una buena oferta): " + ", ".join(done)]
 
-    La API no expone el importe exacto de una oferta "marketPlayerTeam" en el listado general
-    del mercado — solo `numberOfOffers` (confirmado en vivo, ver ESTADO.md) — así que no puedo
-    decirte con la cifra real si es buena o mala. Lo que sí puedo darte es el umbral que
-    deberías exigir según nuestros propios criterios (`analysis.min_acceptable_offer`, el mismo
-    que usa `_check_and_accept_offers` si algún día la API expone el importe): compara ese
-    número con lo que veas en la app y decide tú. Dedupe por (id del anuncio, nº de ofertas)
-    para no repetir el aviso en cada tick mientras siga pendiente la misma oferta."""
-    my_listings = {item.player.id: item for item in world.market if item.seller_team_id == world.my_team_id}
-    results: list[str] = []
-    for b in store.unresolved_market_bids("sell"):
-        item = my_listings.get(b["player_id"])
-        if not item or item.offers_count <= 0:
+
+def _squad_changes(store: Store, world) -> list[str]:
+    """Jugadores que han desaparecido de tu plantilla sin que el bot los vendiera: casi
+    siempre, un rival te ha pagado la cláusula."""
+    now_ids = {sl.player.id: sl.player.name for sl in world.my_slots}
+    prev = json.loads(store.get("squad_snapshot") or "{}")
+    sold = set(json.loads(store.get("sold_ids") or "[]"))
+    events = []
+    for pid, name in prev.items():
+        if pid in now_ids:
             continue
-        key = f"offer_seen:{b['id']}:{item.offers_count}"
-        if not store.alert_is_new(key, ttl_hours=24 * 7):
+        if pid in sold:
+            sold.discard(pid)
+        else:
+            events.append(f"🚨 <b>{notify.esc(name)}</b> ya no está en tu plantilla: te lo han clausulado.")
+    store.set("squad_snapshot", json.dumps(now_ids))
+    store.set("sold_ids", json.dumps(sorted(sold)))
+    return events
+
+
+def _apply_lineup(store: Store, api: FantasyAPI, world) -> str | None:
+    """Guarda el mejor once (gratis y reversible hasta que empieza la jornada). La forma del
+    cuerpo no está documentada: prueba las variantes de `autopilot.lineup_payload`, vuelve a
+    leer la alineación y solo da por buena la que de verdad se ha guardado (y la recuerda)."""
+    try:
+        if (api.current_week() or {}).get("isLive"):
+            return None  # jornada en juego: no tocar
+    except Exception:
+        pass
+    if time.time() < float(store.get("lineup_retry_after") or 0):
+        return None
+    slots = [sl for sl in world.my_slots if sl.player.position_id in ap.FIELD_POSITIONS and sl.player_team_id]
+    if not slots:
+        return None
+    probs = estimate_start_probability(api, [sl.player for sl in slots])
+    cands = []
+    for sl in slots:
+        prob = float(probs.get(sl.player.id, {}).get("start_probability", 70)) / 100
+        cands.append(lineup.Candidate(sl.player, prob, round(ap.xpts(sl.player, world.recent_form) * prob, 2)))
+    formation, eleven, total = lineup.best_eleven(cands)
+    if not eleven or not formation:
+        return None
+    ptid = {sl.player.id: sl.player_team_id for sl in slots}
+    ids_by_pos = {pos: [ptid[c.player.id] for c in eleven if c.player.position_id == pos] for pos in ap.FIELD_POSITIONS}
+    desired = {ptid[c.player.id] for c in eleven}
+    current = api.lineup(world.my_team_id)
+    current_formation = tuple((current.get("formation") or {}).get("tacticalFormation") or ())
+    if ap.lineup_ids(current) == desired and current_formation == tuple(formation):
+        return None
+    learned = store.get("lineup_variant")
+    variants = ([learned] if learned else []) + [v for v in ap.LINEUP_VARIANTS if v != learned]
+    errors = []
+    for v in variants:
+        try:
+            api.update_lineup(world.my_team_id, ap.lineup_payload(formation, ids_by_pos, v))
+        except Exception as exc:
+            errors.append(f"{v}: {str(exc)[:150]}")
             continue
-        threshold = analysis.min_acceptable_offer(b["price"], b["sell_kind"] or "")
-        reason = {
-            "cut_loss": "cortar pérdidas cuanto antes",
-            "profit_take": "ya vendíamos en ganancia, aprovechar al máximo",
-        }.get(b["sell_kind"] or "", "estaba listado por si acaso, sin prisa por vender")
-        plural = "s" if item.offers_count != 1 else ""
-        results.append(
-            f"📩 <b>Oferta recibida</b> por <b>{notify.esc(b['player_name'])}</b> "
-            f"({item.offers_count} oferta{plural} en total)\n"
-            f"Precio puesto: {service.m(b['price'])} · Motivo de la venta: {reason}\n"
-            f"👉 Acéptala si en la app te ofrecen <b>{service.m(threshold)} o más</b>; "
-            f"si no llega a esa cifra, recházala.\n"
-            f"<i>Aún no puedo leer el importe exacto de la oferta — decide tú con este umbral.</i>"
-        )
-    return results
+        if ap.lineup_ids(api.lineup(world.my_team_id)) == desired:
+            store.set("lineup_variant", v)
+            aviso = "" if len(eleven) == 11 else f" · ⚠️ solo {len(eleven)} jugadores: faltan fichajes"
+            return f"🧩 <b>Alineación guardada</b> {'-'.join(map(str, formation))} · {total} pts esperados{aviso}"
+        errors.append(f"{v}: la API respondió bien pero no se guardó")
+    store.set("lineup_retry_after", str(time.time() + 6 * 3600))
+    return "⚠️ No he podido guardar la alineación (reintento en 6h): " + notify.esc(" | ".join(errors))[:700]
 
 
 def _watch_once(store: Store, s) -> str:
-    """Una pasada: ejecuta lo ya aprobado que caiga en esta ventana (al segundo exacto),
-    responde a tus confirmaciones, cubre huecos críticos sin preguntar (dentro del tope),
-    propone lo nuevo (máx. unas pocas decisiones, nunca un tocho), y manda como mucho un
-    parte de situación corto por franja horaria en vez de todo de golpe."""
+    """Una pasada del piloto automático, sin pedir confirmación a nadie: ofertas recibidas,
+    fichajes/clausulazos, poner a la venta, protección, alineación — y un único mensaje de
+    Telegram con lo que se ha hecho (nada si no ha pasado nada)."""
     now = datetime.now()
     api = FantasyAPI(s)
-
-    confirm.run_scheduled(s, store, api)  # lo confirmado con antelación, si toca ya
+    store.retire_all_pending()
+    confirm.poll_and_execute(s, store, api)  # botones antiguos: responde que ya no aplican
 
     world = _world(api, s, trends=True)
     _record_status_history(store, world)
-    confirm.poll_and_execute(s, store, api)
     team_plan = _sync_plan(store, s, world)
+    events: list[str] = _squad_changes(store, world)
+    events += _check_bid_resolutions(store, world)
 
-    events: list[str] = []
-    emergency = _emergency_buy(store, s, api, world)
-    if not emergency:
-        emergency = _emergency_debt_buy(store, s, api, world, team_plan)  # último recurso, ver docstring
-    if emergency:
-        events.append(emergency)
-        world = _world(api, s, trends=True)  # recalcular: acabas de gastar, quiero que se note ya
-
-    recovered = _recovered_ids(store, [sl.player for sl in world.my_slots] + [i.player for i in world.market])
-    auto_bought = _auto_buy(store, s, api, world, recovered)
-    if auto_bought:
-        events.append(auto_bought)
+    sold = _resolve_offers(store, s, api, world)
+    events += sold
+    if sold:
         world = _world(api, s, trends=True)
 
-    auto_sold = _auto_sell(store, s, api, world, team_plan)
-    if auto_sold:
-        events.append(auto_sold)
+    bought, reserved = _acquire(store, s, api, world)
+    events += bought
+    if bought:
         world = _world(api, s, trends=True)
 
+    hours = _hours_to_deadline(world)
+    if any(analysis.position_shortage(world.my_slots).values()) and hours is not None and hours <= s.lineup_lock_hours:
+        debt = _emergency_debt_buy(store, s, api, world, team_plan)  # último recurso, ver docstring
+        if debt:
+            events.append(debt)
+            world = _world(api, s, trends=True)
+
+    events += _list_for_sale(store, api, world)
     shielded, shielded_player_id = _auto_shield(store, s, api, world)
     if shielded:
         events.append(shielded)
     raised_clause = _auto_increase_clause(store, s, api, world, skip_player_id=shielded_player_id)
     if raised_clause:
         events.append(raised_clause)
+    lineup_msg = _apply_lineup(store, api, world)
+    if lineup_msg:
+        events.append(lineup_msg)
 
-    _, alerts = service.clauses_report(world, s)
-    fresh = [a for a in alerts if store.alert_is_new(a.key)]
-    actionable = [a for a in fresh if a.kind == "open_affordable"][:3]  # nunca más de 3 a la vez
-    watch_ids = plan_mod.watchlist_ids(team_plan)
-    for a in actionable:
-        ratio = a.slot.clause / a.slot.player.market_value if a.slot.player.market_value else 1.0
-        en_plan = "\n📐 Según el plan de vigilancia." if a.slot.player.id in watch_ids else \
-            "\n⚠️ Fuera de plan — surge ahora, no estaba previsto."
-        confirm.propose(
-            s, store, "clause",
-            {
-                "league_id": world.league_id, "player_id": a.slot.player_team_id, "amount": a.slot.clause,
-                "player_name": a.slot.player.name,
-            },
-            f"Clausulazo — {a.slot.player.name} (de {a.slot.owner_name})\n"
-            f"Cláusula: {service.m(a.slot.clause)} · Valor de mercado: {service.m(a.slot.player.market_value)}"
-            f"{en_plan}",
-            label=analysis.clause_urgency_label(ratio, a.penalty),
-        )
-
-    # Nunca proponer una puja para alguien en quien ya tienes algo en marcha por otra vía
-    # (autónomo, emergencia, o una puja ya enviada pendiente de resolverse).
-    already_in_play = (
-        {b["player_id"] for b in store.auto_ops_today("auto_buy")}
-        | {b["player_id"] for b in store.auto_ops_this_week("emergency_buy")}
-        | {b["player_id"] for b in store.auto_ops_this_week("emergency_debt_buy")}
-        | {b["player_id"] for b in store.unresolved_market_bids("buy")}
-    )
-    for o in service.top_bid_candidates(world, s, recovered_ids=recovered):
-        if o.item.player.id in already_in_play:
-            continue
-        key = f"bid:{o.item.player.id}:{o.item.price}"
-        if store.alert_is_new(key, ttl_hours=24):
-            # Puja de última hora: si sabemos cuándo cierra el anuncio, se propone ya (para que
-            # puedas decir que sí con calma) pero se EJECUTA ~60s antes del cierre — no antes,
-            # para no revelar la puja pronto y evitar que otro reaccione (ver STRATEGY.md).
-            # El importe ya incluye sobrepuja si la oportunidad lo merece (analysis.bid_amount).
-            money = analysis.bid_amount(o.item, o.score, world.my_cash)
-            execute_at = o.item.expires.timestamp() - 60 if o.item.expires else None
-            confirm.propose(
-                s, store, "bid",
-                {
-                    "league_id": world.league_id, "market_id": o.item.market_id, "money": money,
-                    "player_id": o.item.player.id, "player_name": o.item.player.name,
-                    "expires_at": o.item.expires.timestamp() if o.item.expires else None,
-                },
-                f"Fichaje — {o.item.player.name} ({o.item.player.position})\n"
-                f"Precio de salida: {service.m(o.item.price)} · pujamos {service.m(money)} · score {o.score}\n"
-                f"{'; '.join(o.reasons) or 'sin avisos'}",
-                execute_at=execute_at,
-                label=analysis.player_quality_label(o.score),
-            )
-
-    for accepted in _check_and_accept_offers(store, s, api, world):
-        notify.send_all(s, accepted, html=True)
-
-    for offer_notice in _notify_new_offers(store, s, world):
-        notify.send_all(s, offer_notice, html=True)
-
-    for resolved in _check_bid_resolutions(store, world):
-        notify.send_all(s, resolved, html=True)
-
-    confirm.run_scheduled(s, store, api)  # por si algo se confirmó y ya toca, dentro de este mismo tick
-
-    for e in events:
-        notify.send_all(s, e, html=True)  # inmediato: acabas de perder saldo, no esperas turno para saberlo
-
+    if events:
+        notify.send_all(s, "🤖 <b>PILOTO AUTOMÁTICO</b>\n\n" + "\n\n".join(events), html=True)
     if digest.due(store, s):
         notify.send_all(s, service.situational_briefing(world, s))
         digest.mark_sent(store)
 
-    return (
-        f"[{now:%H:%M}] ok · {len(fresh)} alertas nuevas · {len(actionable)} propuestas de cláusula"
-        f"{' · ' + str(len(events)) + ' evento(s) de emergencia' if events else ''}"
-    )
+    sniped = _snipe(store, api, world, reserved)
+    if sniped:
+        notify.send_all(s, "🤖 <b>PILOTO AUTOMÁTICO</b>\n\n" + "\n\n".join(sniped), html=True)
+    return f"[{now:%H:%M}] ok · {len(events) + len(sniped)} acciones/avisos"
 
 
 def cmd_pending(args, s) -> None:
@@ -656,9 +632,33 @@ def cmd_plan(args, s) -> None:
 
 def cmd_tick(args, s) -> None:
     """Una sola pasada de vigilancia (pensado para cron / GitHub Actions)."""
+    if args.dry_run:
+        _dry_run(s)
+        return
     if not notify.any_enabled(s):
         sys.exit("tick necesita Telegram configurado")
     print(_watch_once(Store(s.db_file), s))
+
+
+def _dry_run(s) -> None:
+    """Lee todo de verdad pero no escribe nada: ni en la API (pujas, ventas, cláusulas,
+    alineación), ni en Telegram, ni en tu base de datos (trabaja sobre una copia)."""
+    import re
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    db = Path(tempfile.mkdtemp()) / "fantasy.sqlite3"
+    if s.db_file.exists():
+        shutil.copy(s.db_file, db)
+    FantasyAPI._write = lambda self, method, path, body=None: print(
+        f"[simulado] {method} {path} {json.dumps(body, ensure_ascii=False)}"
+    )
+    notify.send_all = lambda settings, text, **kw: print(re.sub(r"</?[bi]>", "", text) + "\n")
+    notify.get_telegram_updates = lambda *a, **kw: []
+    notify.edit_message = lambda *a, **kw: True
+    notify.pin_message = lambda *a, **kw: None
+    print(_watch_once(Store(db), s))
 
 
 def cmd_watch(args, s) -> None:
@@ -711,7 +711,9 @@ def main(argv: list[str] | None = None) -> None:
         p.set_defaults(func=cmd_section)
 
     sub.add_parser("watch", help="Vigilancia continua con alertas por Telegram").set_defaults(func=cmd_watch)
-    sub.add_parser("tick", help="Una sola pasada de vigilancia (para cron / GitHub Actions)").set_defaults(func=cmd_tick)
+    p = sub.add_parser("tick", help="Una pasada del piloto automático (para cron / GitHub Actions)")
+    p.add_argument("--dry-run", action="store_true", help="simular: no escribe nada en la API ni en Telegram")
+    p.set_defaults(func=cmd_tick)
     sub.add_parser("pending", help="Propuestas (pujas/cláusulas) esperando tu confirmación").set_defaults(func=cmd_pending)
 
     p = sub.add_parser("plan", help="Plan de equipo: fichajes objetivo, venta priorizada, vigilancia de rivales")

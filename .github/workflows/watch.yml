@@ -2,7 +2,10 @@ name: fantasy-watch
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    # GitHub no garantiza la hora de los cron (con carga, se salta ejecuciones), y penaliza más
+    # las horas en punto: 4 intentos por hora en minutos "raros". Para puntualidad real, ver
+    # ESTADO.md ("Cron fiable": cron-job.org disparando workflow_dispatch).
+    - cron: "4,19,34,49 * * * *"
   workflow_dispatch: {}
 
 concurrency:

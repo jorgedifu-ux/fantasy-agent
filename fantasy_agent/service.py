@@ -212,21 +212,6 @@ def _biddable(world: World) -> list[models.MarketItem]:
     return [i for i in world.market if i.seller == "LaLiga" and i.player.position_id != 5]
 
 
-def top_bid_candidates(
-    world: World, s: Settings, min_score: float = 12.0, limit: int = 3,
-    recovered_ids: frozenset[str] = frozenset(),
-) -> list[analysis.Opportunity]:
-    """Oportunidades de fichaje lo bastante fuertes como para PROPONER pujar de verdad (no solo
-    mostrarlas en el informe): umbral más exigente que `market_report` (8.0) a propósito — aquí
-    hay dinero de por medio. Nunca propone más de lo que tu saldo permite pagar TODO junto
-    (ver `analysis.allocate_budget`, STRATEGY.md §1) — mejor 1-2 que puedas pagar de verdad
-    que 3 sueltas que en conjunto no te caben. Puja siempre al precio de venta exacto, sin
-    negociación de última hora (ver STRATEGY.md, pendiente de afinar con `bid-plan` al estilo
-    fantasybot)."""
-    picks = [o for o in _opportunities(world, recovered_ids) if o.score >= min_score and o.item.market_id]
-    return analysis.allocate_budget(picks, world.my_cash, reserve_pct=s.budget_reserve_pct, max_picks=limit)
-
-
 def _opportunities(world: World, recovered_ids: frozenset[str] = frozenset()) -> list[analysis.Opportunity]:
     neutral = analysis.Trend(0, 0, 0)
     opps = [
@@ -446,7 +431,7 @@ def situational_briefing(world: World, s: Settings) -> str:
         lines.append(f"⏳ Próxima cláusula libre: {upcoming[0].slot.player.name} ({upcoming[0].tier})")
     payable = [a for a in alerts if a.kind == "open_affordable"]
     if payable:
-        lines.append(f"🔓 {len(payable)} cláusula(s) ya pagable(s) — mira las propuestas")
+        lines.append(f"🔓 {len(payable)} cláusula(s) de rivales ya pagable(s) (el piloto automático clausula solo las que mejoran tu once)")
 
     my_row = next((r for r in world.standing if r.team_id == world.my_team_id), None)
     if my_row:

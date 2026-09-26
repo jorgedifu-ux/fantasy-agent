@@ -1,142 +1,126 @@
 # Estado del proyecto — fantasy-agent
 
 Documento de contexto para retomar esto en cualquier momento, aunque se pierda la
-conversación con Claude. Última actualización: **22/09/2026**.
+conversación con Claude. Última actualización: **26/09/2026**.
 
 ## Qué es esto
 
-Un agente que gestiona tu equipo de LaLiga Fantasy (liga "Liga Fantasía", id `018221573`,
-equipo "The Iberian One", id `39057665`) de forma semi-automática: corre solo en GitHub
-Actions cada ~30 min, sin coste (repo público, sin tokens de Claude de por medio — es Python
-puro), y te avisa por Telegram. Repo: `github.com/jorgedifu-ux/fantasy-agent`.
+Un **piloto automático** para tu equipo de LaLiga Fantasy (liga "Liga Fantasía", id
+`018221573`, equipo "The Iberian One", id `39057665`): ficha, clausula, vende, acepta y
+rechaza ofertas y monta la alineación **sin pedirte confirmación**. Corre solo en GitHub
+Actions, sin coste (repo público, Python puro, sin tokens de Claude) y te cuenta por
+Telegram lo que ha hecho. Repo: `github.com/jorgedifu-ux/fantasy-agent`.
 
-**Regla de oro del proyecto**: no tener 11 alineados o tener saldo negativo en el momento en
-que arranca la jornada son **jornada entera a cero puntos** — no un mal menor. Toda la lógica
-de emergencia gira en torno a evitar esos dos escenarios.
+**No necesita a Claude para funcionar.** Solo haría falta si LaLiga cambia su API o si
+quieres cambiar la estrategia.
+
+**Regla de oro**: no tener 11 alineados o tener saldo negativo cuando arranca la jornada es
+**jornada entera a cero puntos**. Todo el diseño gira en torno a evitarlo.
 
 ## Cómo hablar con él
 
-- **Telegram**: bot "Mi Fantasy Bot" (`@Vk_fantasia_bot`). Los avisos llegan ahí, con botones
-  reales "✅ Confirmar" / "❌ Cancelar" en las propuestas.
-- **Terminal** (en esta carpeta): `python3 -m fantasy_agent <comando>` — `pending` (propuestas
-  vivas), `plan --refresh --telegram` (regenerar y fijar el plan), `tick` (una pasada manual,
-  útil para probar), `leagues`/`standing` (estado crudo).
-- **El Plan de equipo**: un mensaje FIJADO en el chat de Telegram (no busques uno nuevo cada
-  vez, se edita en el sitio) con fichajes objetivo, prioridad de venta, y vigilancia de
-  rivales. Se regenera solo 1 vez por semana.
+- **Telegram**: bot "Mi Fantasy Bot" (`@Vk_fantasia_bot`). Un único mensaje "🤖 PILOTO
+  AUTOMÁTICO" por pasada con todo lo hecho (nada si no ha pasado nada), más un parte de
+  situación corto cada ~90 min (silencio de 23h a 7h).
+- **Terminal** (en esta carpeta): `python3 -m fantasy_agent <comando>`:
+  - `tick --dry-run` — **"¿qué harías ahora?"**: lee todo de verdad y lo imprime, sin escribir
+    nada en la API, Telegram ni la base de datos. Úsalo antes de cambiar reglas.
+  - `tick` — una pasada real (lo mismo que hace GitHub).
+  - `plan --refresh --telegram`, `lineup`, `market`, `standing`... — informes.
+- **El Plan de equipo**: mensaje FIJADO en Telegram, se regenera 1 vez por semana.
 
-## Qué hace solo, SIN pedirte confirmación
+## Qué hace solo (todo sin confirmación)
 
-| Acción | Tope | Motivo |
-|---|---|---|
-| Fijar alineación | — | **Bloqueado, ver "Pendiente" abajo** |
-| Fichaje de emergencia (plantilla incompleta) | Hasta 3/semana, se amplía (x1.5–x3) cerca de la jornada | Evitar el cero por plantilla incompleta |
-| Fichaje a crédito (deuda) | Solo si no hay otra forma, tope 20% del valor de plantilla | Último recurso, emparejado con una venta del plan — no es garantía |
-| Compra autónoma (oportunidad muy buena, score≥18) | 2/día | Pediste no depender de que confirmes todo |
-| Venta autónoma (según el Plan: cortar pérdidas / aprovechar máximo) | 2/día | Igual que arriba |
-| Aceptar ofertas del SISTEMA sobre tus ventas | **De momento NO** — solo avisa con el umbral, ver abajo | La API no deja leer el importe exacto, decides tú viendo la app |
-| Rechazar ofertas de RIVALES de tu liga | Casi siempre | Rara vez convienen |
-| Blindaje (proteger tu jugador más vulnerable) | 1 intento / 4 días, gratis | Nueva funcionalidad, sin coste |
-| Subir tu propia cláusula (pago) | Solo si blindaje no disponible, pieza valiosa | Alternativa de pago al blindaje |
+Los límites son **económicos**, no de número de operaciones (quitados los "2 al día").
 
-## Qué SIEMPRE pide tu confirmación (botones en Telegram)
-
-- **Clausulazos** (pagar la cláusula de un rival) — máx. 3 propuestas a la vez.
-- Cualquier operación "fuera de plan" que no encaje en las autónomas de arriba.
-
-## Umbral de aceptar ofertas de venta (tu pregunta del %)
-
-| Motivo de la venta | Acepta desde |
+| Acción | Regla |
 |---|---|
-| 🩸 Cortar pérdidas | 90% del precio puesto |
-| 💰 Aprovechar máximo (ganancia) | 100% |
-| Cualquier otro caso | 110% |
+| Fichar (puja) y clausular | Cartera en `autopilot.plan_acquisitions`: elige lo que más **puntos por jornada suma a tu once** por recurso gastado (dinero Y plaza de plantilla, para no llenarla de baratos flojos). Completar el once va siempre primero. Solo cláusulas "lógicas" (≤1,2× valor). Sobrepuja +5% a +20% según cuánto mejora el once y si hay competencia |
+| Saldo | Nunca gasta más que saldo − 5% de colchón − pujas vivas − dinero reservado para cláusulas que se liberan en <24h. Nunca puede quedar en negativo |
+| Cláusula que se libera pronto | Reserva su dinero; si se libera dentro de la misma pasada (≤25 min), espera al segundo exacto y paga |
+| Líder / venganza | Clausular al líder o a quien te acaba de clausular se puede, pero con menos prioridad (×0,6) |
+| Poner a la venta | **Todos tus jugadores siempre en venta** (a 1,1× su valor): así la liga manda una oferta diaria por cada uno. Estar en venta no obliga a vender |
+| Ofertas de la liga | Acepta desde **1,05× el valor**; 0,97× si está en caída/lesionado; **1,25× si es clave** (quitarlo baja el once ≥3 pts/jornada). Nunca si te deja sin 11 a <48h de la jornada |
+| Venta antes de perder la protección | Si la cláusula de un jugador tuyo es atractiva (≤1,2× valor), empieza a intentar venderlo **3 días antes** de que acabe su protección: exige 1,03× a 3 días y baja hasta 0,98× el último día (+7% si es clave) |
+| Ofertas de rivales | Se rechazan, salvo que paguen ≥1,3× el valor |
+| Alineación | El mejor once por puntos esperados × probabilidad de titularidad; se guarda y se **verifica releyéndola**. No se toca con la jornada en juego |
+| Blindaje | Se intenta, pero **la API no lo aplica** (en la app requiere ver un anuncio): el bot te avisa para que lo hagas tú si quieres |
+| Fichaje a crédito | Último recurso a <24h de la jornada con plantilla incompleta (tope 20% del valor) |
+| Te clausulan a alguien | Te avisa (compara la plantilla entre pasadas) |
 
-**Por qué de momento lo aceptas tú a mano**: la API expone `numberOfOffers` (cuántas ofertas
-hay) pero no el importe exacto de una oferta sobre un anuncio "marketPlayerTeam" — se
-comprobó en vivo (Musso/Tárrega, 22/09) que el JSON del mercado nunca trae el array `offers`
-con detalle, y el único endpoint candidato para leer/aceptar
-(`POST /market/{id}/offer`) devuelve **403 Forbidden** (probado en vivo con Musso, importe
-2,024,749 — no es un bloqueo temporal, es que ese no es el endpoint correcto, probablemente
-es el lado "comprador" de una oferta, no el "vendedor"). Mientras no aparezca la ruta
-correcta: en cuanto llega una oferta nueva (el contador sube), Telegram te avisa con el
-umbral que deberías exigir para que decidas tú mirando la cifra real en la app.
+Todas las cifras están como constantes al principio de `fantasy_agent/autopilot.py`.
 
-## Decisiones y políticas acordadas contigo (con el motivo)
+## Verificado en vivo (26/09/2026)
 
-- **Colchón de saldo**: 20% siempre sin tocar (`BUDGET_RESERVE_PCT`).
-- **Sobrepuja según calidad de la oportunidad**: 0% si es "a valorar", +8% "buena opción",
-  +17% "chollo", +5% extra si ya hay competencia — nunca por encima del saldo.
-- **No alimentar al líder de la liga** ni **clausular por venganza** al que te acaba de
-  clausular a ti — se despriorizan, no se descartan del todo.
-- **Deuda**: nunca automática salvo el último recurso ya descrito; siempre emparejada con una
-  venta inmediata para intentar saldarla antes de la jornada — no es garantía (una venta no
-  es instantánea).
-- **Horas de silencio**: 23h-7h sin el parte de situación rutinario, pero las decisiones
-  urgentes (clausulazos, etc.) se mandan siempre, sin esperar.
-- **Coste en tokens de Claude**: cero en el día a día — todo lo de la tabla de arriba es
-  Python puro en GitHub Actions. Hablar del Plan conmigo es aparte, al ritmo que tú quieras
-  (dijiste semanal).
+- **Leer ofertas**: `GET /league/{liga}/playerTeam/{playerTeamId}/offer` → `{id, money, status,
+  isFromMarket, expirationDate}`. `isFromMarket: true` = oferta de la liga. (La ruta la sacamos
+  del proyecto de la comunidad LaLiga-Fantasy-Builder.)
+- **Aceptar oferta**: `POST /league/{liga}/market/{marketId}/offer/{offerId}/accept` con
+  `{"offerMoney": importe}` → venta inmediata (Sangante 6,62M e Iván Martín 7,36M).
+- **Alineación**: `PUT /teams/{equipo}/lineup` con `{"goalkeeper": id, "defender": [...],
+  "midfield": [...], "striker": [...], "tactical_formation": [d, m, f]}` (ids = `playerTeamId`;
+  ojo, `tactical_formation` en snake_case: la variante camelCase no funcionó).
+- **Puja**: el mercado devuelve tu puja en `bid: {id, money, status}` de cada anuncio.
+- **Cláusula** (`/buyout/{playerTeamId}/pay`) y **poner a la venta** (`/market/sell`).
+- **`/activity`**: lista plana `{activityTypeId, user1Id, user2Id, playerMasterId, amount,
+  createdAt}`; 1 = cláusula (user1 paga, user2 la sufre), 33 = venta, 31 = puja ganada,
+  4 = puesto a la venta. user1Id/user2Id son manager_id.
+- **Mercado**: se resuelve cada día a las ~20:53 (pujas y ofertas nuevas).
+- **Blindaje**: `PUT /shield/player` responde bien pero no blinda; `check-shield` → 400
+  "Player team shield limit reached".
 
-## ⚠️ Sin verificar en vivo todavía (funciona en teoría, no probado con un caso real)
+## Sin probar todavía
 
-- **Alineación automática**: bloqueada a propósito. El primer intento de guardar el once dio
-  error 500 — necesita comparar el JSON real de `probe /v1/competition/1/teams/<id>/lineup`
-  antes de activarse. Mientras tanto, la fijas tú a mano en la app.
-- **Ofertas de rival vs. del sistema** (`Offer.is_system`): heurística sin confirmar — y en la
-  práctica nunca se ejecuta, porque el mercado nunca trae el array `offers` con detalle (ver
-  más abajo), así que este código está listo pero inactivo hasta que aparezca esa ruta.
-- **Aceptar/rechazar una oferta por API**: **confirmado que NO funciona todavía** —
-  `POST /league/{id}/market/{marketId}/offer` da 403 Forbidden (probado en vivo, ver arriba).
-  Sigue siendo el mayor hueco funcional: de momento, siempre lo aceptas tú a mano en la app.
-- **Blindaje / subir cláusula**: nunca se han disparado contra una situación real.
-- Si algo de esto falla o no hace lo que debería, el error de la API suele venir en el propio
-  mensaje de Telegram — pégamelo y lo ajustamos con el JSON real.
+- **Rechazar una oferta** (`.../offer/{id}/reject`): ruta de la comunidad, aún no ha llegado
+  ninguna oferta de un rival.
+- **Subir tu cláusula** (`/buyout/{id}/increase`): nunca se ha dado el caso.
+- Fase económica→competitiva y bonus local/visitante (`STRATEGY.md`): documentado, sin implementar.
 
-## ✅ Confirmado en vivo con datos reales (22/09/2026)
+## Cron fiable (recomendado)
 
-- **`/activity`** (para saber quién te clausuló y evitar venganza): es una **lista plana** de
-  `{activityTypeId, user1Id, user2Id, playerMasterId, amount, createdAt}` — nada de campos
-  anidados. `activityTypeId == 1` es un pago de cláusula (`user1Id` paga, `user2Id` es la
-  víctima), `activityTypeId == 33` una venta de mercado resuelta. `user1Id`/`user2Id` son
-  **manager_id, no team_id** — `service.recent_clauser_manager_id` ya usa las claves reales, y
-  `build_world` convierte el resultado a team_id con el `standing` antes de guardarlo en
-  `World.revenge_against_team_id`.
-- **Bug de IDs (ya corregido)**: `sell_player`/`pay_buyout_clause` necesitan `playerTeamId`
-  (id del hueco en tu plantilla), no el id del jugador — con el id equivocado daba HTTP 400.
+GitHub **no respeta** la frecuencia de los cron gratuitos: con `*/30` se ejecutaba cada 3-5
+horas. El workflow ya lo intenta 4 veces por hora, pero para puntualidad real (ofertas, el
+cierre de las 20:53, cláusulas que se liberan) lo fiable es dispararlo desde fuera, gratis:
 
-## Incidente de hoy (22/09) — ya resuelto
+1. En GitHub (tu cuenta personal) → Settings → Developer settings → Fine-grained tokens →
+   nuevo token **solo para el repo fantasy-agent** con permiso **Actions: Read and write**.
+2. En [cron-job.org](https://cron-job.org) (gratis) → nuevo cron cada 15 min:
+   - URL: `https://api.github.com/repos/jorgedifu-ux/fantasy-agent/actions/workflows/watch.yml/dispatches`
+   - Método POST, cuerpo `{"ref":"main"}`
+   - Cabeceras: `Authorization: Bearer <tu token>`, `Accept: application/vnd.github+json`
+3. Hazlo tú: el token no debe pasar por ninguna conversación ni fichero del repo.
 
-Se acumularon **9 commits sin subir a GitHub** durante toda una sesión de trabajo intensivo —
-la automatización en la nube corría con código de ayer, por eso parecía que "había vuelto
-atrás" y no salían botones (esa versión no los tenía todavía). Ya subido y sincronizado.
-También se limpiaron 5 propuestas duplicadas/obsoletas que se habían acumulado en Telegram, y
-se arregló la causa (`confirm.propose()` ahora retira automáticamente cualquier propuesta
-anterior del mismo jugador antes de crear una nueva).
+## Decisiones y políticas acordadas contigo
 
-**Lección para el futuro**: como agente, recuerda hacer `git push` después de cada tanda de
-commits, no solo `git commit` — si no, la nube se queda desactualizada en silencio.
+- **Autonomía total** (26/09): "no voy a usar el fantasy apenas" — nada pide confirmación.
+- **Ir a por jugadores buenos, no ser conservador**: colchón bajado del 20% al 5%.
+- **Vender antes de que acabe la protección** de un jugador (idea tuya, 26/09), empezando 3
+  días antes para tener varias ofertas donde elegir.
+- **Ofertas de rivales**: casi nunca convienen → rechazar.
+- **Gemini u otra IA gratuita**: descartado por ahora — las decisiones son cálculos sobre datos
+  de la API y una regla fija las hace mejor y de forma predecible. Revisar solo si se ve que
+  ficha a gente que las noticias ya daban por lesionada.
+- **Coste**: cero en el día a día (Python puro en GitHub Actions).
 
-## Próximos pasos (pendientes, sin empezar)
+## Lecciones
 
-1. **Encontrar la ruta real de aceptar/rechazar una oferta** (la única candidata da 403) — sin
-   esto, la venta con oferta nunca puede ser 100% autónoma, solo avisar con el umbral como
-   ahora. Si algún día se localiza (p.ej. viendo las peticiones de la app con un proxy), es el
-   cambio de mayor impacto pendiente.
-2. Verificar en vivo la alineación automática (necesita tu sesión logueada + un `probe`).
-3. Bonus local/visitante y corte de fase económica→competitiva en `STRATEGY.md` (documentado,
-   no implementado).
-4. Estimar el saldo de los rivales a partir de `/activity` para priorizar clausulazos donde no
+- **Hacer `git push` después de cada tanda de commits** (22/09: 9 commits sin subir y la nube
+  corría código viejo en silencio).
+- **La API puede responder 200 sin hacer nada** (visto con el blindaje): toda escritura
+  nueva se verifica releyendo el estado.
+
+## Próximos pasos
+
+1. Montar el cron fiable (arriba) — lo tienes que hacer tú, son 5 minutos.
+2. Revisar el primer rechazo real de una oferta de rival y la primera subida de cláusula.
+3. Estimar el saldo de los rivales a partir de `/activity` para priorizar clausulazos donde no
    puedan reponerse.
-5. La primera vez que se dispare blindaje/subir cláusula/una oferta de rival de verdad,
-   revisar que el resultado sea el esperado.
 
 ## Dónde está todo
 
-- `fantasy_agent/` — el código. `analysis.py` (puntuación, puro/testeable), `plan.py` (el
-  Plan), `confirm.py` (cola de confirmación), `cli.py` (orquesta todo, `_watch_once` es el
-  corazón), `service.py`/`models.py`/`api.py` (datos y escritura).
-- `STRATEGY.md` — el razonamiento estratégico detallado, sección por sección.
-- `CLAUDE.md` — normas de desarrollo del proyecto (para cuando se edite el código).
-- `tests/` — 73 tests, todos sin red (`python3 -m unittest discover -s tests -v`).
-- `.env` — tus credenciales (Telegram, nunca se sube a git).
+- `fantasy_agent/autopilot.py` — **las reglas de decisión** (puro, testeable).
+- `fantasy_agent/cli.py` — ejecuta: `_watch_once` es el ciclo completo.
+- `service.py`/`models.py`/`api.py` (datos y escritura), `plan.py` (el Plan), `lineup.py` (once).
+- `STRATEGY.md` — razonamiento estratégico. `CLAUDE.md` — normas de desarrollo.
+- `tests/` — sin red (`python3 -m unittest discover -s tests -v`).
+- `.env` — tus credenciales (nunca se sube a git).

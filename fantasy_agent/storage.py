@@ -109,6 +109,15 @@ class Store:
             for r in rows
         ]
 
+    def retire_all_pending(self) -> int:
+        """Modo autónomo: las propuestas que esperaban tu "Confirmar" ya no tienen sentido
+        (el piloto automático decide solo); se retiran para que nada antiguo se ejecute."""
+        cur = self.db.execute(
+            "UPDATE pending_ops SET status = 'superseded' WHERE status IN ('pending', 'scheduled')"
+        )
+        self.db.commit()
+        return cur.rowcount
+
     def supersede_pending_for_player(self, kind: str, player_id: str) -> int:
         """Cancela cualquier propuesta PENDIENTE del mismo tipo para el mismo jugador antes de
         crear una nueva — evita acumular dos "Confirmar/Cancelar" para lo mismo (p.ej. la
@@ -194,28 +203,6 @@ class Store:
         )
         self.db.commit()
 
-    def auto_ops_this_week(self, kind: str) -> list[dict[str, Any]]:
-        return self._auto_ops_since(kind, 7 * 86400)
-
-    def auto_ops_today(self, kind: str) -> list[dict[str, Any]]:
-        """Últimas 24h reales (no "desde medianoche") — más simple y consistente con el
-        resto del proyecto, que ya usa ventanas móviles en vez de reinicios de calendario."""
-        return self._auto_ops_since(kind, 86400)
-
-    def _auto_ops_since(self, kind: str, seconds: float) -> list[dict[str, Any]]:
-        cutoff = time.time() - seconds
-        rows = self.db.execute(
-            "SELECT player_id, price, executed_at FROM auto_buys WHERE kind = ? AND executed_at >= ?",
-            (kind, cutoff),
-        ).fetchall()
-        return [{"player_id": r[0], "price": r[1], "executed_at": r[2]} for r in rows]
-
-    # Alias retro-compatibles (siguen usándose para el caso 'emergency_buy' específicamente).
-    def record_auto_buy(self, player_id: str, price: int) -> None:
-        self.record_auto_op("emergency_buy", player_id, price)
-
-    def auto_buys_this_week(self) -> list[dict[str, Any]]:
-        return self.auto_ops_this_week("emergency_buy")
 
     # ---- seguimiento de pujas/ventas: "enviada" no es "ganada"/"vendida" — hay que saber en qué queda ----
     def add_market_bid(

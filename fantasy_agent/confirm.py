@@ -35,8 +35,8 @@ def propose(
 
     `execute_at` (timestamp unix, opcional): si se da y está en el futuro, al confirmar no
     se ejecuta al momento — se programa para ese instante exacto (ver `run_scheduled`).
-    `label`: etiqueta de urgencia/calidad ya formateada (ver analysis.clause_urgency_label /
-    player_quality_label) para que sepas de un vistazo qué tan buena es la operación."""
+    `label`: etiqueta de urgencia/calidad ya formateada, para ver de un vistazo cuánto de
+    buena es la operación."""
     player_id = payload.get("player_id")
     if player_id:
         store.supersede_pending_for_player(kind, player_id)  # nunca dos propuestas vivas del mismo jugador

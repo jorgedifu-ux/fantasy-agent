@@ -15,9 +15,8 @@ def make_settings() -> Settings:
         data_dir=Path(tempfile.mkdtemp()), league_id=None, team_id=None,
         telegram_token="TESTTOKEN", telegram_chat_id="123",
         clause_window_hours=24, watch_interval_min=30, report_hour=9, request_delay_s=0,
-        briefing_interval_min=90, budget_reserve_pct=0.2, emergency_buy_cap_pct=0.15,
-        emergency_buys_per_week=3, lineup_lock_hours=24,
-        auto_buys_per_day=2, auto_sells_per_day=2, debt_ceiling_pct=0.20, debt_min_hours_lead=36,
+        briefing_interval_min=90, budget_reserve_pct=0.05, lineup_lock_hours=24,
+        debt_ceiling_pct=0.20, debt_min_hours_lead=36,
     )
 
 
