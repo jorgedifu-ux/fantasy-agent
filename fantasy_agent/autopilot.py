@@ -249,10 +249,13 @@ def at_risk_min(hours_left: float, key: bool) -> float:
 def offer_decision(
     offer: Offer, player: Player, *, loss: float, cut_loss: bool = False, trend_d7: float = 0.0,
     breaks_xi: bool = False, hours_to_deadline: float | None = None, exposed_in: float | None = None,
-    squad_full: bool = False, cost_basis: int | None = None,
+    squad_full: bool = False, cost_basis: int | None = None, no_sell: bool = False,
 ) -> tuple[str, str]:
-    """("accept" | "reject" | "hold", motivo). "hold" = no hacer nada y dejar que caduque."""
+    """("accept" | "reject" | "hold", motivo). "hold" = no hacer nada y dejar que caduque.
+    `no_sell`: jugador de una operación en curso (bloqueo al líder): no se vende todavía."""
     value = player.market_value
+    if no_sell:
+        return "hold", "forma parte de la operación bloqueo: no se vende antes de la jornada"
     ratio = offer.money / value if value else 0.0
     if not offer.is_system:
         if ratio >= RIVAL_OFFER_MIN:

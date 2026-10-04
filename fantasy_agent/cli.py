@@ -6,9 +6,9 @@ import json
 import random
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from . import analysis, auth, autopilot as ap, confirm, digest, lineup, models, notify, plan as plan_mod, service
+from . import analysis, auth, autopilot as ap, confirm, digest, lineup, models, notify, plan as plan_mod, service, siege
 from .api import FantasyAPI
 from .attendance import estimate_start_probability, estimate_titularidad
 from .config import load_settings
@@ -280,6 +280,7 @@ def _auto_increase_clause(store: Store, s, api: FantasyAPI, world, skip_player_i
 
 
 SNIPE_WINDOW_S = 25 * 60  # dentro del mismo job de GitHub (timeout 28 min)
+SIEGE_WINDOW_S = 20 * 60  # el bloqueo espera menos: tras la espera aún relee todo y ejecuta
 
 
 def _committed_bids(store: Store, world) -> tuple[int, list]:
@@ -329,12 +330,12 @@ def _prune_bids(store: Store, api: FantasyAPI, world) -> list[str]:
     return events
 
 
-def _acquire(store: Store, s, api: FantasyAPI, world) -> tuple[list[str], list[ap.Move]]:
+def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -> tuple[list[str], list[ap.Move]]:
     """Fichajes y clausulazos autónomos (ver autopilot.plan_acquisitions). Devuelve también
     las cláusulas que se liberan pronto y ya tienen su dinero reservado (para `_snipe`)."""
     now = datetime.now(timezone.utc)
     committed, incoming = _committed_bids(store, world)
-    budget = int((world.my_cash or 0) * (1 - s.budget_reserve_pct)) - committed
+    budget = int((world.my_cash or 0) * (1 - s.budget_reserve_pct)) - committed - extra_reserved
     if budget <= 0:
         return [], []
     mine = [sl.player for sl in world.my_slots] + incoming
@@ -464,12 +465,15 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
             continue
         trend = world.trends.get(pid, (None, analysis.Trend(0, 0, 0)))[1]
         done = False
+        in_siege = pid in _siege_ids(store)
+        released = in_siege and hours is not None and hours <= 0  # jornada ya empezada: se puede vender
         for o in sorted(offers, key=lambda o: -o.money):
             decision, why = ap.offer_decision(
-                o, sl.player, loss=ap.sale_loss(mine, pid, world.recent_form), cut_loss=pid in cut,
+                o, sl.player, loss=ap.sale_loss(mine, pid, world.recent_form), cut_loss=(pid in cut) or released,
+                no_sell=in_siege and not released,
                 trend_d7=trend.d7, breaks_xi=ap.breaks_eleven(mine, pid), hours_to_deadline=hours,
                 exposed_in=ap.hours_until_exposed(sl, now), squad_full=len(world.my_slots) >= s.max_squad,
-                cost_basis=paid.get(pid),
+                cost_basis=None if in_siege else paid.get(pid),
             )
             if decision == "accept" and not done:
                 try:
@@ -500,8 +504,11 @@ def _list_for_sale(store: Store, api: FantasyAPI, world) -> list[str]:
     y `_resolve_offers` decide. Estar en venta no obliga a vender nada."""
     listed = {it.player.id for it in world.market if it.seller_team_id == world.my_team_id}
     done: list[str] = []
+    hours = _hours_to_deadline(world)
     for sl in world.my_slots:
         p = sl.player
+        if p.id in _siege_ids(store) and (hours is None or hours > 0):
+            continue  # los porteros de la operación bloqueo no se ponen a la venta antes de la jornada
         if p.id in listed or not p.market_value or not sl.player_team_id or p.position_id not in ap.FIELD_POSITIONS:
             continue
         price = ap.listing_price(p)
@@ -585,6 +592,162 @@ def _apply_lineup(store: Store, api: FantasyAPI, world) -> str | None:
     return "⚠️ No he podido guardar la alineación (reintento en 6h): " + notify.esc(" | ".join(errors))[:700]
 
 
+# ---------------------------------------------------------------------------------------------
+# Operación bloqueo (ver siege.py): dejar sin portero al líder
+# ---------------------------------------------------------------------------------------------
+def _siege_ids(store: Store) -> set[str]:
+    return set(json.loads(store.get("siege_ids") or "[]"))
+
+
+def _siege_add(store: Store, player_id: str) -> None:
+    store.set("siege_ids", json.dumps(sorted(_siege_ids(store) | {player_id})))
+
+
+def _siege_state(store: Store, key: str) -> dict:
+    st = json.loads(store.get("siege_state") or "{}")
+    return st if st.get("jornada") == key else {"jornada": key}
+
+
+def _siege_plan(store: Store, s, api: FantasyAPI, world, max_hours: float = 7 * 24) -> siege.SiegePlan | None:
+    out = world.outlook
+    hours = out.hours_to_next
+    if out.next_first is None or hours is None or hours <= 0 or hours > max_hours:
+        return None
+    others = [r for r in world.standing if r.team_id != world.my_team_id]
+    if not others:
+        return None
+    target = max(others, key=lambda r: r.points)
+    if world.leader_team_id != target.team_id:
+        return None  # el líder soy yo: no hay a quién bloquear
+    try:
+        current = models.to_int(models.pick(api.current_week(), "weekNumber"), default=0)
+    except Exception:
+        current = 0
+    committed, incoming = _committed_bids(store, world)
+    mine = [sl.player for sl in world.my_slots] + incoming
+    free_cash = int((world.my_cash or 0) * (1 - s.budget_reserve_pct)) - committed
+    freeze_start = world.clause_freeze[0] if world.clause_freeze else out.next_first - timedelta(hours=24)
+    return siege.evaluate(
+        target_slots=[sl for sl in world.rival_slots if sl.owner_team_id == target.team_id],
+        other_slots=[sl for sl in world.rival_slots if sl.owner_team_id != target.team_id],
+        my_slots=world.my_slots, market=world.market, now=datetime.now(timezone.utc),
+        first_match=out.next_first, freeze_start=freeze_start, free_cash=free_cash,
+        target_cash=service.estimate_cash(api, world.league_id, target.manager_id),
+        target_points=service.recent_points(api, world.league_id, target.team_id, current),
+        shields_used=service.shields_used_since(api, world.league_id, target.manager_id, out.prev_last),
+        jornada=current, squad_slots_free=s.max_squad - len(mine), my_xi_ok=ap.complete_eleven(mine),
+        target_name=target.manager_name, target_team_id=target.team_id,
+    )
+
+
+def _siege_tick(store: Store, s, api: FantasyAPI, world) -> tuple[list[str], int]:
+    """Evalúa la operación en cada pasada. Devuelve (avisos, dinero a reservar). Cuando es viable
+    y faltan ≤96 h, se anuncia, se reserva el dinero (para que las compras normales no lo
+    gasten) y se pujan ya los porteros del mercado que se resuelven antes de la ejecución."""
+    plan = _siege_plan(store, s, api, world)
+    if plan is None:
+        return [], 0
+    key = world.outlook.next_first.isoformat()
+    st = _siege_state(store, key)
+    if st.get("done"):
+        return [], 0
+    events: list[str] = []
+    hours_to_exec = (plan.exec_at - datetime.now(timezone.utc)).total_seconds() / 3600
+    armed = plan.feasible and hours_to_exec <= siege.ARM_HOURS
+    if armed and not st.get("armed"):
+        st["armed"] = True
+        events.append("🎯 <b>OPERACIÓN BLOQUEO ARMADA</b>\n" + notify.esc(siege.render(plan)))
+    elif st.get("armed") and not plan.feasible:
+        st["armed"] = False
+        events.append("❎ <b>Operación bloqueo descartada</b>:\n" + notify.esc("\n".join(plan.reasons)))
+    store.set("siege_state", json.dumps(st))
+    if not armed:
+        return events, 0
+    for step in plan.steps:
+        if step.kind == "block_bid" and step.when == "pre" and step.cost and step.item and not step.item.my_bid:
+            try:
+                api.bid(world.league_id, step.item.market_id, step.cost)
+                store.add_market_bid(step.player.id, step.player.name, step.cost,
+                                     step.item.expires.timestamp() if step.item.expires else None)
+                _siege_add(store, step.player.id)
+                events.append(f"🎯 Bloqueo: puja de {service.m(step.cost)} por el portero <b>{notify.esc(step.player.name)}</b> "
+                              f"para que {notify.esc(plan.target_name)} no lo fiche.")
+            except Exception as exc:
+                events.append(f"❌ Bloqueo: no he podido pujar por {notify.esc(step.player.name)}: {notify.esc(str(exc))}")
+    return events, plan.outlay
+
+
+def _siege_go(store: Store, s, api: FantasyAPI, world) -> list[str]:
+    """Ejecuta la operación en el último momento (3 min antes de congelarse las cláusulas):
+    espera dentro de este mismo job (máx. 25 min, como `_snipe`), relee todo, reevalúa y, si
+    sigue siendo viable, quita los porteros del líder y cierra las vías de reposición."""
+    out = world.outlook
+    if out.next_first is None or not world.clause_freeze:
+        return []
+    key = out.next_first.isoformat()
+    st = _siege_state(store, key)
+    if not st.get("armed") or st.get("done"):
+        return []
+    freeze_start = world.clause_freeze[0]
+    t_exec = freeze_start - siege.EXEC_MARGIN
+    now = datetime.now(timezone.utc)
+    if now >= freeze_start or (t_exec - now).total_seconds() > SIEGE_WINDOW_S:
+        return []
+    wait = (t_exec - now).total_seconds()
+    if wait > 0:
+        time.sleep(wait)
+    api.clear_cache()  # datos frescos tras la espera: el mercado se acaba de resolver
+    fresh = _world(api, s, trends=False)
+    plan = _siege_plan(store, s, api, fresh)
+    st["done"] = True
+    store.set("siege_state", json.dumps(st))
+    if plan is None or not plan.feasible:
+        why = "\n".join(plan.reasons) if plan else "ya no hay jornada que bloquear"
+        return ["❎ <b>Operación bloqueo cancelada en el último momento</b>:\n" + notify.esc(why)]
+    events = [f"🎯 <b>Ejecutando el bloqueo a {notify.esc(plan.target_name)}</b>"]
+    order = {"kill_clause": 0, "block_clause": 1, "block_bid": 2}
+    for step in sorted(plan.steps, key=lambda x: (order[x.kind], -x.cost)):
+        if step.cost == 0:
+            continue
+        name = notify.esc(step.player.name)
+        try:
+            if step.kind == "block_bid":
+                api.bid(fresh.league_id, step.item.market_id, step.cost)
+                store.add_market_bid(step.player.id, step.player.name, step.cost,
+                                     step.item.expires.timestamp() if step.item.expires else None)
+            else:
+                api.pay_buyout_clause(fresh.league_id, step.slot.player_team_id, step.cost)
+                store.record_auto_op("siege", step.player.id, step.cost)
+            _siege_add(store, step.player.id)
+            events.append(f"  ✅ {name}: {service.m(step.cost)} ({notify.esc(step.note)})")
+        except Exception as exc:
+            events.append(f"  ❌ {name}: {notify.esc(str(exc))}")
+            if step.kind == "kill_clause":
+                events.append("  Paro aquí: sin quitarle los porteros el resto no sirve de nada.")
+                break
+    try:
+        team = models.parse_squad(api.team(fresh.league_id, plan.target_team_id), plan.target_team_id, plan.target_name)
+        gks = [sl.player.name for sl in team if sl.player.position_id == siege.GK and sl.player.available]
+        events.append(f"Resultado: {notify.esc(plan.target_name)} se queda con {len(gks)} portero(s)" + (f": {notify.esc(', '.join(gks))}" if gks else " 🎉"))
+    except Exception:
+        pass
+    return events
+
+
+def cmd_siege(args, s) -> None:
+    """Analiza ahora mismo si el bloqueo al líder sería viable (no escribe nada)."""
+    api = FantasyAPI(s)
+    store = Store(s.db_file)
+    world = _world(api, s, trends=False)
+    plan = _siege_plan(store, s, api, world, max_hours=24 * 30)
+    if plan is None:
+        print("No hay jornada próxima, o el líder eres tú: nada que analizar.")
+        return
+    out = world.outlook
+    print(f"Próxima jornada: {out.next_first.astimezone():%a %d/%m %H:%M}\n")
+    print(siege.render(plan))
+
+
 def _watch_once(store: Store, s) -> str:
     """Una pasada del piloto automático, sin pedir confirmación a nadie: ofertas recibidas,
     fichajes/clausulazos, poner a la venta, protección, alineación — y un único mensaje de
@@ -610,7 +773,9 @@ def _watch_once(store: Store, s) -> str:
     if pruned:
         world = _world(api, s, trends=True)
 
-    bought, reserved = _acquire(store, s, api, world)
+    siege_events, siege_reserve = _siege_tick(store, s, api, world)
+    events += siege_events
+    bought, reserved = _acquire(store, s, api, world, extra_reserved=siege_reserve)
     events += bought
     if bought:
         world = _world(api, s, trends=True)
@@ -659,7 +824,7 @@ def _watch_once(store: Store, s) -> str:
         notify.send_all(s, service.situational_briefing(world, s))
         digest.mark_sent(store)
 
-    sniped = _snipe(store, api, world, reserved)
+    sniped = _siege_go(store, s, api, world) + _snipe(store, api, world, reserved)
     if sniped:
         notify.send_all(s, "🤖 <b>PILOTO AUTOMÁTICO</b>\n\n" + "\n\n".join(sniped), html=True)
     return f"[{now:%H:%M}] ok · {len(events) + len(sniped)} acciones/avisos"
@@ -790,6 +955,7 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("tick", help="Una pasada del piloto automático (para cron / GitHub Actions)")
     p.add_argument("--dry-run", action="store_true", help="simular: no escribe nada en la API ni en Telegram")
     p.set_defaults(func=cmd_tick)
+    sub.add_parser("siege", help="Analiza si dejar sin portero al líder sería viable ahora").set_defaults(func=cmd_siege)
     sub.add_parser("pending", help="Propuestas (pujas/cláusulas) esperando tu confirmación").set_defaults(func=cmd_pending)
 
     p = sub.add_parser("plan", help="Plan de equipo: fichajes objetivo, venta priorizada, vigilancia de rivales")

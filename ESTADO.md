@@ -92,9 +92,25 @@ Todas las cifras están como constantes al principio de `fantasy_agent/autopilot
 - Operaciones cerradas: +10,1M en 16 (la gran ganancia fue Lamine Yamal: +9,9M). Las compradas con el piloto: −1,0M realizado y −5,7M sin realizar (Gueye −8,5M y Soria −7,2M por pagar de más y comprar a la baja): corregido.
 - **Recompensa diaria (100K por ver un anuncio)**: no hay endpoint conocido (15 rutas probadas, todas 404) y el servidor valida el anuncio. No automatizable por ahora.
 
-## Estrategia pendiente de tu decisión: dejar sin jugadores al líder
+## Operación bloqueo: dejar sin portero al líder (construida el 4/10/2026)
 
-Ver el análisis completo en la conversación del 4/10. Resumen: solo es viable con el **portero** (barato), exige quitarle TODOS sus porteros por cláusula (con la cláusula abierta, sin blindaje) y a la vez cerrarle las vías de reposición (porteros del mercado y cláusulas abiertas de otros rivales), todo justo antes de la congelación de cláusulas (24 h antes del primer partido). Hoy no es posible: A. Herrero está bloqueado hasta el sáb 10/10 12:20.
+Sin once legal la jornada entera puntúa 0. Solo se hace con el **portero** (barato y escaso).
+El código está en `fantasy_agent/siege.py` (decisión, pura) y `cli._siege_*` (ejecución).
+Para ver ahora mismo si sería viable: `python3 -m fantasy_agent siege` (no escribe nada).
+
+**Cómo decide** (todo lo que se mira, con datos reales):
+- **Objetivo**: el líder por puntos (si eres tú, no hace nada).
+- **Qué hay que quitarle**: TODOS sus porteros disponibles, con la cláusula abierta (sin bloqueo de 14 días ni blindaje) en el momento de ejecutar.
+- **Cómo repone**: porteros del mercado de LaLiga que se resuelven antes del primer partido (se puja un +35% por encima, para ganarle) y porteros de otros mánagers con la cláusula abierta (se clausulan también) siempre que **pueda pagarlos** (su caja se estima con `/activity`, error ~1M). Si uno de TUS porteros es clausulable por él, no se hace.
+- **Blindaje**: el tope observado es 2 por equipo y jornada; si ya los gastó, no puede protegerse (certeza sube).
+- **Momento**: 3 min antes de que se congelen las cláusulas (24 h antes del primer partido); espera dentro del job (máx. 20 min). Las pujas del mercado que se resuelven antes se hacen ya.
+- **Certeza**: producto de riesgos (blindaje posible 0,85; cada portero del mercado 0,90; cada cláusula ajena 0,93; porteros nuevos antes del cierre 0,85; ofertas directas 0,95). Mínimo **60%**.
+- **Cuánto gasta**: bruto ≤ 70% del saldo libre × etapa de la liga (×0,6 antes de J6, ×1 después, ×1,4 en las últimas 8 jornadas) × (0,5 + 0,5·certeza). Casi todo se recupera: son jugadores.
+- **Si compensa**: beneficio = puntos que suele sacar el líder (media de sus últimas 3 jornadas) × 0,3M; coste esperado = lo pagado por encima del 95% del valor + 10% de coste del dinero parado. Se hace solo si beneficio × certeza ≥ coste.
+- **Arma** (reserva el dinero y avisa por Telegram) a ≤96 h de ejecutar; si deja de ser viable, avisa de que se descarta. **Reevalúa justo antes de ejecutar** y cancela si algo cambió. Si el primer paso (quitarle el portero) falla, no sigue.
+- Los porteros adquiridos **no se venden ni se ponen a la venta antes de la jornada** (volverían al mercado); después se liberan.
+
+**Estado a 4/10 para la J8**: no viable (Herrero está bloqueado hasta el sáb 10 12:20, después de que empiece). Se reevalúa cada pasada.
 
 ## Cron fiable (hecho el 4/10/2026: cron-job.org cada 15 min, token hasta el 14/06/2027)
 

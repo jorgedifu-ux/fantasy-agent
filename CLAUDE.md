@@ -40,6 +40,7 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
 - `autopilot.py` decisiones autónomas (puro, testeable): cartera de fichajes/cláusulas por puntos
   que suman al once, ofertas (aceptar/rechazar/esperar), venta antes de que acabe la protección,
   cuerpo de la alineación
+- `siege.py`    operación bloqueo al líder (puro): viabilidad, certeza, coste; la ejecución está en `cli._siege_*`
 - `analysis.py` tendencias, puntuación de oportunidades (once vs inversión), alarmas de cláusula (puro, testeable)
 - `lineup.py`   mejor once legal por puntos esperados
 - `attendance.py` estima % de titularidad por histórico de jornadas jugadas (gratis, sin APIs externas)

@@ -242,6 +242,70 @@ def purchase_prices(api: FantasyAPI, league_id: str, my_manager_id: str, pages: 
     return out
 
 
+STARTING_CASH = 100_000_000  # saldo inicial de esta liga (comprobado: estimación vs. saldo real, error ~1M)
+
+
+def _all_activity(api: FantasyAPI, league_id: str, max_pages: int = 30) -> list[dict]:
+    rows: list[dict] = []
+    for page in range(max_pages):
+        try:
+            items = models.as_list(api.activity(league_id, page), "activity", "elements")
+        except Exception:
+            break
+        if not items:
+            break
+        rows += items
+    return rows
+
+
+def estimate_cash(api: FantasyAPI, league_id: str, manager_id: str) -> int:
+    """Saldo estimado de un mánager (su caja real no es visible): 100M iniciales − fichajes y
+    cláusulas pagadas + ventas y cláusulas cobradas + premios de jornada (tipo 6)."""
+    cash = STARTING_CASH
+    for a in _all_activity(api, league_id):
+        amount = models.to_int(models.pick(a, "amount"))
+        kind = models.to_int(models.pick(a, "activityTypeId"))
+        u1, u2 = str(models.pick(a, "user1Id", default="")), str(models.pick(a, "user2Id", default=""))
+        if kind in (1, 31) and u1 == manager_id:
+            cash -= amount
+        if kind == 33 and u1 == manager_id:
+            cash += amount
+        if kind == 1 and u2 == manager_id:
+            cash += amount
+        if kind == 6 and u1 == manager_id:
+            cash += amount
+    return cash
+
+
+def shields_used_since(api: FantasyAPI, league_id: str, manager_id: str, since: datetime | None) -> int:
+    """Blindajes que ha usado desde `since` (actividad tipo 4). Observado el 4/10/2026: el tope
+    es 2 por equipo y jornada (Josinho usó 2 el 26/9 y el 30/9; nosotros 2 y luego "límite alcanzado")."""
+    since = since or datetime.now(timezone.utc) - timedelta(days=7)
+    n = 0
+    for a in _all_activity(api, league_id, max_pages=3):
+        when = models.parse_dt(models.pick(a, "createdAt"))
+        if models.to_int(models.pick(a, "activityTypeId")) == 4 and str(models.pick(a, "user1Id", default="")) == manager_id \
+                and when and when > since:
+            n += 1
+    return n
+
+
+def recent_points(api: FantasyAPI, league_id: str, team_id: str, current_week: int, weeks: int = 3) -> float:
+    """Media de puntos por jornada de un equipo en las últimas jornadas jugadas con puntos."""
+    got: list[int] = []
+    for wk in range(current_week - 1, 0, -1):
+        if len(got) >= weeks:
+            break
+        try:
+            rows = models.parse_standing(api.standing_week(league_id, wk))
+        except Exception:
+            continue
+        pts = next((r.points for r in rows if r.team_id == team_id), 0)
+        if pts > 0:
+            got.append(pts)
+    return sum(got) / len(got) if got else 0.0
+
+
 def rival_bid_premiums(api: FantasyAPI, league_id: str, my_manager_id: str, days: int = 30, pages: int = 4) -> list[float]:
     """Cuánto sobre el valor de mercado (1.09 = +9%) pagaron los rivales en las pujas que
     ganaron (`activityTypeId` 31) los últimos `days` días, comparando con el valor del

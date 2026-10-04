@@ -72,6 +72,10 @@ class FantasyAPI:
     def standing(self, league_id: str) -> list[dict]:
         return self.get(f"{COMP}/leagues/{league_id}/standing", cache=True)
 
+    def standing_week(self, league_id: str, week: int) -> list[dict]:
+        """Puntos de cada equipo en UNA jornada (no el acumulado)."""
+        return self.get(f"{COMP}/leagues/{league_id}/standing/{week}", cache=True)
+
     def team(self, league_id: str, team_id: str) -> dict:
         return self.get(f"{COMP}/leagues/{league_id}/teams/{team_id}", cache=True)
 
