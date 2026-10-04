@@ -342,24 +342,36 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
     avoid = frozenset(t for t in (world.leader_team_id, world.revenge_against_team_id) if t)
     moves = ap.clause_moves(world.rival_slots, now, freeze=world.clause_freeze, avoid_team_ids=avoid) + \
         ap.bid_moves(world.market, skip_player_ids=frozenset(pl.id for pl in incoming))
+    trends = {pid: tr for pid, (_, tr) in world.trends.items()}
+    # Tendencia de las cláusulas de rivales con precio razonable (no están en `world.trends`).
+    for m in moves:
+        if m.kind == "clause" and m.player.id not in trends and m.cost <= m.player.market_value * ap.CLAUSE_INVEST_MAX_RATIO:
+            try:
+                trends[m.player.id] = analysis.trend_from_history(models.parse_value_history(api.market_value_history(m.player.id)))
+            except Exception:
+                pass
     short = {pos for pos, n in analysis.position_shortage(world.my_slots).items() if n}
-    moves = [
-        m for m in moves
-        if m.player.position_id in short or not ap.is_falling(
-            *(lambda tr: (tr.d3, tr.d7))(world.trends.get(m.player.id, (None, analysis.Trend(0, 0, 0)))[1])
-        )
-    ]
+    kept = []
+    for m in moves:
+        tr = trends.get(m.player.id, analysis.Trend(0, 0, 0))
+        if m.player.position_id not in short and ap.is_falling(tr.d3, tr.d7):
+            continue
+        m.drift = ap.expected_drift(tr.d3, tr.d7)
+        kept.append(m)
+    moves = kept
     plan = ap.plan_acquisitions(mine, moves, budget, form=world.recent_form, max_squad=s.max_squad,
                                 rivals=_rival_premium(store, api, world))
     events: list[str] = []
     spent = sum(m.cost for m in plan)
-    trends = {pid: tr for pid, (_, tr) in world.trends.items()}
     invest_budget = int((budget - spent) * (
         ap.INVEST_FRACTION_BREAK if world.outlook.in_break else ap.INVEST_FRACTION_NORMAL))
     slots_left = s.max_squad - len(mine) - len(plan)
     if invest_budget > 0 and slots_left > 0 and trends:
+        taken = frozenset(pl.id for pl in mine) | {m.player.id for m in plan}
         plan += ap.plan_investments(
-            ap.invest_moves(world.market, trends, skip_player_ids=frozenset(pl.id for pl in mine) | {m.player.id for m in plan}),
+            ap.invest_moves(world.market, trends, skip_player_ids=taken)
+            + ap.clause_invest_moves(world.rival_slots, trends, now, freeze=world.clause_freeze, avoid_team_ids=avoid,
+                                     skip_player_ids=taken),
             invest_budget, slots_left)
     for mv in plan:
         name, pos = notify.esc(mv.player.name), mv.player.position
@@ -379,10 +391,24 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
         if not mv.executable_now:
             if store.alert_is_new(f"reserve:{mv.player.id}:{mv.cost}", ttl_hours=24):
                 when = mv.unlock_at.astimezone().strftime("%d/%m %H:%M")
+                motivo = (f"inversión: ha subido {trends[mv.player.id].d3:+.1f}% en 3 días y {trends[mv.player.id].d7:+.1f}% en 7"
+                          if mv.kind == "invest_clause" else f"+{mv.gain} pts/jornada")
                 events.append(
                     f"⏳ Reservo {service.m(mv.cost)} para clausular a <b>{name}</b> ({pos}, de "
-                    f"{notify.esc(mv.slot.owner_name)}) cuando se libere el {when} · +{mv.gain} pts/jornada"
+                    f"{notify.esc(mv.slot.owner_name)}) cuando se libere el {when} · {motivo}"
                 )
+            continue
+        if mv.kind == "invest_clause":
+            try:
+                api.pay_buyout_clause(world.league_id, mv.slot.player_team_id, mv.cost)
+                store.record_auto_op("clause", mv.player.id, mv.cost)
+                tr = trends[mv.player.id]
+                events.append(
+                    f"📈 <b>Inversión por cláusula</b>: {name} ({pos}, de {notify.esc(mv.slot.owner_name)}) por "
+                    f"{service.m(mv.cost)} · ha subido {tr.d3:+.1f}% en 3 días y {tr.d7:+.1f}% en 7: se compra para revender"
+                )
+            except Exception as exc:
+                events.append(f"❌ Inversión por cláusula fallida por <b>{name}</b>: {notify.esc(str(exc))}")
             continue
         try:
             if mv.kind == "clause":
@@ -412,7 +438,7 @@ def _snipe(store: Store, api: FantasyAPI, world, reserved: list[ap.Move]) -> lis
     events: list[str] = []
     now = datetime.now(timezone.utc)
     soon = sorted(
-        (mv for mv in reserved if mv.kind == "clause" and 0 < (mv.unlock_at - now).total_seconds() <= SNIPE_WINDOW_S),
+        (mv for mv in reserved if mv.kind in ("clause", "invest_clause") and 0 < (mv.unlock_at - now).total_seconds() <= SNIPE_WINDOW_S),
         key=lambda mv: mv.unlock_at,
     )
     for mv in soon:
@@ -427,7 +453,7 @@ def _snipe(store: Store, api: FantasyAPI, world, reserved: list[ap.Move]) -> lis
                 store.record_auto_op("clause", mv.player.id, mv.cost)
                 events.append(
                     f"⚡ <b>Clausulazo al segundo</b>: {name} ({mv.player.position}) por {service.m(mv.cost)} "
-                    f"nada más liberarse · +{mv.gain} pts/jornada"
+                    f"nada más liberarse · " + ("inversión (en subida)" if mv.kind == "invest_clause" else f"+{mv.gain} pts/jornada")
                 )
                 last_exc = None
                 break
@@ -463,6 +489,8 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
         except Exception as exc:
             events.append(f"❌ No he podido leer las ofertas por <b>{name}</b>: {notify.esc(str(exc))}")
             continue
+        for o in offers:
+            store.log_offer(o.id, pid, sl.player.name, sl.player.market_value, o.money, o.is_system)
         trend = world.trends.get(pid, (None, analysis.Trend(0, 0, 0)))[1]
         done = False
         in_siege = pid in _siege_ids(store)
@@ -734,6 +762,20 @@ def _siege_go(store: Store, s, api: FantasyAPI, world) -> list[str]:
     return events
 
 
+def cmd_offers(args, s) -> None:
+    """Cómo se distribuyen las ofertas de la liga respecto al valor (lo que el bot ha visto)."""
+    ratios = Store(s.db_file).offer_ratios()
+    if not ratios:
+        print("Aún no hay ofertas registradas.")
+        return
+    q = lambda p: ratios[min(len(ratios) - 1, int(len(ratios) * p))]
+    print(f"{len(ratios)} ofertas · mín {ratios[0]:.3f} · p10 {q(.1):.3f} · p25 {q(.25):.3f} · mediana {q(.5):.3f} · "
+          f"p75 {q(.75):.3f} · p90 {q(.9):.3f} · máx {ratios[-1]:.3f}")
+    for lo in [x / 100 for x in range(84, 120, 4)]:
+        n = sum(lo <= r < lo + 0.04 for r in ratios)
+        print(f"  {lo:.2f}–{lo + .04:.2f}: {'#' * n} {n}")
+
+
 def cmd_siege(args, s) -> None:
     """Analiza ahora mismo si el bloqueo al líder sería viable (no escribe nada)."""
     api = FantasyAPI(s)
@@ -955,6 +997,7 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("tick", help="Una pasada del piloto automático (para cron / GitHub Actions)")
     p.add_argument("--dry-run", action="store_true", help="simular: no escribe nada en la API ni en Telegram")
     p.set_defaults(func=cmd_tick)
+    sub.add_parser("offers", help="Distribución de las ofertas de la liga respecto al valor").set_defaults(func=cmd_offers)
     sub.add_parser("siege", help="Analiza si dejar sin portero al líder sería viable ahora").set_defaults(func=cmd_siege)
     sub.add_parser("pending", help="Propuestas (pujas/cláusulas) esperando tu confirmación").set_defaults(func=cmd_pending)
 

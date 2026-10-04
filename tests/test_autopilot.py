@@ -301,5 +301,49 @@ class InvestmentTests(unittest.TestCase):
         self.assertEqual(len(ap.plan_investments(ap.invest_moves(market, trends), budget=100_000_000, slots=2)), 2)
 
 
-if __name__ == "__main__" and False:
-    pass
+class ClauseInvestmentTests(unittest.TestCase):
+    from fantasy_agent.analysis import Trend
+
+    def test_rising_player_with_fair_clause_is_an_investment(self):
+        T = self.Trend
+        p = player("riser", 3, 4.0, 10_000_000)
+        out = ap.clause_invest_moves([rival_slot(p)], {"riser": T(2, 6, 10)}, NOW)
+        self.assertEqual([(m.kind, m.player.id) for m in out], [("invest_clause", "riser")])
+
+    def test_expensive_clause_or_flat_player_is_ignored(self):
+        T = self.Trend
+        p = player("riser", 3, 4.0, 10_000_000)
+        self.assertEqual(ap.clause_invest_moves([rival_slot(p, clause=11_500_000)], {"riser": T(2, 6, 10)}, NOW), [])
+        self.assertEqual(ap.clause_invest_moves([rival_slot(p)], {"riser": T(0, 1, 2)}, NOW), [])
+
+    def test_clause_unlocking_soon_is_reserved_not_executed(self):
+        T = self.Trend
+        p = player("riser", 3, 4.0, 10_000_000)
+        out = ap.clause_invest_moves([rival_slot(p, locked_until=NOW + timedelta(hours=6))], {"riser": T(2, 6, 10)}, NOW)
+        self.assertFalse(out[0].executable_now)
+
+    def test_plans_clause_and_market_investments_together(self):
+        T = self.Trend
+        a = player("a", 3, 4.0, 10_000_000)
+        b = player("b", 3, 4.0, 5_000_000)
+        trends = {"a": T(2, 6, 10), "b": T(3, 9, 20)}
+        moves = ap.clause_invest_moves([rival_slot(a)], trends, NOW) + ap.invest_moves([item(b)], trends)
+        chosen = ap.plan_investments(moves, budget=60_000_000, slots=5)
+        self.assertEqual({m.kind for m in chosen}, {"invest_clause", "invest"})
+        self.assertEqual(chosen[0].player.id, "b")  # más momentum primero
+
+
+class DriftTests(unittest.TestCase):
+    def test_expected_drift_levels(self):
+        self.assertEqual(ap.expected_drift(5, 8), 0.17)
+        self.assertEqual(ap.expected_drift(2.5, 4), 0.08)
+        self.assertEqual(ap.expected_drift(0, 1), 0.0)
+
+    def test_rising_candidate_beats_an_equal_flat_one(self):
+        mine = eleven()[:-1]            # falta un delantero
+        flat, riser = player("flat", 4, 5.0, 10_000_000), player("riser", 4, 5.0, 10_000_000)
+        moves = ap.bid_moves([item(flat), item(riser)])
+        for m in moves:
+            m.drift = 0.17 if m.player.id == "riser" else 0.0
+        plan = ap.plan_acquisitions(mine, moves, budget=30_000_000, max_squad=len(mine) + 1)
+        self.assertEqual([m.player.id for m in plan], ["riser"])

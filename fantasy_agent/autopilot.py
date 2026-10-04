@@ -18,6 +18,7 @@ from . import lineup
 from .models import MarketItem, Offer, Player, SquadSlot
 
 FIELD_POSITIONS = (1, 2, 3, 4)
+POINT_VALUE_M = 0.30         # lo que vale un punto de jornada (0,1M de premio + posición en la liga)
 MAX_CLAUSE_RATIO = 1.2       # cláusula "lógica": ≤1.2x el valor de mercado
 MIN_GAIN = 0.5               # pts/jornada que como mínimo debe sumar una compra
 COMPLETE_XI_BONUS = 15.0     # completar el once pesa más que cualquier fichaje
@@ -75,7 +76,7 @@ def squad_value(players: list[Player], form: dict[str, float] | None = None, *, 
 
 @dataclass
 class Move:
-    kind: str                       # "clause" | "bid" | "invest" (puja para revender, no para el once)
+    kind: str                       # "clause" | "bid" | "invest" | "invest_clause" (comprar para revender, no para el once)
     player: Player
     cost: int
     gain: float = 0.0
@@ -84,6 +85,7 @@ class Move:
     unlock_at: datetime | None = None  # cláusula que aún no se ha liberado: solo reserva saldo
     penalized: bool = False
     score: float = 0.0              # solo "invest": fuerza del momentum (d3 + d7)
+    drift: float = 0.0              # revalorización esperada a ~7 días (0,17 = +17%), ver expected_drift
 
     @property
     def executable_now(self) -> bool:
@@ -162,6 +164,16 @@ def is_falling(d3: float, d7: float) -> bool:
     return d3 <= -3 or d7 <= -6
 
 
+def expected_drift(d3: float, d7: float) -> float:
+    """Revalorización esperada de un jugador a ~7 días según su inercia reciente (prueba
+    histórica del 4/10/2026: ≥4%/3d y ≥6%/7d → +17%; ≥2%/3d → +10% sin la prima de compra)."""
+    if d3 >= 4 and d7 >= 6:
+        return 0.17
+    if d3 >= 2 and d7 >= 3:
+        return 0.08
+    return 0.0
+
+
 def plan_acquisitions(
     mine: list[Player], moves: list[Move], budget: int, *,
     form: dict[str, float] | None = None, max_squad: int = 16, rivals: RivalPremium | None = None,
@@ -190,7 +202,9 @@ def plan_acquisitions(
             cost = bid_amount(m.item, gain, rivals) if m.kind == "bid" and m.item else m.cost
             if cost > left:
                 continue
-            eff = gain / (cost / 1_000_000 + slot_cost + 0.25) * (PENALTY_FACTOR if m.penalized else 1.0)
+            # Lo que rinde un fichaje = puntos que suma + lo que se revaloriza (expresado en puntos).
+            total = gain + m.drift * (cost / 1_000_000) / POINT_VALUE_M
+            eff = total / (cost / 1_000_000 + slot_cost + 0.25) * (PENALTY_FACTOR if m.penalized else 1.0)
             if best is None or eff > best[0]:
                 best = (eff, m, gain, cost)
         if best is None:
@@ -345,6 +359,7 @@ def lineup_ids(lineup_json: dict) -> set[str]:
 MOMENTUM_D3 = 4.0
 MOMENTUM_D7 = 6.0
 INVEST_MAX_PRICE_RATIO = 1.06    # el precio de salida debe estar a ≤6% sobre el valor
+CLAUSE_INVEST_MAX_RATIO = 1.08   # cláusulas de rivales: la cláusula debe estar a ≤8% sobre el valor
 INVEST_FRACTION_NORMAL = 0.25    # parte del saldo libre que se dedica a inversión
 INVEST_FRACTION_BREAK = 0.60     # en un parón no hay once que puntuar: más a invertir
 INVEST_MAX_SHARE = 0.40          # máximo por jugador, sobre el presupuesto de inversión
@@ -367,15 +382,34 @@ def invest_moves(market: list[MarketItem], trends: dict, skip_player_ids: frozen
     return sorted(out, key=lambda m: -m.score)
 
 
+def clause_invest_moves(
+    rival_slots: list[SquadSlot], trends: dict, now: datetime, *, freeze: tuple[datetime, datetime] | None = None,
+    lookahead_hours: float = 24, avoid_team_ids: frozenset[str] = frozenset(),
+    skip_player_ids: frozenset[str] = frozenset(),
+) -> list[Move]:
+    """Cláusulas de rivales (abiertas o que se abren en <24 h) de jugadores en subida sostenida:
+    es lo que han hecho los rivales para hacer dinero (Josinho +76M sin vender nada). La cláusula
+    acompaña al valor, así que la ganancia viene solo de la inercia: se compra lo que ya sube."""
+    out = []
+    for m in clause_moves(rival_slots, now, lookahead_hours=lookahead_hours, freeze=freeze, avoid_team_ids=avoid_team_ids):
+        p, tr = m.player, trends.get(m.player.id)
+        if tr is None or p.id in skip_player_ids or m.cost > p.market_value * CLAUSE_INVEST_MAX_RATIO:
+            continue
+        if tr.d3 >= MOMENTUM_D3 and tr.d7 >= MOMENTUM_D7:
+            m.kind, m.score = "invest_clause", round(tr.d3 + tr.d7 - (10 if m.penalized else 0), 1)
+            out.append(m)
+    return sorted(out, key=lambda m: -m.score)
+
+
 def plan_investments(moves: list[Move], budget: int, slots: int) -> list[Move]:
     """Las de más momentum primero, sin pasar de INVEST_MAX_SHARE del presupuesto por jugador
     ni de las plazas libres de la plantilla."""
     chosen: list[Move] = []
     left, cap = budget, int(budget * INVEST_MAX_SHARE)
-    for m in moves:
+    for m in sorted(moves, key=lambda m: -m.score):
         if len(chosen) >= slots:
             break
-        cost = bid_amount(m.item, 0.0)
+        cost = bid_amount(m.item, 0.0) if m.item else m.cost
         if cost > left or cost > cap:
             continue
         m.cost = cost

@@ -164,7 +164,9 @@ def cut_loss_candidates(
     for sl in my_slots:
         p = sl.player
         trend = trends.get(p.id, (p, Trend(0, 0, 0)))[1]
-        sustained_fall = trend.d7 <= -8 and trend.d3 <= -2
+        # Prueba histórica (4/10/2026): lo que cae ≥4% en 3 días pierde de media otro 8% en los
+        # 3 siguientes; mejor salir antes de que haya caído del todo.
+        sustained_fall = trend.d3 <= -4 or (trend.d7 <= -8 and trend.d3 <= -2)
         written_off = p.status.lower() in ("injured", "suspended", "lesionado", "sancionado") and p.avg_points < 2.0
         if written_off:
             out.append((sl, f"{p.status}, con media floja ({p.avg_points:.1f} pts) — no va a recuperar valor así"))

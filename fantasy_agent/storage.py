@@ -35,6 +35,15 @@ class Store:
                 kind TEXT NOT NULL DEFAULT 'emergency_buy',
                 executed_at REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS offer_log (
+                id TEXT PRIMARY KEY,
+                player_id TEXT NOT NULL,
+                player_name TEXT NOT NULL,
+                value INTEGER NOT NULL,
+                money INTEGER NOT NULL,
+                is_system INTEGER NOT NULL,
+                seen_at REAL NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS market_bids (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 player_id TEXT NOT NULL,
@@ -203,6 +212,22 @@ class Store:
         )
         self.db.commit()
 
+
+    # ---- ofertas vistas: para aprender cómo se distribuyen respecto al valor ----
+    def log_offer(self, offer_id: str, player_id: str, player_name: str, value: int, money: int, is_system: bool) -> None:
+        self.db.execute(
+            "INSERT OR IGNORE INTO offer_log(id, player_id, player_name, value, money, is_system, seen_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (offer_id, player_id, player_name, value, money, int(is_system), time.time()),
+        )
+        self.db.commit()
+
+    def offer_ratios(self, system_only: bool = True) -> list[float]:
+        """oferta / valor del jugador en el momento de verla, de todas las ofertas registradas."""
+        q = "SELECT money * 1.0 / value FROM offer_log WHERE value > 0"
+        if system_only:
+            q += " AND is_system = 1"
+        return sorted(r[0] for r in self.db.execute(q).fetchall())
 
     # ---- seguimiento de pujas/ventas: "enviada" no es "ganada"/"vendida" — hay que saber en qué queda ----
     def add_market_bid(

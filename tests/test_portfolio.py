@@ -104,6 +104,11 @@ class CutLossTests(unittest.TestCase):
         self.assertEqual([sl.player.id for sl, _ in out], ["p1"])
         self.assertIn("caída sostenida", out[0][1])  # el motivo real, no "estado: ok"
 
+    def test_three_day_fall_of_4_percent_is_flagged(self):
+        slots = [SquadSlot(player("p1"), "T", "yo", 0, None)]
+        trends = {"p1": (player("p1"), Trend(-2, -4.5, -3))}
+        self.assertEqual([sl.player.id for sl, _ in cut_loss_candidates(slots, trends)], ["p1"])
+
     def test_single_bad_day_not_flagged(self):
         slots = [SquadSlot(player("p1"), "T", "yo", 0, None)]
         trends = {"p1": (player("p1"), Trend(-6, -1, -9))}  # cae fuerte hoy pero no sostenido
