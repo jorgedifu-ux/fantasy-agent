@@ -35,6 +35,7 @@ KEY_PLAYER_LOSS = 3.0        # "clave" = quitarlo baja el once ≥3 pts/jornada
 STARTER_LOSS = 1.0           # titular: a <48h de la jornada solo se vende por mucho
 BENCH_LOSS = 0.5             # suplente que apenas suma
 BENCH_OFFER_MIN = 0.97       # con la plantilla llena, un suplente se vende a ~su valor
+LIQUIDITY_OFFER_MIN = 0.97   # para liberar capital hacia una inversión en subida
 HOME_FACTOR = 1.05           # jugar en casa suma algo, fuera resta algo
 RIVAL_DIFFICULTY = 0.10      # ±10% según la posición del rival en la tabla de LaLiga
 RIVAL_OFFER_MIN = 1.30       # ofertas de rivales: casi nunca convienen
@@ -164,12 +165,22 @@ def is_falling(d3: float, d7: float) -> bool:
     return d3 <= -3 or d7 <= -6
 
 
-def expected_drift(d3: float, d7: float) -> float:
-    """Revalorización esperada de un jugador a ~7 días según su inercia reciente (prueba
-    histórica del 4/10/2026: ≥4%/3d y ≥6%/7d → +17%; ≥2%/3d → +10% sin la prima de compra)."""
+FORM_GOOD = 6.0   # pts/jornada de media en las últimas jornadas: buena forma
+FORM_BAD = 2.0
+
+
+def expected_drift(d3: float, d7: float, form: float | None = None) -> float:
+    """Revalorización esperada a ~7 días (prueba histórica del 4/10/2026, 300 jugadores, 4 jornadas):
+    - subida fuerte (≥4%/3d y ≥6%/7d) con buena forma: +30% (gana el 95%); sin forma: +16%; con
+      forma floja (<2 pts): +8%.
+    - subida suave (≥1,5%/3d) pero con buena forma: +8% — entrada anticipada, "dos o tres
+      partidos buenos y el precio aún no ha saltado" (con precio plano y sin subida, solo +3%).
+    - subida suave sin forma que la respalde: nada."""
     if d3 >= 4 and d7 >= 6:
-        return 0.17
-    if d3 >= 2 and d7 >= 3:
+        if form is None:
+            return 0.17
+        return 0.25 if form >= FORM_GOOD else 0.08 if form < FORM_BAD else 0.15
+    if d3 >= 1.5 and form is not None and form >= FORM_GOOD:
         return 0.08
     return 0.0
 
@@ -263,7 +274,7 @@ def at_risk_min(hours_left: float, key: bool) -> float:
 def offer_decision(
     offer: Offer, player: Player, *, loss: float, cut_loss: bool = False, trend_d7: float = 0.0,
     breaks_xi: bool = False, hours_to_deadline: float | None = None, exposed_in: float | None = None,
-    squad_full: bool = False, cost_basis: int | None = None, no_sell: bool = False,
+    squad_full: bool = False, cost_basis: int | None = None, no_sell: bool = False, liquidity: bool = False,
 ) -> tuple[str, str]:
     """("accept" | "reject" | "hold", motivo). "hold" = no hacer nada y dejar que caduque.
     `no_sell`: jugador de una operación en curso (bloqueo al líder): no se vende todavía."""
@@ -289,6 +300,11 @@ def offer_decision(
         need, why = KEY_PLAYER_OFFER_MIN, "titular y la jornada empieza en <48h, sin tiempo de reponerlo"
     elif cut_loss:
         need, why = CUT_LOSS_OFFER_MIN, "en caída/lesionado, conviene salir"
+    elif liquidity and loss < BENCH_LOSS and trend_d7 <= 5:
+        # Rotación de capital: hay una inversión en subida que no se puede pagar. Un suplente que
+        # no sube se vende a ~su valor aunque sea por debajo de lo pagado (reinvertido rinde +8-25%).
+        return ("accept", f"libero capital para una inversión en subida: x{ratio:.2f} el valor") if ratio >= LIQUIDITY_OFFER_MIN \
+            else ("hold", f"x{ratio:.2f} el valor, para liberar capital exijo x{LIQUIDITY_OFFER_MIN:.2f}")
     elif squad_full and loss < BENCH_LOSS:
         need, why = BENCH_OFFER_MIN, "suplente con la plantilla llena: libera sitio para un fichaje mejor"
     else:
@@ -365,8 +381,10 @@ INVEST_FRACTION_BREAK = 0.60     # en un parón no hay once que puntuar: más a 
 INVEST_MAX_SHARE = 0.40          # máximo por jugador, sobre el presupuesto de inversión
 
 
-def invest_moves(market: list[MarketItem], trends: dict, skip_player_ids: frozenset[str] = frozenset()) -> list[Move]:
-    """Anuncios de LaLiga de jugadores en subida sostenida (`trends`: id -> Trend)."""
+def invest_moves(market: list[MarketItem], trends: dict, skip_player_ids: frozenset[str] = frozenset(),
+                 form: dict[str, float] | None = None) -> list[Move]:
+    """Anuncios de LaLiga de jugadores en subida (`trends`: id -> Trend; `form`: id -> pts de media
+    en las últimas jornadas): subida fuerte, o suave pero respaldada por buena forma."""
     out = []
     for it in market:
         p = it.player
@@ -377,17 +395,18 @@ def invest_moves(market: list[MarketItem], trends: dict, skip_player_ids: frozen
             continue
         if it.price > p.market_value * INVEST_MAX_PRICE_RATIO:
             continue
-        if tr.d3 >= MOMENTUM_D3 and tr.d7 >= MOMENTUM_D7:
-            out.append(Move("invest", p, it.price, item=it, score=round(tr.d3 + tr.d7, 1)))
+        drift = expected_drift(tr.d3, tr.d7, (form or {}).get(p.id))
+        if drift >= 0.08:
+            out.append(Move("invest", p, it.price, item=it, drift=drift, score=round(drift * 100 + (tr.d3 + tr.d7) / 10, 1)))
     return sorted(out, key=lambda m: -m.score)
 
 
 def clause_invest_moves(
     rival_slots: list[SquadSlot], trends: dict, now: datetime, *, freeze: tuple[datetime, datetime] | None = None,
     lookahead_hours: float = 24, avoid_team_ids: frozenset[str] = frozenset(),
-    skip_player_ids: frozenset[str] = frozenset(),
+    skip_player_ids: frozenset[str] = frozenset(), form: dict[str, float] | None = None,
 ) -> list[Move]:
-    """Cláusulas de rivales (abiertas o que se abren en <24 h) de jugadores en subida sostenida:
+    """Cláusulas de rivales (abiertas o que se abren en <24 h) de jugadores en subida:
     es lo que han hecho los rivales para hacer dinero (Josinho +76M sin vender nada). La cláusula
     acompaña al valor, así que la ganancia viene solo de la inercia: se compra lo que ya sube."""
     out = []
@@ -395,8 +414,10 @@ def clause_invest_moves(
         p, tr = m.player, trends.get(m.player.id)
         if tr is None or p.id in skip_player_ids or m.cost > p.market_value * CLAUSE_INVEST_MAX_RATIO:
             continue
-        if tr.d3 >= MOMENTUM_D3 and tr.d7 >= MOMENTUM_D7:
-            m.kind, m.score = "invest_clause", round(tr.d3 + tr.d7 - (10 if m.penalized else 0), 1)
+        drift = expected_drift(tr.d3, tr.d7, (form or {}).get(p.id))
+        if drift >= 0.08:
+            m.kind, m.drift = "invest_clause", drift
+            m.score = round(drift * 100 + (tr.d3 + tr.d7) / 10 - (10 if m.penalized else 0), 1)
             out.append(m)
     return sorted(out, key=lambda m: -m.score)
 

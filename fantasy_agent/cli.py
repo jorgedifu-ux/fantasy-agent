@@ -356,7 +356,7 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
         tr = trends.get(m.player.id, analysis.Trend(0, 0, 0))
         if m.player.position_id not in short and ap.is_falling(tr.d3, tr.d7):
             continue
-        m.drift = ap.expected_drift(tr.d3, tr.d7)
+        m.drift = ap.expected_drift(tr.d3, tr.d7, world.recent_form.get(m.player.id))
         kept.append(m)
     moves = kept
     plan = ap.plan_acquisitions(mine, moves, budget, form=world.recent_form, max_squad=s.max_squad,
@@ -366,13 +366,18 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
     invest_budget = int((budget - spent) * (
         ap.INVEST_FRACTION_BREAK if world.outlook.in_break else ap.INVEST_FRACTION_NORMAL))
     slots_left = s.max_squad - len(mine) - len(plan)
-    if invest_budget > 0 and slots_left > 0 and trends:
-        taken = frozenset(pl.id for pl in mine) | {m.player.id for m in plan}
-        plan += ap.plan_investments(
-            ap.invest_moves(world.market, trends, skip_player_ids=taken)
-            + ap.clause_invest_moves(world.rival_slots, trends, now, freeze=world.clause_freeze, avoid_team_ids=avoid,
-                                     skip_player_ids=taken),
-            invest_budget, slots_left)
+    taken = frozenset(pl.id for pl in mine) | {m.player.id for m in plan}
+    candidates = (ap.invest_moves(world.market, trends, skip_player_ids=taken, form=world.recent_form)
+                  + ap.clause_invest_moves(world.rival_slots, trends, now, freeze=world.clause_freeze, avoid_team_ids=avoid,
+                                           skip_player_ids=taken, form=world.recent_form)) if trends else []
+    if invest_budget > 0 and slots_left > 0 and candidates:
+        plan += ap.plan_investments(candidates, invest_budget, slots_left)
+    # Rotación de capital: si hay inversiones buenas que no se han podido pagar (o no caben en la
+    # plantilla), se anota para que `_resolve_offers` venda antes algún suplente que no suba.
+    funded = {m.player.id for m in plan}
+    unfunded = [m for m in candidates if m.player.id not in funded]
+    store.set("liquidity", json.dumps({"at": time.time(), "n": len(unfunded),
+                                       "best": unfunded[0].player.name if unfunded else ""}))
     for mv in plan:
         name, pos = notify.esc(mv.player.name), mv.player.position
         if mv.kind == "invest":
@@ -494,11 +499,13 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
         trend = world.trends.get(pid, (None, analysis.Trend(0, 0, 0)))[1]
         done = False
         in_siege = pid in _siege_ids(store)
+        liq = json.loads(store.get("liquidity") or "{}")
+        liquidity = bool(liq.get("n")) and time.time() - liq.get("at", 0) < 3 * 3600
         released = in_siege and hours is not None and hours <= 0  # jornada ya empezada: se puede vender
         for o in sorted(offers, key=lambda o: -o.money):
             decision, why = ap.offer_decision(
                 o, sl.player, loss=ap.sale_loss(mine, pid, world.recent_form), cut_loss=(pid in cut) or released,
-                no_sell=in_siege and not released,
+                no_sell=in_siege and not released, liquidity=liquidity and not in_siege,
                 trend_d7=trend.d7, breaks_xi=ap.breaks_eleven(mine, pid), hours_to_deadline=hours,
                 exposed_in=ap.hours_until_exposed(sl, now), squad_full=len(world.my_slots) >= s.max_squad,
                 cost_basis=None if in_siege else paid.get(pid),

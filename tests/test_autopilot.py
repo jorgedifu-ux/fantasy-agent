@@ -335,9 +335,12 @@ class ClauseInvestmentTests(unittest.TestCase):
 
 class DriftTests(unittest.TestCase):
     def test_expected_drift_levels(self):
-        self.assertEqual(ap.expected_drift(5, 8), 0.17)
-        self.assertEqual(ap.expected_drift(2.5, 4), 0.08)
-        self.assertEqual(ap.expected_drift(0, 1), 0.0)
+        self.assertEqual(ap.expected_drift(5, 8), 0.17)             # sin datos de forma: valor neutro
+        self.assertEqual(ap.expected_drift(5, 8, form=8), 0.25)     # subida fuerte + buena forma
+        self.assertEqual(ap.expected_drift(5, 8, form=0.5), 0.08)   # subida sin puntos que la respalden
+        self.assertEqual(ap.expected_drift(2.5, 1, form=7), 0.08)   # entrada anticipada: forma buena, subida suave
+        self.assertEqual(ap.expected_drift(2.5, 4, form=1), 0.0)    # subida suave sin forma: nada
+        self.assertEqual(ap.expected_drift(0, 1, form=9), 0.0)      # forma buena con precio plano: nada
 
     def test_rising_candidate_beats_an_equal_flat_one(self):
         mine = eleven()[:-1]            # falta un delantero
@@ -347,3 +350,34 @@ class DriftTests(unittest.TestCase):
             m.drift = 0.17 if m.player.id == "riser" else 0.0
         plan = ap.plan_acquisitions(mine, moves, budget=30_000_000, max_squad=len(mine) + 1)
         self.assertEqual([m.player.id for m in plan], ["riser"])
+
+
+class AnticipationAndLiquidityTests(unittest.TestCase):
+    from fantasy_agent.analysis import Trend
+
+    def test_good_form_with_a_mild_rise_is_an_early_entry(self):
+        T = self.Trend
+        p = player("early", 3, 6.0, 8_000_000)
+        trends = {"early": T(1, 2.5, 3)}
+        self.assertEqual(ap.invest_moves([item(p)], trends), [])  # sin datos de forma no entra
+        self.assertEqual([m.player.id for m in ap.invest_moves([item(p)], trends, form={"early": 7.5})], ["early"])
+        self.assertEqual(ap.invest_moves([item(p)], trends, form={"early": 1.0}), [])
+
+    def test_strong_rise_with_good_form_ranks_first(self):
+        T = self.Trend
+        a, b = player("a", 3, 5.0, 8_000_000), player("b", 3, 5.0, 8_000_000)
+        trends = {"a": T(2, 5, 8), "b": T(2, 5, 8)}
+        moves = ap.invest_moves([item(a), item(b)], trends, form={"a": 1.0, "b": 9.0})
+        self.assertEqual(moves[0].player.id, "b")
+
+    def test_liquidity_sells_a_flat_bench_player_below_cost(self):
+        o = Offer(id="o", money=9_800_000, from_manager="LaLiga", is_system=True)
+        p = player("bench", 3, 1.0, 10_000_000)
+        self.assertEqual(ap.offer_decision(o, p, loss=0.2, cost_basis=11_000_000)[0], "hold")
+        self.assertEqual(ap.offer_decision(o, p, loss=0.2, cost_basis=11_000_000, liquidity=True)[0], "accept")
+
+    def test_liquidity_never_sells_a_starter_or_a_riser(self):
+        o = Offer(id="o", money=9_800_000, from_manager="LaLiga", is_system=True)
+        p = player("x", 3, 5.0, 10_000_000)
+        self.assertNotEqual(ap.offer_decision(o, p, loss=2.0, liquidity=True)[0], "accept")
+        self.assertEqual(ap.offer_decision(o, p, loss=0.2, trend_d7=12, liquidity=True)[0], "hold")
