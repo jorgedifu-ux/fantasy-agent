@@ -1,7 +1,7 @@
 # Estado del proyecto — fantasy-agent
 
 Documento de contexto para retomar esto en cualquier momento, aunque se pierda la
-conversación con Claude. Última actualización: **26/09/2026**.
+conversación con Claude. Última actualización: **04/10/2026**.
 
 ## Qué es esto
 
@@ -36,7 +36,12 @@ Los límites son **económicos**, no de número de operaciones (quitados los "2 
 | Acción | Regla |
 |---|---|
 | Fichar (puja) y clausular | Cartera en `autopilot.plan_acquisitions`: elige lo que más **puntos por jornada suma a tu once** por recurso gastado (dinero Y plaza de plantilla, para no llenarla de baratos flojos). Completar el once va siempre primero. Solo cláusulas "lógicas" (≤1,2× valor) |
-| Cuánto pujar | +5% a +20% según cuánto mejora el once y si hay competencia; para los fichajes importantes, **lo que suelen pagar los rivales** (mediana / percentil 75 de sus pujas ganadas en 30 días, recalculado a diario: hoy +9% / +23%). Techo +20% |
+| Cuánto pujar | **+3%** sobre el precio de salida (+6% si mejora el once ≥3 pts). Solo si ya hay otra puja compitiendo, sube a lo que suelen pagar los rivales (mediana de sus pujas ganadas, recalculada a diario). **Techo +12%** (antes +20%: se pagó Soria un 18% sobre su valor y Gueye un 15%, ~15M perdidos al instante) |
+| No fichar lo que cae | Se descarta a quien ha caído ≥3% en 3 días o ≥6% en 7 (Gueye cayó un 9,5% en una semana). Excepción: si falta un jugador en esa posición para completar el once |
+| No vender con pérdida | Salvo lesión o caída fuerte, **nunca se vende por debajo de lo pagado**, tampoco por riesgo de cláusula (decisión tuya 4/10: mejor que te paguen la cláusula) |
+| Inversión (comprar para revender) | Jugadores de LaLiga con subida sostenida (≥4% en 3 días y ≥6% en 7) y precio ≤1,06× valor. **Prueba histórica con 201 jugadores y ~80 días**: comprar así y revender a los 7 días rinde de media **+17%** (gana el 89%); comprar algo que cae ≥4% en 3 días pierde un 12%. Dedica el 25% del saldo libre (el **60% en un parón**), máx. 40% por jugador |
+| Calendario | Detecta parones (≥10 días sin partidos) con el calendario real y avisa del actual y del siguiente. Hoy: parón 21/9–9/10. Próximos: 8–22 nov, 20 dic–3 ene, 21 mar–4 abr, 21 abr–2 may |
+| Avisos de fallo | Si el bot falla, Telegram 🔴 con el error (máx. 1 cada 3 h). Y si faltan ≤30 h para la jornada y no puedes alinear 11, 🚨 |
 | Pujas por lesionados | Si un jugador por el que has pujado se lesiona antes de resolverse, se cancela la puja |
 | Saldo | Nunca gasta más que saldo − 5% de colchón − pujas vivas − dinero reservado para cláusulas que se liberan en <24h. Nunca puede quedar en negativo |
 | Cláusula que se libera pronto | Reserva su dinero; si se libera dentro de la misma pasada (≤25 min), espera al segundo exacto y paga |
@@ -80,7 +85,18 @@ Todas las cifras están como constantes al principio de `fantasy_agent/autopilot
 - **Cancelar una puja**: `DELETE .../market/{marketId}/bid/{bidId}/cancel`.
 - **Fase económica→competitiva**: descartada — tu directriz es ir a por puntos ("jugadores buenos").
 
-## Cron fiable (recomendado)
+## Dinero: lo que sabemos (4/10/2026)
+
+- **Estimación del dinero de cada rival**: 100M iniciales − gastos + ingresos de `/activity` + premios de jornada (tipo 6, ≈0,1M por punto). Acierta a ~1M en el nuestro (estimado 20,7M, real 21,8M). Hoy: Josinho ≈84M, Pep ≈85M, Aleix ≈32M.
+- **El dinero entra sobre todo por puntos** (0,1M por punto de jornada): J5, J6 y J7 sacamos 0 (no se guardaba la alineación) = ~13M perdidos más las posiciones.
+- Operaciones cerradas: +10,1M en 16 (la gran ganancia fue Lamine Yamal: +9,9M). Las compradas con el piloto: −1,0M realizado y −5,7M sin realizar (Gueye −8,5M y Soria −7,2M por pagar de más y comprar a la baja): corregido.
+- **Recompensa diaria (100K por ver un anuncio)**: no hay endpoint conocido (15 rutas probadas, todas 404) y el servidor valida el anuncio. No automatizable por ahora.
+
+## Estrategia pendiente de tu decisión: dejar sin jugadores al líder
+
+Ver el análisis completo en la conversación del 4/10. Resumen: solo es viable con el **portero** (barato), exige quitarle TODOS sus porteros por cláusula (con la cláusula abierta, sin blindaje) y a la vez cerrarle las vías de reposición (porteros del mercado y cláusulas abiertas de otros rivales), todo justo antes de la congelación de cláusulas (24 h antes del primer partido). Hoy no es posible: A. Herrero está bloqueado hasta el sáb 10/10 12:20.
+
+## Cron fiable (hecho el 4/10/2026: cron-job.org cada 15 min, token hasta el 14/06/2027)
 
 GitHub **no respeta** la frecuencia de los cron gratuitos: con `*/30` se ejecutaba cada 3-5
 horas. El workflow ya lo intenta 4 veces por hora, pero para puntualidad real (ofertas, el

@@ -179,21 +179,49 @@ class SaleLossTests(unittest.TestCase):
         self.assertFalse(ap.breaks_eleven(eleven() + [player("gk2", 1)], "gk"))
 
 
-class RivalPremiumTests(unittest.TestCase):
-    def test_high_gain_target_bids_like_rivals_pay(self):
+class BidAmountTests(unittest.TestCase):
+    def test_no_competition_bids_a_small_premium(self):
         it = item(player("x", 3, 9.0, 10_000_000))
-        rivals = ap.RivalPremium(median=1.09, p75=1.18)
-        self.assertEqual(ap.bid_amount(it, gain=4.0, rivals=rivals), round(10_000_000 * 1.18))
+        self.assertEqual(ap.bid_amount(it, gain=4.0), round(10_000_000 * 1.06))
 
-    def test_never_above_cap_even_if_rivals_pay_more(self):
-        it = item(player("x", 3, 9.0, 10_000_000))
+    def test_competition_matches_what_rivals_pay(self):
+        it = item(player("x", 3, 9.0, 10_000_000), bids=1)
+        rivals = ap.RivalPremium(median=1.09, p75=1.23)
+        self.assertEqual(ap.bid_amount(it, gain=4.0, rivals=rivals), round(10_000_000 * 1.11))
+
+    def test_never_above_cap(self):
+        it = item(player("x", 3, 9.0, 10_000_000), bids=3)
         rivals = ap.RivalPremium(median=1.3, p75=1.6)
         self.assertEqual(ap.bid_amount(it, gain=4.0, rivals=rivals), round(10_000_000 * (1 + ap.MAX_OVERBID)))
 
-    def test_small_gain_ignores_rival_premium(self):
+    def test_rival_premium_ignored_without_competition(self):
         it = item(player("x", 3, 9.0, 10_000_000))
         rivals = ap.RivalPremium(median=1.15, p75=1.2)
-        self.assertEqual(ap.bid_amount(it, gain=0.8, rivals=rivals), round(10_000_000 * 1.05))
+        self.assertEqual(ap.bid_amount(it, gain=0.8, rivals=rivals), round(10_000_000 * 1.03))
+
+
+class FallingTests(unittest.TestCase):
+    def test_falling_value_is_skipped(self):
+        self.assertTrue(ap.is_falling(-4, 0))
+        self.assertTrue(ap.is_falling(0, -7))
+        self.assertFalse(ap.is_falling(-1, -2))
+        self.assertFalse(ap.is_falling(2, 5))
+
+
+class CostBasisTests(unittest.TestCase):
+    def offer(self, money):
+        return Offer(id="o", money=money, from_manager="LaLiga", is_system=True)
+
+    def test_does_not_sell_below_what_was_paid(self):
+        p = player("p", 3, value=10_000_000)
+        self.assertEqual(ap.offer_decision(self.offer(10_600_000), p, loss=1.0, cost_basis=11_500_000)[0], "hold")
+        self.assertEqual(ap.offer_decision(self.offer(11_600_000), p, loss=1.0, cost_basis=11_500_000)[0], "accept")
+
+    def test_cut_loss_ignores_the_cost_but_clause_risk_does_not(self):
+        p = player("p", 3, value=10_000_000)
+        self.assertEqual(ap.offer_decision(self.offer(9_900_000), p, loss=1.0, cut_loss=True, cost_basis=14_000_000)[0], "accept")
+        self.assertEqual(ap.offer_decision(self.offer(9_900_000), p, loss=1.0, exposed_in=10, cost_basis=14_000_000)[0], "hold")
+        self.assertEqual(ap.offer_decision(self.offer(14_100_000), p, loss=1.0, exposed_in=10, cost_basis=14_000_000)[0], "accept")
 
 
 class MoreOfferRulesTests(unittest.TestCase):
@@ -237,3 +265,41 @@ class LineupPayloadTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InvestmentTests(unittest.TestCase):
+    from fantasy_agent.analysis import Trend
+
+    def test_buys_only_sustained_risers(self):
+        T = self.Trend
+        market = [item(player("up", 3, 4.0, 5_000_000)), item(player("flat", 3, 4.0, 5_000_000)),
+                  item(player("down", 3, 4.0, 5_000_000))]
+        trends = {"up": T(2, 5, 8), "flat": T(0, 1, 1), "down": T(-3, -5, -9)}
+        self.assertEqual([m.player.id for m in ap.invest_moves(market, trends)], ["up"])
+
+    def test_skips_expensive_listing_and_injured(self):
+        T = self.Trend
+        pricey = item(player("p", 3, 4.0, 5_000_000), price=6_000_000)
+        hurt = item(player("h", 3, 4.0, 5_000_000, status="injured"))
+        trends = {"p": T(2, 5, 8), "h": T(2, 5, 8)}
+        self.assertEqual(ap.invest_moves([pricey, hurt], trends), [])
+
+    def test_strongest_momentum_first_and_budget_respected(self):
+        T = self.Trend
+        market = [item(player("a", 3, 4.0, 10_000_000)), item(player("b", 3, 4.0, 10_000_000))]
+        trends = {"a": T(2, 5, 7), "b": T(3, 9, 15)}
+        moves = ap.invest_moves(market, trends)
+        self.assertEqual(moves[0].player.id, "b")
+        self.assertEqual([m.player.id for m in ap.plan_investments(moves, budget=28_000_000, slots=5)], ["b", "a"])
+        self.assertEqual(ap.plan_investments(moves, budget=12_000_000, slots=5), [])  # sobrepasa el tope por jugador
+        self.assertEqual([m.player.id for m in ap.plan_investments(moves, budget=28_000_000, slots=1)], ["b"])
+
+    def test_respects_free_squad_slots(self):
+        T = self.Trend
+        market = [item(player(f"x{i}", 3, 4.0, 1_000_000)) for i in range(4)]
+        trends = {f"x{i}": T(2, 5, 8) for i in range(4)}
+        self.assertEqual(len(ap.plan_investments(ap.invest_moves(market, trends), budget=100_000_000, slots=2)), 2)
+
+
+if __name__ == "__main__" and False:
+    pass

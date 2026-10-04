@@ -24,7 +24,8 @@ COMPLETE_XI_BONUS = 15.0     # completar el once pesa más que cualquier fichaje
 BENCH_WEIGHT = 0.15          # los suplentes cuentan algo (lesiones, rotaciones)
 BENCH_SLOTS = 4
 PENALTY_FACTOR = 0.6         # clausular al líder o por venganza: se puede, con menos prioridad
-MAX_OVERBID = 0.20           # nunca pujar más de +20% sobre el precio de salida
+MAX_OVERBID = 0.12           # nunca pujar más de +12% sobre el precio de salida (4/10/2026: con +20%
+# se pagó Soria un 18% sobre su valor y Gueye un 15%: pérdida inmediata de ~15M)
 
 LEAGUE_OFFER_MIN = 1.05      # oferta de la liga: vender desde +5% sobre el valor
 CUT_LOSS_OFFER_MIN = 0.97    # jugador en caída/lesionado: salir aunque sea a ~valor
@@ -74,7 +75,7 @@ def squad_value(players: list[Player], form: dict[str, float] | None = None, *, 
 
 @dataclass
 class Move:
-    kind: str                       # "clause" | "bid"
+    kind: str                       # "clause" | "bid" | "invest" (puja para revender, no para el once)
     player: Player
     cost: int
     gain: float = 0.0
@@ -82,6 +83,7 @@ class Move:
     item: MarketItem | None = None  # puja: el anuncio de LaLiga
     unlock_at: datetime | None = None  # cláusula que aún no se ha liberado: solo reserva saldo
     penalized: bool = False
+    score: float = 0.0              # solo "invest": fuerza del momentum (d3 + d7)
 
     @property
     def executable_now(self) -> bool:
@@ -140,19 +142,24 @@ class RivalPremium:
 
 
 def bid_amount(item: MarketItem, gain: float, rivals: RivalPremium | None = None) -> int:
-    """Pujar para ganar, sin pagar disparates: más empuje cuanto más mejora tu once y si ya
-    hay otras pujas compitiendo. Para los fichajes que más mejoran el once, al menos lo que
-    suelen pagar los rivales (mediana; percentil 75 si mejora ≥3 pts). Techo: +20%."""
-    overbid = 0.05
-    if gain >= 1.5:
-        overbid += 0.05
+    """Pujar para ganar sin regalar dinero: casi todos los anuncios tienen 0 pujas, así que el
+    empuje fuerte solo se paga cuando YA hay otra puja compitiendo; entonces, al menos lo que
+    suelen pagar los rivales (mediana). Techo: +12% (lo que pagas de más sobre el valor es
+    pérdida inmediata: al revender, lo máximo que se saca es ~el valor)."""
+    overbid = 0.03
     if gain >= 3.0:
-        overbid += 0.05
+        overbid += 0.03
     if item.bids > 0:
         overbid += 0.05
-    if rivals and gain >= 1.5:
-        overbid = max(overbid, (rivals.p75 if gain >= 3.0 else rivals.median) - 1)
+        if rivals and gain >= 1.5:
+            overbid = max(overbid, rivals.median - 1)
     return round(item.price * (1 + min(overbid, MAX_OVERBID)))
+
+
+def is_falling(d3: float, d7: float) -> bool:
+    """Valor de mercado en caída (cambio % a 3 y 7 días): no se ficha, porque mañana valdrá
+    menos de lo que pagas (Gueye: -9,5% en una semana)."""
+    return d3 <= -3 or d7 <= -6
 
 
 def plan_acquisitions(
@@ -205,6 +212,10 @@ def sale_loss(mine: list[Player], player_id: str, form: dict[str, float] | None 
     return round(squad_value(mine, form, complete_bonus=False) - squad_value(rest, form, complete_bonus=False), 2)
 
 
+def complete_eleven(players: list[Player]) -> bool:
+    return _complete(players)
+
+
 def _complete(players: list[Player]) -> bool:
     cands = [lineup.Candidate(p, 1.0, 1.0) for p in players if p.position_id in FIELD_POSITIONS]
     return len(lineup.best_eleven(cands)[1]) == 11
@@ -238,7 +249,7 @@ def at_risk_min(hours_left: float, key: bool) -> float:
 def offer_decision(
     offer: Offer, player: Player, *, loss: float, cut_loss: bool = False, trend_d7: float = 0.0,
     breaks_xi: bool = False, hours_to_deadline: float | None = None, exposed_in: float | None = None,
-    squad_full: bool = False,
+    squad_full: bool = False, cost_basis: int | None = None,
 ) -> tuple[str, str]:
     """("accept" | "reject" | "hold", motivo). "hold" = no hacer nada y dejar que caduque."""
     value = player.market_value
@@ -267,6 +278,12 @@ def offer_decision(
         need, why = LEAGUE_OFFER_MIN, "oferta por encima de su valor"
     if trend_d7 > 5 and not at_risk:
         need += min(trend_d7 / 100, 0.15)  # si está subiendo rápido, en días vale más que la oferta
+    if cost_basis and value and not cut_loss:
+        # Nunca por debajo de lo que costó, tampoco por riesgo de cláusula (decisión del
+        # usuario, 4/10/2026: mejor que te paguen la cláusula que vender con pérdida). Solo
+        # se sale con pérdida si está lesionado o cayendo (`cut_loss`).
+        if cost_basis / value > need:
+            need, why = cost_basis / value, f"{why}; no vendo por debajo de lo que pagué ({cost_basis / 1e6:.2f}M)"
     if ratio >= need:
         return "accept", f"{why}: x{ratio:.2f} el valor (mínimo x{need:.2f})"
     return "hold", f"x{ratio:.2f} el valor, exijo x{need:.2f} ({why})"
@@ -315,3 +332,50 @@ def lineup_ids(lineup_json: dict) -> set[str]:
             if isinstance(slot, dict) and slot.get("playerTeamId"):
                 out.add(str(slot["playerTeamId"]))
     return out
+
+
+# ---------- inversión: comprar lo que sube para revenderlo ----------
+# Prueba histórica (4/10/2026, 201 jugadores, ~80 días de valores de mercado): comprar un
+# jugador que ha subido ≥4% en 3 días y ≥6% en 7 y revenderlo 7 días después rinde de media
+# +17% (gana el 89% de las veces); uno que cae ≥4% en 3 días pierde un -12%. El valor de
+# mercado tiene inercia: lo que sube sigue subiendo unos días.
+MOMENTUM_D3 = 4.0
+MOMENTUM_D7 = 6.0
+INVEST_MAX_PRICE_RATIO = 1.06    # el precio de salida debe estar a ≤6% sobre el valor
+INVEST_FRACTION_NORMAL = 0.25    # parte del saldo libre que se dedica a inversión
+INVEST_FRACTION_BREAK = 0.60     # en un parón no hay once que puntuar: más a invertir
+INVEST_MAX_SHARE = 0.40          # máximo por jugador, sobre el presupuesto de inversión
+
+
+def invest_moves(market: list[MarketItem], trends: dict, skip_player_ids: frozenset[str] = frozenset()) -> list[Move]:
+    """Anuncios de LaLiga de jugadores en subida sostenida (`trends`: id -> Trend)."""
+    out = []
+    for it in market:
+        p = it.player
+        tr = trends.get(p.id)
+        if tr is None or it.seller != "LaLiga" or not it.market_id or it.my_bid or it.price <= 0 or not p.market_value:
+            continue
+        if p.position_id not in FIELD_POSITIONS or p.status.lower() in INJURED or p.id in skip_player_ids:
+            continue
+        if it.price > p.market_value * INVEST_MAX_PRICE_RATIO:
+            continue
+        if tr.d3 >= MOMENTUM_D3 and tr.d7 >= MOMENTUM_D7:
+            out.append(Move("invest", p, it.price, item=it, score=round(tr.d3 + tr.d7, 1)))
+    return sorted(out, key=lambda m: -m.score)
+
+
+def plan_investments(moves: list[Move], budget: int, slots: int) -> list[Move]:
+    """Las de más momentum primero, sin pasar de INVEST_MAX_SHARE del presupuesto por jugador
+    ni de las plazas libres de la plantilla."""
+    chosen: list[Move] = []
+    left, cap = budget, int(budget * INVEST_MAX_SHARE)
+    for m in moves:
+        if len(chosen) >= slots:
+            break
+        cost = bid_amount(m.item, 0.0)
+        if cost > left or cost > cap:
+            continue
+        m.cost = cost
+        chosen.append(m)
+        left -= cost
+    return chosen

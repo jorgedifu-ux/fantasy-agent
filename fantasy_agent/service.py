@@ -11,6 +11,23 @@ from .config import Settings
 LEAGUE_TOP_N = 3  # cuántos de cada posición se consideran "TOP de la liga"
 
 
+BREAK_GAP_DAYS = 10  # sin partidos durante ≥10 días = parón (selecciones, Navidad...)
+
+
+@dataclass
+class Outlook:
+    next_first: datetime | None = None   # primer partido de la próxima jornada
+    prev_last: datetime | None = None    # último partido de la anterior
+    in_break: bool = False
+    next_break: tuple[datetime, datetime] | None = None  # (último partido antes, primero después)
+
+    @property
+    def hours_to_next(self) -> float | None:
+        if not self.next_first:
+            return None
+        return (self.next_first - datetime.now(timezone.utc)).total_seconds() / 3600
+
+
 @dataclass
 class World:
     league_id: str
@@ -29,6 +46,7 @@ class World:
     revenge_against_team_id: str | None = None
     recent_form: dict[str, float] = field(default_factory=dict)
     laliga_rank: dict[str, int] = field(default_factory=dict)  # team_id real -> puesto en LaLiga
+    outlook: Outlook = field(default_factory=Outlook)
     fetched_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -97,6 +115,33 @@ def recent_form(api: FantasyAPI, window: int = 3) -> dict[str, float]:
         recent = [pts for wn, pts in weeks if 0 < wn < current][-window:]
         if recent:
             out[pid] = sum(recent) / len(recent)
+    return out
+
+
+def calendar_outlook(api: FantasyAPI, weeks_ahead: int = 10) -> Outlook:
+    """Dónde estamos en el calendario: si hay parón ahora y cuándo es el siguiente."""
+    try:
+        wk = api.current_week()
+        current = models.to_int(models.pick(wk, "weekNumber"), default=0)
+    except Exception:
+        return Outlook()
+    spans: dict[int, tuple[datetime, datetime]] = {}
+    for w in range(max(1, current - 1), current + weeks_ahead + 1):
+        try:
+            dates = sorted(f.when for f in models.parse_calendar(api.calendar(w)) if f.when)
+        except Exception:
+            continue
+        if dates:
+            spans[w] = (dates[0], dates[-1])
+    now = datetime.now(timezone.utc)
+    out = Outlook(next_first=spans.get(current, (None,))[0], prev_last=spans.get(current - 1, (None, None))[1])
+    gap = (out.next_first - out.prev_last).days if out.next_first and out.prev_last else 0
+    out.in_break = bool(out.prev_last and out.next_first and out.prev_last < now < out.next_first and gap >= BREAK_GAP_DAYS)
+    weeks = sorted(spans)
+    for a, b in zip(weeks, weeks[1:]):
+        if (spans[b][0] - spans[a][1]).days >= BREAK_GAP_DAYS and spans[a][1] > now:
+            out.next_break = (spans[a][1], spans[b][0])
+            break
     return out
 
 
@@ -180,6 +225,23 @@ def recent_clauser_manager_id(api: FantasyAPI, league_id: str, my_manager_id: st
     return None
 
 
+def purchase_prices(api: FantasyAPI, league_id: str, my_manager_id: str, pages: int = 3) -> dict[str, int]:
+    """Lo que pagaste por cada jugador (puja ganada o cláusula) según la actividad de la liga,
+    el más reciente por jugador. Sirve de suelo para no vender con pérdida sin motivo."""
+    out: dict[str, int] = {}
+    for page in range(pages):
+        try:
+            items = models.as_list(api.activity(league_id, page), "activity", "elements")
+        except Exception:
+            break
+        for a in items:
+            if models.to_int(models.pick(a, "activityTypeId")) in (1, 31) and str(models.pick(a, "user1Id")) == my_manager_id:
+                pid = str(models.pick(a, "playerMasterId", default=""))
+                if pid and pid not in out:
+                    out[pid] = models.to_int(models.pick(a, "amount"))
+    return out
+
+
 def rival_bid_premiums(api: FantasyAPI, league_id: str, my_manager_id: str, days: int = 30, pages: int = 4) -> list[float]:
     """Cuánto sobre el valor de mercado (1.09 = +9%) pagaron los rivales en las pujas que
     ganaron (`activityTypeId` 31) los últimos `days` días, comparando con el valor del
@@ -241,6 +303,7 @@ def build_world(api: FantasyAPI, s: Settings, with_trends: bool = True) -> World
         revenge_against_team_id=revenge_against_team_id,
         recent_form=recent_form(api),
         laliga_rank=laliga_ranks(api),
+        outlook=calendar_outlook(api),
     )
 
     if with_trends:

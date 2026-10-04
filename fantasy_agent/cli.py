@@ -341,11 +341,40 @@ def _acquire(store: Store, s, api: FantasyAPI, world) -> tuple[list[str], list[a
     avoid = frozenset(t for t in (world.leader_team_id, world.revenge_against_team_id) if t)
     moves = ap.clause_moves(world.rival_slots, now, freeze=world.clause_freeze, avoid_team_ids=avoid) + \
         ap.bid_moves(world.market, skip_player_ids=frozenset(pl.id for pl in incoming))
+    short = {pos for pos, n in analysis.position_shortage(world.my_slots).items() if n}
+    moves = [
+        m for m in moves
+        if m.player.position_id in short or not ap.is_falling(
+            *(lambda tr: (tr.d3, tr.d7))(world.trends.get(m.player.id, (None, analysis.Trend(0, 0, 0)))[1])
+        )
+    ]
     plan = ap.plan_acquisitions(mine, moves, budget, form=world.recent_form, max_squad=s.max_squad,
                                 rivals=_rival_premium(store, api, world))
     events: list[str] = []
+    spent = sum(m.cost for m in plan)
+    trends = {pid: tr for pid, (_, tr) in world.trends.items()}
+    invest_budget = int((budget - spent) * (
+        ap.INVEST_FRACTION_BREAK if world.outlook.in_break else ap.INVEST_FRACTION_NORMAL))
+    slots_left = s.max_squad - len(mine) - len(plan)
+    if invest_budget > 0 and slots_left > 0 and trends:
+        plan += ap.plan_investments(
+            ap.invest_moves(world.market, trends, skip_player_ids=frozenset(pl.id for pl in mine) | {m.player.id for m in plan}),
+            invest_budget, slots_left)
     for mv in plan:
         name, pos = notify.esc(mv.player.name), mv.player.position
+        if mv.kind == "invest":
+            try:
+                api.bid(world.league_id, mv.item.market_id, mv.cost)
+                expires = mv.item.expires.timestamp() if mv.item.expires else None
+                store.add_market_bid(mv.player.id, mv.player.name, mv.cost, expires)
+                tr = trends[mv.player.id]
+                events.append(
+                    f"📈 <b>Inversión</b>: {name} ({pos}) {service.m(mv.cost)} · ha subido {tr.d3:+.1f}% en 3 días y "
+                    f"{tr.d7:+.1f}% en 7: se compra para revender, no para el once"
+                )
+            except Exception as exc:
+                events.append(f"❌ Inversión fallida por <b>{name}</b>: {notify.esc(str(exc))}")
+            continue
         if not mv.executable_now:
             if store.alert_is_new(f"reserve:{mv.player.id}:{mv.cost}", ttl_hours=24):
                 when = mv.unlock_at.astimezone().strftime("%d/%m %H:%M")
@@ -419,10 +448,14 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
     hours = _hours_to_deadline(world)
     sold = set(json.loads(store.get("sold_ids") or "[]"))
     events: list[str] = []
+    paid: dict[str, int] | None = None  # lo que pagué por cada uno: se consulta solo si hay ofertas
     for sl in world.my_slots:
         it = listed.get(sl.player.id)
         if not it or it.offers_count <= 0:
             continue
+        if paid is None:
+            my_manager = next((r.manager_id for r in world.standing if r.team_id == world.my_team_id), "")
+            paid = service.purchase_prices(api, world.league_id, my_manager)
         name, pid = notify.esc(sl.player.name), sl.player.id
         try:
             offers = models.parse_player_offers(api.player_team_offers(world.league_id, sl.player_team_id))
@@ -436,6 +469,7 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
                 o, sl.player, loss=ap.sale_loss(mine, pid, world.recent_form), cut_loss=pid in cut,
                 trend_d7=trend.d7, breaks_xi=ap.breaks_eleven(mine, pid), hours_to_deadline=hours,
                 exposed_in=ap.hours_until_exposed(sl, now), squad_full=len(world.my_slots) >= s.max_squad,
+                cost_basis=paid.get(pid),
             )
             if decision == "accept" and not done:
                 try:
@@ -457,8 +491,6 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
                         events.append(f"🙅 Rechazada oferta por <b>{name}</b> ({service.m(o.money)}): {notify.esc(why)}")
                     except Exception as exc:
                         events.append(f"❌ No he podido rechazar una oferta por <b>{name}</b>: {notify.esc(str(exc))}")
-            elif store.alert_is_new(f"offer_hold:{o.id}", ttl_hours=72):
-                events.append(f"⏸️ Oferta por <b>{name}</b> de {service.m(o.money)}: no la acepto — {notify.esc(why)}")
     store.set("sold_ids", json.dumps(sorted(sold)))
     return events
 
@@ -600,6 +632,26 @@ def _watch_once(store: Store, s) -> str:
     lineup_msg = _apply_lineup(store, api, world)
     if lineup_msg:
         events.append(lineup_msg)
+    out = world.outlook
+    if out.in_break and store.alert_is_new(f"break_on:{out.next_first:%Y%m%d}", ttl_hours=24 * 30):
+        events.append(
+            f"📅 <b>Parón en curso</b> hasta el {out.next_first.astimezone():%d/%m %H:%M}: no hay once que "
+            f"puntuar, así que dedico el {int(ap.INVEST_FRACTION_BREAK * 100)}% del saldo libre a inversión "
+            f"(jugadores en subida sostenida que se revenden)."
+        )
+    if out.next_break and store.alert_is_new(f"break_next:{out.next_break[0]:%Y%m%d}", ttl_hours=24 * 30):
+        a, b = out.next_break
+        events.append(
+            f"📅 Próximo parón: del {a.astimezone():%d/%m} al {b.astimezone():%d/%m} "
+            f"({(b - a).days} días sin partidos): modo inversión."
+        )
+    hours = _hours_to_deadline(world)
+    if hours is not None and 0 < hours <= 30 and not ap.complete_eleven([sl.player for sl in world.my_slots]) \
+            and store.alert_is_new("xi_incomplete", ttl_hours=5):
+        events.append(
+            f"🚨 <b>No puedes alinear 11 jugadores</b> y la jornada empieza en {hours:.0f}h: "
+            f"sin 11 completos puntuarías 0. Tienes {len(world.my_slots)} jugadores y {service.m(world.my_cash)}."
+        )
 
     if events:
         notify.send_all(s, "🤖 <b>PILOTO AUTOMÁTICO</b>\n\n" + "\n\n".join(events), html=True)
@@ -652,7 +704,16 @@ def cmd_tick(args, s) -> None:
         return
     if not notify.any_enabled(s):
         sys.exit("tick necesita Telegram configurado")
-    print(_watch_once(Store(s.db_file), s))
+    store = Store(s.db_file)
+    try:
+        print(_watch_once(store, s))
+    except Exception as exc:
+        if store.alert_is_new("tick_failed", ttl_hours=3):  # como mucho un aviso cada 3 h
+            try:
+                notify.send_all(s, f"🔴 <b>El bot ha fallado</b>: {notify.esc(str(exc))[:600]}", html=True)
+            except Exception:
+                pass
+        raise
 
 
 def _dry_run(s) -> None:
