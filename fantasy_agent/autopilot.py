@@ -36,6 +36,8 @@ STARTER_LOSS = 1.0           # titular: a <48h de la jornada solo se vende por m
 BENCH_LOSS = 0.5             # suplente que apenas suma
 BENCH_OFFER_MIN = 0.97       # con la plantilla llena, un suplente se vende a ~su valor
 LIQUIDITY_OFFER_MIN = 0.97   # para liberar capital hacia una inversión en subida
+RISING_D3 = 1.0              # sigue subiendo mientras gane >1% en 3 días
+RISING_HOLD_MIN = 1.25       # y mientras tanto solo se vende por una oferta fuera de lo normal
 HOME_FACTOR = 1.05           # jugar en casa suma algo, fuera resta algo
 RIVAL_DIFFICULTY = 0.10      # ±10% según la posición del rival en la tabla de LaLiga
 RIVAL_OFFER_MIN = 1.30       # ofertas de rivales: casi nunca convienen
@@ -272,7 +274,7 @@ def at_risk_min(hours_left: float, key: bool) -> float:
 
 
 def offer_decision(
-    offer: Offer, player: Player, *, loss: float, cut_loss: bool = False, trend_d7: float = 0.0,
+    offer: Offer, player: Player, *, loss: float, cut_loss: bool = False, trend_d7: float = 0.0, trend_d3: float = 0.0,
     breaks_xi: bool = False, hours_to_deadline: float | None = None, exposed_in: float | None = None,
     squad_full: bool = False, cost_basis: int | None = None, no_sell: bool = False, liquidity: bool = False,
 ) -> tuple[str, str]:
@@ -309,8 +311,11 @@ def offer_decision(
         need, why = BENCH_OFFER_MIN, "suplente con la plantilla llena: libera sitio para un fichaje mejor"
     else:
         need, why = LEAGUE_OFFER_MIN, "oferta por encima de su valor"
-    if trend_d7 > 5 and not at_risk:
-        need += min(trend_d7 / 100, 0.15)  # si está subiendo rápido, en días vale más que la oferta
+    if trend_d3 > RISING_D3 and trend_d7 > 5 and not at_risk:
+        # La técnica (Josinho con Yamal): esperar a que suba. Prueba histórica (4/10/2026): comprar
+        # una subida y mantener hasta que se frena rinde +72% de media (mediana +21%, ~19 días);
+        # vender a los 7 días, solo +17%. Mientras sigue subiendo no se vende (las ofertas no pasan de ~1,13×).
+        need, why = max(need, RISING_HOLD_MIN), f"sigue subiendo ({trend_d3:+.1f}% en 3 días): espero a que se frene"
     if cost_basis and value and not cut_loss:
         # Nunca por debajo de lo que costó, tampoco por riesgo de cláusula (decisión del
         # usuario, 4/10/2026: mejor que te paguen la cláusula que vender con pérdida). Solo

@@ -399,3 +399,21 @@ class RelistTests(unittest.TestCase):
         self.assertEqual(ap.ask_multiplier("3239", after), ap.LISTING_MARKUP)
         self.assertEqual(ap.ask_multiplier("someone", before), ap.LISTING_MARKUP)
         self.assertTrue(ap.needs_relist(ask=1_110_000, value_now=1_070_000, mult=2.0))  # el anuncio aún es el normal
+
+
+class HoldRisersTests(unittest.TestCase):
+    def offer(self, ratio):
+        return Offer(id="o", money=int(10_000_000 * ratio), from_manager="LaLiga", is_system=True)
+
+    def test_a_riser_is_not_sold_while_it_keeps_rising(self):
+        p = player("r", 4, 6.0, 10_000_000)
+        self.assertEqual(ap.offer_decision(self.offer(1.12), p, loss=0.2, trend_d3=4, trend_d7=12)[0], "hold")
+
+    def test_it_is_sold_once_the_rise_stalls(self):
+        p = player("r", 4, 6.0, 10_000_000)
+        self.assertEqual(ap.offer_decision(self.offer(1.06), p, loss=0.2, trend_d3=0.2, trend_d7=12)[0], "accept")
+
+    def test_a_flat_player_follows_the_normal_threshold(self):
+        p = player("f", 4, 6.0, 10_000_000)
+        self.assertEqual(ap.offer_decision(self.offer(1.06), p, loss=0.2, trend_d3=0.3, trend_d7=1)[0], "accept")
+        self.assertEqual(ap.offer_decision(self.offer(1.02), p, loss=0.2, trend_d3=0.3, trend_d7=1)[0], "hold")

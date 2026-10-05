@@ -508,7 +508,7 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
             decision, why = ap.offer_decision(
                 o, sl.player, loss=ap.sale_loss(mine, pid, world.recent_form), cut_loss=(pid in cut) or released,
                 no_sell=in_siege and not released, liquidity=liquidity and not in_siege,
-                trend_d7=trend.d7, breaks_xi=ap.breaks_eleven(mine, pid), hours_to_deadline=hours,
+                trend_d7=trend.d7, trend_d3=trend.d3, breaks_xi=ap.breaks_eleven(mine, pid), hours_to_deadline=hours,
                 exposed_in=ap.hours_until_exposed(sl, now), squad_full=len(world.my_slots) >= s.max_squad,
                 cost_basis=None if in_siege else paid.get(pid),
             )
