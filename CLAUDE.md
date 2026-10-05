@@ -1,5 +1,12 @@
 # Contexto para Claude Code
 
+## Al empezar una sesión
+1. Lee `ESTADO.md` (qué hace el bot y qué está verificado) y **`PENDIENTES.md`** (puntos de fuga, evidencia y orden de trabajo).
+2. Descarga los datos reales del bot: `python3 -m fantasy_agent pull` y analízalos con `review --cloud`, `offers --cloud`,
+   `tune --cloud --deep`, `siege` (los comandos están en PENDIENTES.md). Los datos del bot viven en GitHub, no en local.
+3. El usuario no quiere que el bot "aprenda a lo loco": el autoajuste va en modo `shadow` (propone, no aplica). Las decisiones de
+   cambio se toman aquí, con los datos, y se dejan por escrito en ESTADO.md/PENDIENTES.md.
+
 Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estándar**.
 
 ## Reglas del proyecto

@@ -85,9 +85,11 @@ Todas las cifras están como constantes al principio de `fantasy_agent/autopilot
 - **Cancelar una puja**: `DELETE .../market/{marketId}/bid/{bidId}/cancel`.
 - **Fase económica→competitiva**: descartada — tu directriz es ir a por puntos ("jugadores buenos").
 
-## Autoajuste (5/10/2026): el bot corrige sus propios parámetros
+> **Antes de seguir, lee `PENDIENTES.md`**: puntos de fuga por prioridad, evidencia y cómo retomar con los datos del bot (`pull`).
 
-`fantasy_agent/learn.py` (puro) + `cli._tune`. **Una vez al día** (ligero) y **los domingos** (recalibración pesada, ~250 peticiones). Solo toca 7 números, siempre dentro de límites fijos (`autopilot.BOUNDS`), a medio camino de lo aprendido, y cada cambio queda registrado con motivo (`python3 -m fantasy_agent tune` los muestra; el resumen del domingo los incluye). **Apagarlo: `AUTOTUNE=0`** en el entorno del workflow (vuelve a los valores de fábrica).
+## Autoajuste (5/10/2026): modo `shadow` — el bot propone, NO aplica
+
+`fantasy_agent/learn.py` (puro) + `cli._tune`. **Una vez al día** (ligero) y **los domingos** (recalibración pesada, ~250 peticiones). Solo toca 7 números, siempre dentro de límites fijos (`autopilot.BOUNDS`). **Por defecto (`AUTOTUNE=shadow`) calcula y guarda propuestas pero NO las aplica**: se revisan con los datos (`tune --cloud`) y se decide aquí. `AUTOTUNE=on` las aplica (a medio camino de lo aprendido, con motivo registrado); `AUTOTUNE=off` lo apaga.
 
 | Parámetro | Fábrica | Límites | Cómo aprende | Muestra mínima |
 |---|---|---|---|---|
