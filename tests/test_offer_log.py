@@ -23,3 +23,11 @@ class OfferLogTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OfferLogAskTests(unittest.TestCase):
+    def test_ask_and_listed_value_are_stored(self):
+        store = Store(Path(tempfile.mkdtemp()) / "t.db")
+        store.log_offer("a", "p1", "J1", 10_000_000, 10_400_000, True, ask=11_000_000, listed_value=10_000_000)
+        [row] = store.offer_rows()
+        self.assertEqual((row["ask"], row["listed_value"]), (11_000_000, 10_000_000))

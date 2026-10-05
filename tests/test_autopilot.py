@@ -381,3 +381,21 @@ class AnticipationAndLiquidityTests(unittest.TestCase):
         p = player("x", 3, 5.0, 10_000_000)
         self.assertNotEqual(ap.offer_decision(o, p, loss=2.0, liquidity=True)[0], "accept")
         self.assertEqual(ap.offer_decision(o, p, loss=0.2, trend_d7=12, liquidity=True)[0], "hold")
+
+
+class RelistTests(unittest.TestCase):
+    def test_relist_when_value_rose_10_percent(self):
+        self.assertTrue(ap.needs_relist(ask=11_000_000, value_now=12_500_000, mult=1.1))
+        self.assertFalse(ap.needs_relist(ask=11_000_000, value_now=10_500_000, mult=1.1))
+
+    def test_relist_when_the_ask_is_far_above_a_collapsed_value(self):
+        self.assertTrue(ap.needs_relist(ask=11_000_000, value_now=6_000_000, mult=1.1))
+
+    def test_experiment_players_use_their_multiplier_until_it_ends(self):
+        from datetime import datetime, timezone
+        before = datetime(2026, 10, 5, tzinfo=timezone.utc)
+        after = datetime(2026, 10, 20, tzinfo=timezone.utc)
+        self.assertEqual(ap.ask_multiplier("3239", before), 2.0)
+        self.assertEqual(ap.ask_multiplier("3239", after), ap.LISTING_MARKUP)
+        self.assertEqual(ap.ask_multiplier("someone", before), ap.LISTING_MARKUP)
+        self.assertTrue(ap.needs_relist(ask=1_110_000, value_now=1_070_000, mult=2.0))  # el anuncio aún es el normal

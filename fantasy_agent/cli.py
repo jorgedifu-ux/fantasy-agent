@@ -494,8 +494,10 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
         except Exception as exc:
             events.append(f"❌ No he podido leer las ofertas por <b>{name}</b>: {notify.esc(str(exc))}")
             continue
+        mult = ap.ask_multiplier(pid, now)
         for o in offers:
-            store.log_offer(o.id, pid, sl.player.name, sl.player.market_value, o.money, o.is_system)
+            store.log_offer(o.id, pid, sl.player.name, sl.player.market_value, o.money, o.is_system,
+                            ask=it.price, listed_value=round(it.price / mult))
         trend = world.trends.get(pid, (None, analysis.Trend(0, 0, 0)))[1]
         done = False
         in_siege = pid in _siege_ids(store)
@@ -536,20 +538,35 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
 
 def _list_for_sale(store: Store, api: FantasyAPI, world) -> list[str]:
     """Todos tus jugadores siempre en venta: así la liga manda una oferta diaria por cada uno
-    y `_resolve_offers` decide. Estar en venta no obliga a vender nada."""
-    listed = {it.player.id for it in world.market if it.seller_team_id == world.my_team_id}
+    y `_resolve_offers` decide. Estar en venta no obliga a vender. Si el valor de un jugador ha
+    subido ≥10% desde que se anunció, se reanuncia al valor nuevo (ver `autopilot.needs_relist`)."""
+    now = datetime.now(timezone.utc)
+    listed = {it.player.id: it for it in world.market if it.seller_team_id == world.my_team_id}
     done: list[str] = []
+    relisted = 0
     hours = _hours_to_deadline(world)
     for sl in world.my_slots:
         p = sl.player
         if p.id in _siege_ids(store) and (hours is None or hours > 0):
             continue  # los porteros de la operación bloqueo no se ponen a la venta antes de la jornada
-        if p.id in listed or not p.market_value or not sl.player_team_id or p.position_id not in ap.FIELD_POSITIONS:
+        if not p.market_value or not sl.player_team_id or p.position_id not in ap.FIELD_POSITIONS:
             continue
-        price = ap.listing_price(p)
+        mult = ap.ask_multiplier(p.id, now)
+        it = listed.get(p.id)
+        if it is not None:
+            if relisted >= 4 or not ap.needs_relist(it.price, p.market_value, mult):
+                continue
+            try:
+                api.withdraw_listing(world.league_id, it.market_id)
+            except Exception as exc:
+                if store.alert_is_new(f"relist_fail:{p.id}", ttl_hours=24):
+                    done.append(f"{notify.esc(p.name)} ❌ no he podido retirar el anuncio: {notify.esc(str(exc))[:100]}")
+                continue
+            relisted += 1
+        price = ap.listing_price(p, now)
         try:
             api.sell_player(world.league_id, sl.player_team_id, price)
-            done.append(f"{notify.esc(p.name)} ({service.m(price)})")
+            done.append(f"{notify.esc(p.name)} ({service.m(price)}{' · reanunciado' if it is not None else ''})")
         except Exception as exc:
             if store.alert_is_new(f"list_fail:{p.id}", ttl_hours=24):
                 done.append(f"{notify.esc(p.name)} ❌ {notify.esc(str(exc))[:120]}")
@@ -771,10 +788,23 @@ def _siege_go(store: Store, s, api: FantasyAPI, world) -> list[str]:
 
 def cmd_offers(args, s) -> None:
     """Cómo se distribuyen las ofertas de la liga respecto al valor (lo que el bot ha visto)."""
-    ratios = Store(s.db_file).offer_ratios()
+    store = Store(s.db_file)
+    ratios = store.offer_ratios()
     if not ratios:
         print("Aún no hay ofertas registradas.")
         return
+    rows = [r for r in store.offer_rows() if r["system"] and r["ask"]]
+    if rows:
+        print("¿De qué depende la oferta? (oferta / valor actual, según lo que se pedía en el anuncio)")
+        for name, lo, hi in (("pedido < 0,95× valor", 0, .95), ("pedido 0,95–1,25×", .95, 1.25), ("pedido 1,25–1,7×", 1.25, 1.7), ("pedido ≥ 1,7×", 1.7, 99)):
+            sel = [r["money"] / r["value"] for r in rows if lo <= r["ask"] / r["value"] < hi]
+            if sel:
+                print(f"  {name:<22} n={len(sel):3d}  oferta media x{sum(sel) / len(sel):.3f} del valor actual")
+        for name, lo, hi in (("valor bajó o igual", 0, 1.0), ("valor subió 0–5%", 1.0, 1.05), ("valor subió >5% desde que se anunció", 1.05, 99)):
+            sel = [r["money"] / r["value"] for r in rows if r["listed_value"] and lo <= r["value"] / r["listed_value"] < hi]
+            if sel:
+                print(f"  {name:<36} n={len(sel):3d}  oferta media x{sum(sel) / len(sel):.3f} del valor actual")
+        print()
     q = lambda p: ratios[min(len(ratios) - 1, int(len(ratios) * p))]
     print(f"{len(ratios)} ofertas · mín {ratios[0]:.3f} · p10 {q(.1):.3f} · p25 {q(.25):.3f} · mediana {q(.5):.3f} · "
           f"p75 {q(.75):.3f} · p90 {q(.9):.3f} · máx {ratios[-1]:.3f}")

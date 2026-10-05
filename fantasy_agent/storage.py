@@ -42,7 +42,9 @@ class Store:
                 value INTEGER NOT NULL,
                 money INTEGER NOT NULL,
                 is_system INTEGER NOT NULL,
-                seen_at REAL NOT NULL
+                seen_at REAL NOT NULL,
+                ask INTEGER NOT NULL DEFAULT 0,
+                listed_value INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS market_bids (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,6 +77,11 @@ class Store:
         if "market_id" not in cols:
             self.db.execute("ALTER TABLE market_bids ADD COLUMN market_id TEXT")
             self.db.commit()
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(offer_log)")}
+        for col in ("ask", "listed_value"):
+            if col not in cols:
+                self.db.execute(f"ALTER TABLE offer_log ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
+        self.db.commit()
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(auto_buys)")}
         if "kind" not in cols:
             self.db.execute("ALTER TABLE auto_buys ADD COLUMN kind TEXT NOT NULL DEFAULT 'emergency_buy'")
@@ -214,13 +221,20 @@ class Store:
 
 
     # ---- ofertas vistas: para aprender cómo se distribuyen respecto al valor ----
-    def log_offer(self, offer_id: str, player_id: str, player_name: str, value: int, money: int, is_system: bool) -> None:
+    def log_offer(self, offer_id: str, player_id: str, player_name: str, value: int, money: int, is_system: bool,
+                  ask: int = 0, listed_value: int = 0) -> None:
         self.db.execute(
-            "INSERT OR IGNORE INTO offer_log(id, player_id, player_name, value, money, is_system, seen_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (offer_id, player_id, player_name, value, money, int(is_system), time.time()),
+            "INSERT OR IGNORE INTO offer_log(id, player_id, player_name, value, money, is_system, seen_at, ask, listed_value) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (offer_id, player_id, player_name, value, money, int(is_system), time.time(), ask, listed_value),
         )
         self.db.commit()
+
+    def offer_rows(self) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            "SELECT player_name, value, money, ask, listed_value, is_system FROM offer_log WHERE value > 0 ORDER BY seen_at"
+        ).fetchall()
+        return [{"name": r[0], "value": r[1], "money": r[2], "ask": r[3], "listed_value": r[4], "system": bool(r[5])} for r in rows]
 
     def offer_ratios(self, system_only: bool = True) -> list[float]:
         """oferta / valor del jugador en el momento de verla, de todas las ofertas registradas."""

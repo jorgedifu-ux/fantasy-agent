@@ -12,7 +12,7 @@ Sustituye a los "Confirmar" y a los topes de nº de operaciones por reglas econ�
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from . import lineup
 from .models import MarketItem, Offer, Player, SquadSlot
@@ -333,8 +333,31 @@ def fixture_factor(home: bool | None, rival_rank: int | None, n_teams: int = 20)
     return round(factor, 3)
 
 
-def listing_price(player: Player) -> int:
-    return round(player.market_value * LISTING_MARKUP)
+# Experimento (4/10/2026): ¿la oferta depende del valor actual, del valor al poner en venta o del
+# precio que pides? Dos jugadores baratos se anuncian a otro múltiplo durante una semana y el bot
+# registra las ofertas (`python3 -m fantasy_agent offers`). El resto, al múltiplo normal.
+ASK_EXPERIMENT = {"3239": 2.0, "2934": 1.5}      # id (Mayol, Freeman) -> múltiplo del valor
+EXPERIMENT_UNTIL = datetime(2026, 10, 12, tzinfo=timezone.utc)
+RELIST_RISE = 1.10                                # se reanuncia si el valor sube un 10% desde que se anunció
+RELIST_TOO_HIGH = 1.40
+
+
+def ask_multiplier(player_id: str, now: datetime) -> float:
+    return ASK_EXPERIMENT.get(player_id, LISTING_MARKUP) if now < EXPERIMENT_UNTIL else LISTING_MARKUP
+
+
+def listing_price(player: Player, now: datetime | None = None) -> int:
+    mult = ask_multiplier(player.id, now or datetime.now(timezone.utc))
+    return round(player.market_value * mult)
+
+
+def needs_relist(ask: int, value_now: int, mult: float) -> bool:
+    """El anuncio quedó viejo: el valor ha subido ≥10% desde que se puso (precio/valor < mult/1,1)
+    o se ha desplomado (precio/valor > mult×1,4)."""
+    if not value_now or ask <= 0:
+        return False
+    ratio = ask / value_now
+    return ratio < mult / RELIST_RISE or ratio > mult * RELIST_TOO_HIGH
 
 
 LINEUP_VARIANTS = ("flat_snake", "flat", "nested")  # flat_snake: verificada en vivo el 26/09/2026

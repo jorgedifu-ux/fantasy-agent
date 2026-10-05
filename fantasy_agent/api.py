@@ -113,6 +113,10 @@ class FantasyAPI:
         return self._write("POST", f"{COMP}/league/{league_id}/market/sell",
                             {"playerId": player_id, "salePrice": sale_price})
 
+    def withdraw_listing(self, league_id: str, market_id: str) -> Any:
+        """Retira un anuncio tuyo de venta (ruta de Externoak/LaLigaApp; las ofertas pendientes se pierden)."""
+        return self._write("DELETE", f"{COMP}/league/{league_id}/market/{market_id}/delete")
+
     def player_team_offers(self, league_id: str, player_team_id: str) -> Any:
         """Ofertas recibidas por uno de tus jugadores en venta (id + importe + si es de la
         liga). El listado general del mercado solo trae `numberOfOffers`, no el detalle."""
