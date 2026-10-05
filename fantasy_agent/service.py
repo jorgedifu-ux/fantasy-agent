@@ -242,6 +242,26 @@ def purchase_prices(api: FantasyAPI, league_id: str, my_manager_id: str, pages: 
     return out
 
 
+def trade_history(api: FantasyAPI, league_id: str, manager_id: str) -> tuple[list[dict], dict[str, dict]]:
+    """Operaciones de un mánager según `/activity`: (cerradas, abiertas). Una operación es una
+    compra (puja ganada o cláusula pagada) emparejada con su salida (venta, o cláusula que sufre)."""
+    names = {str(p.get("id")): p.get("nickname") for p in api.players()}
+    rows = sorted(_all_activity(api, league_id), key=lambda a: str(models.pick(a, "createdAt", default="")))
+    open_: dict[str, dict] = {}
+    closed: list[dict] = []
+    for a in rows:
+        kind = models.to_int(models.pick(a, "activityTypeId"))
+        u1, u2 = str(models.pick(a, "user1Id", default="")), str(models.pick(a, "user2Id", default=""))
+        pid, amount = str(models.pick(a, "playerMasterId", default="")), models.to_int(models.pick(a, "amount"))
+        when = models.parse_dt(models.pick(a, "createdAt"))
+        if kind in (1, 31) and u1 == manager_id:
+            open_[pid] = {"pid": pid, "name": names.get(pid, pid), "paid": amount, "at": when, "how": "cláusula" if kind == 1 else "puja"}
+        elif ((kind == 33 and u1 == manager_id) or (kind == 1 and u2 == manager_id)) and pid in open_:
+            b = open_.pop(pid)
+            closed.append({**b, "got": amount, "sold_at": when, "exit": "venta" if kind == 33 else "te la clausulan"})
+    return closed, open_
+
+
 STARTING_CASH = 100_000_000  # saldo inicial de esta liga (comprobado: estimación vs. saldo real, error ~1M)
 
 

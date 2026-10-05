@@ -19,6 +19,8 @@ from .models import MarketItem, Offer, Player, SquadSlot
 
 FIELD_POSITIONS = (1, 2, 3, 4)
 POINT_VALUE_M = 0.30         # lo que vale un punto de jornada (0,1M de premio + posición en la liga)
+GAIN_HORIZON = 3             # jornadas durante las que se espera disfrutar de lo que un fichaje suma al once
+RESALE_SPREAD = 0.05         # lo que se pierde al revender (las ofertas medias están ~5% bajo lo que se paga)
 MAX_CLAUSE_RATIO = 1.2       # cláusula "lógica": ≤1.2x el valor de mercado
 MIN_GAIN = 0.5               # pts/jornada que como mínimo debe sumar una compra
 COMPLETE_XI_BONUS = 15.0     # completar el once pesa más que cualquier fichaje
@@ -36,6 +38,7 @@ STARTER_LOSS = 1.0           # titular: a <48h de la jornada solo se vende por m
 BENCH_LOSS = 0.5             # suplente que apenas suma
 BENCH_OFFER_MIN = 0.97       # con la plantilla llena, un suplente se vende a ~su valor
 LIQUIDITY_OFFER_MIN = 0.97   # para liberar capital hacia una inversión en subida
+INJURED_OFFER_MIN = 1.0      # un lesionado se vende a ~su valor
 RISING_D3 = 1.0              # sigue subiendo mientras gane >1% en 3 días
 RISING_HOLD_MIN = 1.25       # y mientras tanto solo se vende por una oferta fuera de lo normal
 HOME_FACTOR = 1.05           # jugar en casa suma algo, fuera resta algo
@@ -215,9 +218,15 @@ def plan_acquisitions(
             cost = bid_amount(m.item, gain, rivals) if m.kind == "bid" and m.item else m.cost
             if cost > left:
                 continue
-            # Lo que rinde un fichaje = puntos que suma + lo que se revaloriza (expresado en puntos).
-            total = gain + m.drift * (cost / 1_000_000) / POINT_VALUE_M
-            eff = total / (cost / 1_000_000 + slot_cost + 0.25) * (PENALTY_FACTOR if m.penalized else 1.0)
+            # Beneficio neto en M: lo que suma al once durante unas jornadas + lo que se revaloriza,
+            # menos lo que se pierde de ida y vuelta (prima pagada sobre el valor + margen al revender).
+            # Así no se paga un 19% de más (Johnny) por +0,6 pts/jornada.
+            cost_m, value = cost / 1_000_000, m.player.market_value
+            premium = max(0.0, cost / value - 1) if value else 0.0
+            net_m = gain * GAIN_HORIZON * POINT_VALUE_M + m.drift * cost_m - (premium + RESALE_SPREAD) * cost_m
+            if net_m <= 0:
+                continue
+            eff = net_m / (cost_m + slot_cost + 0.25) * (PENALTY_FACTOR if m.penalized else 1.0)
             if best is None or eff > best[0]:
                 best = (eff, m, gain, cost)
         if best is None:
@@ -277,6 +286,7 @@ def offer_decision(
     offer: Offer, player: Player, *, loss: float, cut_loss: bool = False, trend_d7: float = 0.0, trend_d3: float = 0.0,
     breaks_xi: bool = False, hours_to_deadline: float | None = None, exposed_in: float | None = None,
     squad_full: bool = False, cost_basis: int | None = None, no_sell: bool = False, liquidity: bool = False,
+    injured: bool = False,
 ) -> tuple[str, str]:
     """("accept" | "reject" | "hold", motivo). "hold" = no hacer nada y dejar que caduque.
     `no_sell`: jugador de una operación en curso (bloqueo al líder): no se vende todavía."""
@@ -296,6 +306,10 @@ def offer_decision(
         need = at_risk_min(exposed_in, key)
         cuando = "ya es clausulable" if exposed_in == 0 else f"su protección acaba en {exposed_in:.0f}h"
         why = f"{cuando}: mejor venderlo que ver cómo se lo lleva un rival"
+    elif injured:
+        # Lesionado: no puntúa y su valor puede caer cuando se enfríe lo que hizo antes. Se cobra a
+        # ~su valor (siempre sin bajar de lo pagado) en vez de esperar una subida que ya no usa.
+        need, why = INJURED_OFFER_MIN, "lesionado (no puntúa): cobro lo ganado"
     elif key:
         need, why = KEY_PLAYER_OFFER_MIN, "jugador clave"
     elif loss >= STARTER_LOSS and hours_to_deadline is not None and hours_to_deadline < 48:
@@ -311,7 +325,7 @@ def offer_decision(
         need, why = BENCH_OFFER_MIN, "suplente con la plantilla llena: libera sitio para un fichaje mejor"
     else:
         need, why = LEAGUE_OFFER_MIN, "oferta por encima de su valor"
-    if trend_d3 > RISING_D3 and trend_d7 > 5 and not at_risk:
+    if trend_d3 > RISING_D3 and trend_d7 > 5 and not at_risk and not injured:
         # La técnica (Josinho con Yamal): esperar a que suba. Prueba histórica (4/10/2026): comprar
         # una subida y mantener hasta que se frena rinde +72% de media (mediana +21%, ~19 días);
         # vender a los 7 días, solo +17%. Mientras sigue subiendo no se vende (las ofertas no pasan de ~1,13×).
@@ -424,8 +438,9 @@ def invest_moves(market: list[MarketItem], trends: dict, skip_player_ids: frozen
         if it.price > p.market_value * INVEST_MAX_PRICE_RATIO:
             continue
         drift = expected_drift(tr.d3, tr.d7, (form or {}).get(p.id))
-        if drift >= 0.08:
-            out.append(Move("invest", p, it.price, item=it, drift=drift, score=round(drift * 100 + (tr.d3 + tr.d7) / 10, 1)))
+        net = drift - max(0.0, it.price / p.market_value - 1) - RESALE_SPREAD
+        if drift >= 0.08 and net >= 0.03:
+            out.append(Move("invest", p, it.price, item=it, drift=drift, score=round(net * 100 + (tr.d3 + tr.d7) / 10, 1)))
     return sorted(out, key=lambda m: -m.score)
 
 
@@ -443,9 +458,10 @@ def clause_invest_moves(
         if tr is None or p.id in skip_player_ids or m.cost > p.market_value * CLAUSE_INVEST_MAX_RATIO:
             continue
         drift = expected_drift(tr.d3, tr.d7, (form or {}).get(p.id))
-        if drift >= 0.08:
+        net = drift - max(0.0, m.cost / p.market_value - 1) - RESALE_SPREAD
+        if drift >= 0.08 and net >= 0.03:
             m.kind, m.drift = "invest_clause", drift
-            m.score = round(drift * 100 + (tr.d3 + tr.d7) / 10 - (10 if m.penalized else 0), 1)
+            m.score = round(net * 100 + (tr.d3 + tr.d7) / 10 - (10 if m.penalized else 0), 1)
             out.append(m)
     return sorted(out, key=lambda m: -m.score)
 

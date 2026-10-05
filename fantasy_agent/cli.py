@@ -511,6 +511,7 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
                 trend_d7=trend.d7, trend_d3=trend.d3, breaks_xi=ap.breaks_eleven(mine, pid), hours_to_deadline=hours,
                 exposed_in=ap.hours_until_exposed(sl, now), squad_full=len(world.my_slots) >= s.max_squad,
                 cost_basis=None if in_siege else paid.get(pid),
+                injured=sl.player.status.lower() in ap.INJURED,
             )
             if decision == "accept" and not done:
                 try:
@@ -786,6 +787,70 @@ def _siege_go(store: Store, s, api: FantasyAPI, world) -> list[str]:
     return events
 
 
+# ---------------------------------------------------------------------------------------------
+# Revisión: ¿estamos ganando dinero? (patrimonio diario, operaciones cerradas, resumen semanal)
+# ---------------------------------------------------------------------------------------------
+PILOT_START = "2026-09-26"  # día en que el piloto automático empezó a operar
+
+
+def _record_wealth(store: Store, world) -> None:
+    day = datetime.now().strftime("%Y-%m-%d")
+    store.log_wealth(day, int(world.my_cash or 0), sum(sl.player.market_value for sl in world.my_slots))
+
+
+def _review_text(api: FantasyAPI, store: Store, world, since: str = PILOT_START, html: bool = True) -> str:
+    b = (lambda x: f"<b>{x}</b>") if html else (lambda x: x)
+    my_manager = next((r.manager_id for r in world.standing if r.team_id == world.my_team_id), "")
+    closed, open_ = service.trade_history(api, world.league_id, my_manager)
+    closed = [c for c in closed if c["sold_at"] and c["sold_at"].astimezone().strftime("%Y-%m-%d") >= since]
+    value_now = sum(sl.player.market_value for sl in world.my_slots)
+    wealth = int(world.my_cash or 0) + value_now
+    lines = [b("📊 REVISIÓN"), f"Patrimonio ahora: {service.m(wealth)} (saldo {service.m(world.my_cash)} + plantilla {service.m(value_now)})"]
+    today = datetime.now().strftime("%Y-%m-%d")
+    for label, days in (("hace 7 días", 7), ("desde que hay registro", None)):
+        ref = store.wealth_first() if days is None else store.wealth_on_or_before(
+            (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d"))
+        if ref and ref[0] != today:
+            delta = wealth - (ref[1] + ref[2])
+            lines.append(f"  vs {label} ({ref[0]}): {delta / 1e6:+.1f}M ({delta / (ref[1] + ref[2]) * 100:+.1f}%)")
+    if closed:
+        profit = sum(c["got"] - c["paid"] for c in closed)
+        wins = sum(1 for c in closed if c["got"] > c["paid"])
+        lines.append(f"Operaciones cerradas desde {since}: {len(closed)} · {wins} con ganancia · resultado {profit / 1e6:+.2f}M")
+        for kind in ("puja", "cláusula"):
+            sel = [c for c in closed if c["how"] == kind]
+            if sel:
+                lines.append(f"  compradas por {kind}: {len(sel)} · {sum(c['got'] - c['paid'] for c in sel) / 1e6:+.2f}M")
+        ordered = sorted(closed, key=lambda c: c["got"] - c["paid"])
+        for c in ordered[:2] + ordered[-2:]:
+            lines.append(f"  {notify.esc(c['name'])}: pagado {service.m(c['paid'])} → {service.m(c['got'])} ({(c['got'] - c['paid']) / 1e6:+.2f}M, {c['exit']})")
+    held = [(sl.player, open_[sl.player.id]) for sl in world.my_slots if sl.player.id in open_]
+    if held:
+        unreal = sum(p.market_value - o["paid"] for p, o in held)
+        lines.append(f"Sin vender aún: {len(held)} jugadores · {unreal / 1e6:+.2f}M sobre lo pagado")
+        for p, o in sorted(held, key=lambda x: x[0].market_value - x[1]["paid"]):
+            lines.append(f"  {notify.esc(p.name)}: pagado {service.m(o['paid'])} · hoy {service.m(p.market_value)} ({(p.market_value - o['paid']) / 1e6:+.2f}M)")
+    pts = next((r.points for r in world.standing if r.team_id == world.my_team_id), 0)
+    lines.append(f"Puntos: {pts}")
+    return "\n".join(lines)
+
+
+def _weekly_review(store: Store, s, api: FantasyAPI, world) -> list[str]:
+    now = datetime.now()
+    key = f"weekly:{now.isocalendar().year}-{now.isocalendar().week}"
+    if now.weekday() != 6 or now.hour < 12 or not store.alert_is_new(key, ttl_hours=24 * 8):
+        return []
+    return [_review_text(api, store, world)]
+
+
+def cmd_review(args, s) -> None:
+    import re
+    api = FantasyAPI(s)
+    store = Store(s.db_file)
+    world = _world(api, s, trends=False)
+    print(re.sub(r"</?[bi]>", "", _review_text(api, store, world, since=args.since, html=False)))
+
+
 def cmd_offers(args, s) -> None:
     """Cómo se distribuyen las ofertas de la liga respecto al valor (lo que el bot ha visto)."""
     store = Store(s.db_file)
@@ -839,6 +904,7 @@ def _watch_once(store: Store, s) -> str:
     world = _world(api, s, trends=True)
     _record_status_history(store, world)
     team_plan = _sync_plan(store, s, world)
+    _record_wealth(store, world)
     events: list[str] = _squad_changes(store, world)
     events += _check_bid_resolutions(store, world)
 
@@ -897,6 +963,7 @@ def _watch_once(store: Store, s) -> str:
             f"sin 11 completos puntuarías 0. Tienes {len(world.my_slots)} jugadores y {service.m(world.my_cash)}."
         )
 
+    events += _weekly_review(store, s, api, world)
     if events:
         notify.send_all(s, "🤖 <b>PILOTO AUTOMÁTICO</b>\n\n" + "\n\n".join(events), html=True)
     if digest.due(store, s):
@@ -1034,6 +1101,9 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("tick", help="Una pasada del piloto automático (para cron / GitHub Actions)")
     p.add_argument("--dry-run", action="store_true", help="simular: no escribe nada en la API ni en Telegram")
     p.set_defaults(func=cmd_tick)
+    p = sub.add_parser("review", help="¿Estamos ganando dinero? Patrimonio y operaciones cerradas")
+    p.add_argument("--since", default=PILOT_START, help="fecha AAAA-MM-DD desde la que contar las operaciones")
+    p.set_defaults(func=cmd_review)
     sub.add_parser("offers", help="Distribución de las ofertas de la liga respecto al valor").set_defaults(func=cmd_offers)
     sub.add_parser("siege", help="Analiza si dejar sin portero al líder sería viable ahora").set_defaults(func=cmd_siege)
     sub.add_parser("pending", help="Propuestas (pujas/cláusulas) esperando tu confirmación").set_defaults(func=cmd_pending)

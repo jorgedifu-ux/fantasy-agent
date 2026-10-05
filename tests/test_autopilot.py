@@ -417,3 +417,50 @@ class HoldRisersTests(unittest.TestCase):
         p = player("f", 4, 6.0, 10_000_000)
         self.assertEqual(ap.offer_decision(self.offer(1.06), p, loss=0.2, trend_d3=0.3, trend_d7=1)[0], "accept")
         self.assertEqual(ap.offer_decision(self.offer(1.02), p, loss=0.2, trend_d3=0.3, trend_d7=1)[0], "hold")
+
+
+class NetBenefitTests(unittest.TestCase):
+    """Caso real del 5/10: Johnny (5,04M de valor) se clausuló por 6M aportando ~0,6 pts/jornada."""
+
+    def plan(self, avg, clause=6_000_000, drift=0.15):
+        p = player("cand", 3, avg, 5_040_000)
+        [m] = ap.clause_moves([rival_slot(p, clause=clause)], NOW)
+        m.drift = drift
+        return ap.plan_acquisitions(eleven(4.0), [m], budget=50_000_000, max_squad=16)
+
+    def test_a_19_percent_premium_for_a_marginal_upgrade_is_rejected(self):
+        self.assertEqual(self.plan(avg=4.0), [])   # +0,6 pts/jornada, como Johnny
+
+    def test_the_same_premium_is_fine_for_a_big_upgrade(self):
+        self.assertEqual(len(self.plan(avg=9.0)), 1)
+
+    def test_a_clause_at_value_is_fine_for_a_small_upgrade(self):
+        self.assertEqual(len(self.plan(avg=4.6, clause=5_040_000, drift=0.0)), 1)
+
+    def test_investment_needs_to_beat_the_premium(self):
+        T = InvestmentTests.Trend
+        p = player("x", 3, 4.0, 5_000_000)
+        early = {"x": T(1, 2.5, 3)}                          # entrada anticipada: ~+8% esperado
+        pricey = [rival_slot(p, clause=5_150_000)]          # +3% de prima: ya no queda margen tras el spread
+        self.assertEqual(ap.clause_invest_moves(pricey, early, NOW, form={"x": 8.0}), [])
+        fair = [rival_slot(p, clause=5_000_000)]
+        self.assertEqual(len(ap.clause_invest_moves(fair, early, NOW, form={"x": 8.0})), 1)
+
+
+class InjuredSaleTests(unittest.TestCase):
+    """Caso real del 5/10: Koski, lesionado y subiendo, no se vendía por la regla de 'dejar correr'."""
+
+    def offer(self, ratio):
+        return Offer(id="o", money=int(10_000_000 * ratio), from_manager="LaLiga", is_system=True)
+
+    def test_healthy_riser_is_held(self):
+        p = player("k", 2, 7.0, 10_000_000)
+        self.assertEqual(ap.offer_decision(self.offer(1.01), p, loss=0.0, trend_d3=7, trend_d7=25)[0], "hold")
+
+    def test_injured_riser_is_sold_at_value(self):
+        p = player("k", 2, 7.0, 10_000_000, status="injured")
+        self.assertEqual(ap.offer_decision(self.offer(1.01), p, loss=0.0, trend_d3=7, trend_d7=25, injured=True)[0], "accept")
+
+    def test_injured_still_respects_the_cost(self):
+        p = player("k", 2, 7.0, 10_000_000, status="injured")
+        self.assertEqual(ap.offer_decision(self.offer(1.01), p, loss=0.0, injured=True, cost_basis=11_000_000)[0], "hold")

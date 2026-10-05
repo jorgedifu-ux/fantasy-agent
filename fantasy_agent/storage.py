@@ -35,6 +35,11 @@ class Store:
                 kind TEXT NOT NULL DEFAULT 'emergency_buy',
                 executed_at REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS wealth (
+                day TEXT PRIMARY KEY,
+                cash INTEGER NOT NULL,
+                squad_value INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS offer_log (
                 id TEXT PRIMARY KEY,
                 player_id TEXT NOT NULL,
@@ -219,6 +224,19 @@ class Store:
         )
         self.db.commit()
 
+
+    # ---- patrimonio (saldo + valor de la plantilla), una foto al día ----
+    def log_wealth(self, day: str, cash: int, squad_value: int) -> None:
+        self.db.execute("INSERT OR IGNORE INTO wealth(day, cash, squad_value) VALUES (?, ?, ?)", (day, cash, squad_value))
+        self.db.commit()
+
+    def wealth_on_or_before(self, day: str) -> tuple[str, int, int] | None:
+        r = self.db.execute("SELECT day, cash, squad_value FROM wealth WHERE day <= ? ORDER BY day DESC LIMIT 1", (day,)).fetchone()
+        return (r[0], r[1], r[2]) if r else None
+
+    def wealth_first(self) -> tuple[str, int, int] | None:
+        r = self.db.execute("SELECT day, cash, squad_value FROM wealth ORDER BY day LIMIT 1").fetchone()
+        return (r[0], r[1], r[2]) if r else None
 
     # ---- ofertas vistas: para aprender cómo se distribuyen respecto al valor ----
     def log_offer(self, offer_id: str, player_id: str, player_name: str, value: int, money: int, is_system: bool,
