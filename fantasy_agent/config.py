@@ -46,6 +46,7 @@ class Settings:
     debt_ceiling_pct: float
     debt_min_hours_lead: float
     max_squad: int = 16
+    autotune: bool = True      # AUTOTUNE=0 apaga el autoajuste y vuelve a los valores de fábrica
 
     @property
     def tokens_file(self) -> Path:
@@ -79,4 +80,5 @@ def load_settings() -> Settings:
         debt_ceiling_pct=float(os.environ.get("DEBT_CEILING_PCT", "0.20")),
         debt_min_hours_lead=float(os.environ.get("DEBT_MIN_HOURS_LEAD", "36")),
         max_squad=int(os.environ.get("MAX_SQUAD", "16")),
+        autotune=os.environ.get("AUTOTUNE", "1") != "0",
     )

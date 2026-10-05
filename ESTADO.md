@@ -85,6 +85,19 @@ Todas las cifras están como constantes al principio de `fantasy_agent/autopilot
 - **Cancelar una puja**: `DELETE .../market/{marketId}/bid/{bidId}/cancel`.
 - **Fase económica→competitiva**: descartada — tu directriz es ir a por puntos ("jugadores buenos").
 
+## Autoajuste (5/10/2026): el bot corrige sus propios parámetros
+
+`fantasy_agent/learn.py` (puro) + `cli._tune`. **Una vez al día** (ligero) y **los domingos** (recalibración pesada, ~250 peticiones). Solo toca 7 números, siempre dentro de límites fijos (`autopilot.BOUNDS`), a medio camino de lo aprendido, y cada cambio queda registrado con motivo (`python3 -m fantasy_agent tune` los muestra; el resumen del domingo los incluye). **Apagarlo: `AUTOTUNE=0`** en el entorno del workflow (vuelve a los valores de fábrica).
+
+| Parámetro | Fábrica | Límites | Cómo aprende | Muestra mínima |
+|---|---|---|---|---|
+| Umbral de venta de ofertas | 1,05× | 1,02–1,10 | Parada óptima con las ofertas reales que ha visto (coste de esperar 0,8%/día) | 40 ofertas |
+| Prima base de puja | 3% | 1–8% | Sube 1 punto si gana <50% de las últimas pujas, baja 1 si gana >85% (máx. 1 cambio/3 días) | 12 pujas resueltas |
+| Dinero a inversión | ×1 | ×0,3–1,5 | Rendimiento de sus propias inversiones (cerradas o a valor de hoy), encogido hacia ×1 con pocas | 12 operaciones |
+| Subida esperada por nivel (4) | 25/15/8/8% | ver BOUNDS | Recalibra con el histórico de valores, mezclado con el valor de fábrica y rebajado un 15% | ~40 observaciones **independientes** (n/7: las diarias se solapan) |
+
+**Por qué es razonable (y qué NO es)**: (1) Validación temporal: lo aprendido con la 1.ª mitad del histórico se cumple en la 2.ª (fuerte+forma +30%→+23%; fuerte +17%→+18%; anticipada +5%→+6%), así que los valores de fábrica eran buenos y la recalibración solo los mueve unos puntos. (2) El umbral de venta tiene poco en juego: pasar de 1,05 al óptimo vale ~0,2% del valor del jugador (hasta ~1% si esperar fuera barato). (3) No decide **qué comprar** ni reescribe reglas: solo afina números. Con la muestra actual **casi no ajusta nada todavía**; empezará a hacerlo a medida que haya semanas de datos. La entrada anticipada (subida suave + forma) rinde ~+5,6% a 7 días, menos que el coste de ida y vuelta (~5% + prima): la recalibración la deja prácticamente desactivada, que es lo correcto.
+
 ## Dinero: lo que sabemos (4/10/2026)
 
 - **Estimación del dinero de cada rival**: 100M iniciales − gastos + ingresos de `/activity` + premios de jornada (tipo 6, ≈0,1M por punto). Acierta a ~1M en el nuestro (estimado 20,7M, real 21,8M). Hoy: Josinho ≈84M, Pep ≈85M, Aleix ≈32M.

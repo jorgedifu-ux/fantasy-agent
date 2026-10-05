@@ -8,7 +8,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import analysis, auth, autopilot as ap, confirm, digest, lineup, models, notify, plan as plan_mod, service, siege
+from . import analysis, auth, autopilot as ap, confirm, digest, learn, lineup, models, notify, plan as plan_mod, service, siege
 from .api import FantasyAPI
 from .attendance import estimate_start_probability, estimate_titularidad
 from .config import load_settings
@@ -363,7 +363,7 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
                                 rivals=_rival_premium(store, api, world))
     events: list[str] = []
     spent = sum(m.cost for m in plan)
-    invest_budget = int((budget - spent) * (
+    invest_budget = int((budget - spent) * ap.PARAMS["invest_mult"] * (
         ap.INVEST_FRACTION_BREAK if world.outlook.in_break else ap.INVEST_FRACTION_NORMAL))
     slots_left = s.max_squad - len(mine) - len(plan)
     taken = frozenset(pl.id for pl in mine) | {m.player.id for m in plan}
@@ -384,7 +384,8 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
             try:
                 api.bid(world.league_id, mv.item.market_id, mv.cost)
                 expires = mv.item.expires.timestamp() if mv.item.expires else None
-                store.add_market_bid(mv.player.id, mv.player.name, mv.cost, expires)
+                store.add_market_bid(mv.player.id, mv.player.name, mv.cost, expires, ask=mv.item.price)
+                store.log_purchase(mv.player.id, "inversion", mv.cost)
                 tr = trends[mv.player.id]
                 events.append(
                     f"📈 <b>Inversión</b>: {name} ({pos}) {service.m(mv.cost)} · ha subido {tr.d3:+.1f}% en 3 días y "
@@ -407,6 +408,7 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
             try:
                 api.pay_buyout_clause(world.league_id, mv.slot.player_team_id, mv.cost)
                 store.record_auto_op("clause", mv.player.id, mv.cost)
+                store.log_purchase(mv.player.id, "inversion", mv.cost)
                 tr = trends[mv.player.id]
                 events.append(
                     f"📈 <b>Inversión por cláusula</b>: {name} ({pos}, de {notify.esc(mv.slot.owner_name)}) por "
@@ -419,6 +421,7 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
             if mv.kind == "clause":
                 api.pay_buyout_clause(world.league_id, mv.slot.player_team_id, mv.cost)
                 store.record_auto_op("clause", mv.player.id, mv.cost)
+                store.log_purchase(mv.player.id, "puntos", mv.cost)
                 events.append(
                     f"⚡ <b>Clausulazo</b>: {name} ({pos}, de {notify.esc(mv.slot.owner_name)}) por "
                     f"{service.m(mv.cost)} · +{mv.gain} pts/jornada al once"
@@ -426,7 +429,8 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
             else:
                 api.bid(world.league_id, mv.item.market_id, mv.cost)
                 expires = mv.item.expires.timestamp() if mv.item.expires else None
-                store.add_market_bid(mv.player.id, mv.player.name, mv.cost, expires)
+                store.add_market_bid(mv.player.id, mv.player.name, mv.cost, expires, ask=mv.item.price)
+                store.log_purchase(mv.player.id, "puntos", mv.cost)
                 cierre = mv.item.expires.astimezone().strftime("%H:%M") if mv.item.expires else "?"
                 events.append(
                     f"🛒 <b>Puja</b>: {name} ({pos}) {service.m(mv.cost)} (salida {service.m(mv.item.price)}) "
@@ -456,6 +460,7 @@ def _snipe(store: Store, api: FantasyAPI, world, reserved: list[ap.Move]) -> lis
             try:
                 api.pay_buyout_clause(world.league_id, mv.slot.player_team_id, mv.cost)
                 store.record_auto_op("clause", mv.player.id, mv.cost)
+                store.log_purchase(mv.player.id, "inversion" if mv.kind == "invest_clause" else "puntos", mv.cost)
                 events.append(
                     f"⚡ <b>Clausulazo al segundo</b>: {name} ({mv.player.position}) por {service.m(mv.cost)} "
                     f"nada más liberarse · " + ("inversión (en subida)" if mv.kind == "invest_clause" else f"+{mv.gain} pts/jornada")
@@ -840,7 +845,7 @@ def _weekly_review(store: Store, s, api: FantasyAPI, world) -> list[str]:
     key = f"weekly:{now.isocalendar().year}-{now.isocalendar().week}"
     if now.weekday() != 6 or now.hour < 12 or not store.alert_is_new(key, ttl_hours=24 * 8):
         return []
-    return [_review_text(api, store, world)]
+    return [_review_text(api, store, world) + "\n\n" + notify.esc(_params_text(store))]
 
 
 def cmd_review(args, s) -> None:
@@ -849,6 +854,145 @@ def cmd_review(args, s) -> None:
     store = Store(s.db_file)
     world = _world(api, s, trends=False)
     print(re.sub(r"</?[bi]>", "", _review_text(api, store, world, since=args.since, html=False)))
+
+
+# ---------------------------------------------------------------------------------------------
+# Autoajuste (ver learn.py): el bot corrige sus propios parámetros con lo que va viendo
+# ---------------------------------------------------------------------------------------------
+def _origin_returns(api: FantasyAPI, store: Store, world, origin: str = "inversion") -> list[float]:
+    """Rendimiento (cerrado, o a valor de hoy si aún se tiene) de las compras de un origen."""
+    my_manager = next((r.manager_id for r in world.standing if r.team_id == world.my_team_id), "")
+    closed, open_ = service.trade_history(api, world.league_id, my_manager)
+    purchases = store.purchases()
+    value_now = {sl.player.id: sl.player.market_value for sl in world.my_slots}
+
+    def origin_of(trade) -> str | None:
+        at = trade["at"].timestamp() if trade.get("at") else 0
+        near = [p for p in purchases if p["pid"] == trade["pid"] and abs(p["ts"] - at) <= 36 * 3600]
+        return min(near, key=lambda p: abs(p["ts"] - at))["origin"] if near else None
+
+    out = []
+    for c in closed:
+        if c["paid"] and origin_of(c) == origin:
+            out.append(c["got"] / c["paid"] - 1)
+    for pid, o in open_.items():
+        if o["paid"] and pid in value_now and origin_of(o) == origin:
+            out.append(value_now[pid] / o["paid"] - 1)
+    return out
+
+
+def _calibrate_drift(api: FantasyAPI) -> dict[str, tuple[float, str]]:
+    """Recalibración semanal (pesada: ~250 peticiones): ¿cuánto sube de verdad lo que sube?"""
+    players = [p for p in api.players() if models.to_int(p.get("marketValue")) >= 2_000_000]
+    players.sort(key=lambda p: -models.to_int(p.get("marketValue")))
+    histories = {}
+    for p in players[:250]:
+        try:
+            histories[str(p["id"])] = models.parse_value_history(api.market_value_history(p["id"]))
+        except Exception:
+            pass
+    current = models.to_int(models.pick(api.current_week(), "weekNumber"), default=0)
+    ends = {}
+    for wk in range(1, current):
+        dates = sorted(f.when for f in models.parse_calendar(api.calendar(wk)) if f.when)
+        if dates:
+            ends[wk] = dates[-1]
+    samples = learn.sample_drift(histories, models.week_points_by_id(api.players()), ends)
+    return learn.calibrate_drift(samples)
+
+
+def _tune(store: Store, s, api: FantasyAPI, world, deep: bool = False, dry: bool = False) -> tuple[list[str], dict]:
+    """Calcula los ajustes y (si no es `dry`) los aplica y guarda. Devuelve (avisos, cambios).
+    Cada parámetro se mueve despacio y siempre dentro de `autopilot.BOUNDS`."""
+    live = dict(ap.PARAMS)
+    proposed: dict[str, tuple[float, str]] = {}
+    try:
+        r = learn.optimal_offer_threshold(store.offer_ratios())
+        if r:
+            proposed["league_offer_min"] = (round(0.5 * live["league_offer_min"] + 0.5 * r[0], 3), f"umbral óptimo x{r[0]:.3f} con {r[1]}")
+    except Exception as exc:
+        print(f"[autoajuste] ofertas: {exc}")
+    try:
+        recent_change = max((h["at"] for h in store.param_history() if h["key"] == "bid_base_premium"), default=0)
+        r = learn.adjust_bid_premium(live["bid_base_premium"], store.bid_results())
+        if r and time.time() - recent_change > 3 * 86400:
+            proposed["bid_base_premium"] = (round(r[0], 3), r[1])
+    except Exception as exc:
+        print(f"[autoajuste] pujas: {exc}")
+    try:
+        r = learn.invest_multiplier(live["invest_mult"], _origin_returns(api, store, world))
+        if r:
+            proposed["invest_mult"] = r
+    except Exception as exc:
+        print(f"[autoajuste] inversión: {exc}")
+    if deep:
+        try:
+            for key, val in _calibrate_drift(api).items():
+                proposed[key] = (round(0.5 * live[key] + 0.5 * val[0], 3), val[1])
+        except Exception as exc:
+            print(f"[autoajuste] inercia: {exc}")
+    changes, events = {}, []
+    for key, (new, why) in proposed.items():
+        lo, hi = ap.BOUNDS[key]
+        new = round(min(hi, max(lo, new)), 3)
+        if abs(new - live[key]) < (0.004 if key != "invest_mult" else 0.04):
+            continue
+        changes[key] = (live[key], new, why)
+        events.append(f"🔧 <b>Autoajuste</b> · {notify.esc(PARAM_NAMES[key])}: {live[key]:g} → {new:g} ({notify.esc(why)})")
+    if changes and not dry:
+        ap.apply_params({k: v[1] for k, v in changes.items()})
+        store.set_params({k: ap.PARAMS[k] for k in ap.DEFAULTS})
+        for k, (old, new, why) in changes.items():
+            store.log_param_change(k, old, new, why)
+    return events, changes
+
+
+PARAM_NAMES = {
+    "league_offer_min": "umbral de venta (× valor)", "bid_base_premium": "prima base de puja",
+    "invest_mult": "dinero a inversión (×)", "drift_strong_good": "subida esperada: fuerte + buena forma",
+    "drift_strong_mid": "subida esperada: fuerte", "drift_strong_bad": "subida esperada: fuerte sin forma",
+    "drift_early": "subida esperada: entrada anticipada",
+}
+
+
+def _autotune_tick(store: Store, s, api: FantasyAPI, world) -> list[str]:
+    """Una vez al día el ajuste ligero; los domingos, además, la recalibración pesada."""
+    if not s.autotune:
+        ap.reset_params()
+        return []
+    now = datetime.now()
+    if not store.alert_is_new(f"tune:{now:%Y-%m-%d}", ttl_hours=20):
+        return []
+    deep = now.weekday() == 6 and store.alert_is_new(f"tune_deep:{now.isocalendar().year}-{now.isocalendar().week}", ttl_hours=24 * 6)
+    events, _ = _tune(store, s, api, world, deep=deep)
+    return events
+
+
+def _params_text(store: Store) -> str:
+    lines = ["Parámetros (fábrica → ahora):"]
+    for key, default in ap.DEFAULTS.items():
+        mark = "" if abs(ap.PARAMS[key] - default) < 1e-9 else "  ← ajustado"
+        lines.append(f"  {PARAM_NAMES[key]}: {default:g} → {ap.PARAMS[key]:g}{mark}")
+    recent = store.param_history()[-5:]
+    if recent:
+        lines.append("Últimos ajustes:")
+        for h in recent:
+            lines.append(f"  {time.strftime('%d/%m', time.localtime(h['at']))} {PARAM_NAMES[h['key']]}: {h['old']:g} → {h['new']:g} ({h['why']})")
+    return "\n".join(lines)
+
+
+def cmd_tune(args, s) -> None:
+    """Qué ajustaría el bot ahora (no guarda nada). Con --deep incluye la recalibración semanal."""
+    import re
+    api = FantasyAPI(s)
+    store = Store(s.db_file)
+    ap.apply_params(store.get_params())
+    world = _world(api, s, trends=False)
+    print(_params_text(store))
+    events, changes = _tune(store, s, api, world, deep=args.deep, dry=True)
+    print("\nAjustes que haría ahora:" if changes else "\nNo ajustaría nada ahora (faltan datos o ya está en el valor óptimo).")
+    for e in events:
+        print(" ", re.sub(r"</?[bi]>", "", e))
 
 
 def cmd_offers(args, s) -> None:
@@ -898,6 +1042,10 @@ def _watch_once(store: Store, s) -> str:
     Telegram con lo que se ha hecho (nada si no ha pasado nada)."""
     now = datetime.now()
     api = FantasyAPI(s)
+    if s.autotune:
+        ap.apply_params(store.get_params())
+    else:
+        ap.reset_params()
     store.retire_all_pending()
     confirm.poll_and_execute(s, store, api)  # botones antiguos: responde que ya no aplican
 
@@ -906,6 +1054,7 @@ def _watch_once(store: Store, s) -> str:
     team_plan = _sync_plan(store, s, world)
     _record_wealth(store, world)
     events: list[str] = _squad_changes(store, world)
+    events += _autotune_tick(store, s, api, world)
     events += _check_bid_resolutions(store, world)
 
     sold = _resolve_offers(store, s, api, world)
@@ -1104,6 +1253,9 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("review", help="¿Estamos ganando dinero? Patrimonio y operaciones cerradas")
     p.add_argument("--since", default=PILOT_START, help="fecha AAAA-MM-DD desde la que contar las operaciones")
     p.set_defaults(func=cmd_review)
+    p = sub.add_parser("tune", help="Qué ajustaría el bot ahora en sus propios parámetros (no guarda nada)")
+    p.add_argument("--deep", action="store_true", help="incluye la recalibración semanal (≈250 peticiones)")
+    p.set_defaults(func=cmd_tune)
     sub.add_parser("offers", help="Distribución de las ofertas de la liga respecto al valor").set_defaults(func=cmd_offers)
     sub.add_parser("siege", help="Analiza si dejar sin portero al líder sería viable ahora").set_defaults(func=cmd_siege)
     sub.add_parser("pending", help="Propuestas (pujas/cláusulas) esperando tu confirmación").set_defaults(func=cmd_pending)

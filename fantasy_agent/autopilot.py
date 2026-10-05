@@ -53,6 +53,41 @@ LISTING_MARKUP = 1.10        # precio al que se ponen a la venta los tuyos
 
 INJURED = ("injured", "suspended", "lesionado", "sancionado")
 
+# ---- Parámetros que el bot ajusta solo (ver learn.py). Valores de fábrica, límites de seguridad
+# que ningún ajuste puede superar, y los valores vivos que lee el resto del módulo.
+DEFAULTS = {
+    "league_offer_min": 1.05,      # umbral de venta de una oferta de la liga (× valor)
+    "bid_base_premium": 0.03,      # prima base de las pujas sin competencia
+    "invest_mult": 1.0,            # multiplicador del dinero dedicado a inversión
+    "drift_strong_good": 0.25,     # revalorización esperada a 7 días por nivel (ver drift_tier)
+    "drift_strong_mid": 0.15,
+    "drift_strong_bad": 0.08,
+    "drift_early": 0.08,
+}
+BOUNDS = {
+    "league_offer_min": (1.02, 1.10),
+    "bid_base_premium": (0.01, 0.08),
+    "invest_mult": (0.3, 1.5),
+    "drift_strong_good": (0.05, 0.40),
+    "drift_strong_mid": (0.03, 0.30),
+    "drift_strong_bad": (0.0, 0.20),
+    "drift_early": (0.0, 0.20),
+}
+PARAMS: dict[str, float] = dict(DEFAULTS)
+
+
+def apply_params(values: dict[str, float]) -> None:
+    """Carga parámetros guardados, recortándolos siempre a sus límites de seguridad."""
+    for key, value in values.items():
+        if key in BOUNDS:
+            lo, hi = BOUNDS[key]
+            PARAMS[key] = min(hi, max(lo, float(value)))
+
+
+def reset_params() -> None:
+    PARAMS.clear()
+    PARAMS.update(DEFAULTS)
+
 
 def xpts(p: Player, form: dict[str, float] | None = None) -> float:
     """Puntos esperados por jornada: media de la temporada mezclada con la racha reciente.
@@ -154,7 +189,7 @@ def bid_amount(item: MarketItem, gain: float, rivals: RivalPremium | None = None
     empuje fuerte solo se paga cuando YA hay otra puja compitiendo; entonces, al menos lo que
     suelen pagar los rivales (mediana). Techo: +12% (lo que pagas de más sobre el valor es
     pérdida inmediata: al revender, lo máximo que se saca es ~el valor)."""
-    overbid = 0.03
+    overbid = PARAMS["bid_base_premium"]
     if gain >= 3.0:
         overbid += 0.03
     if item.bids > 0:
@@ -174,20 +209,27 @@ FORM_GOOD = 6.0   # pts/jornada de media en las últimas jornadas: buena forma
 FORM_BAD = 2.0
 
 
+def drift_tier(d3: float, d7: float, form: float | None) -> str | None:
+    """En qué nivel de "va a subir" está un jugador (cada nivel tiene su revalorización esperada)."""
+    if d3 >= 4 and d7 >= 6:
+        if form is None:
+            return "strong_mid"
+        return "strong_good" if form >= FORM_GOOD else "strong_bad" if form < FORM_BAD else "strong_mid"
+    if d3 >= 1.5 and form is not None and form >= FORM_GOOD:
+        return "early"
+    return None
+
+
 def expected_drift(d3: float, d7: float, form: float | None = None) -> float:
-    """Revalorización esperada a ~7 días (prueba histórica del 4/10/2026, 300 jugadores, 4 jornadas):
+    """Revalorización esperada a ~7 días (valores de fábrica de la prueba histórica del 4/10/2026,
+    300 jugadores y 4 jornadas; el bot los recalibra cada semana, ver learn.calibrate_drift):
     - subida fuerte (≥4%/3d y ≥6%/7d) con buena forma: +30% (gana el 95%); sin forma: +16%; con
       forma floja (<2 pts): +8%.
     - subida suave (≥1,5%/3d) pero con buena forma: +8% — entrada anticipada, "dos o tres
       partidos buenos y el precio aún no ha saltado" (con precio plano y sin subida, solo +3%).
     - subida suave sin forma que la respalde: nada."""
-    if d3 >= 4 and d7 >= 6:
-        if form is None:
-            return 0.17
-        return 0.25 if form >= FORM_GOOD else 0.08 if form < FORM_BAD else 0.15
-    if d3 >= 1.5 and form is not None and form >= FORM_GOOD:
-        return 0.08
-    return 0.0
+    tier = drift_tier(d3, d7, form)
+    return PARAMS[f"drift_{tier}"] if tier else 0.0
 
 
 def plan_acquisitions(
@@ -324,7 +366,7 @@ def offer_decision(
     elif squad_full and loss < BENCH_LOSS:
         need, why = BENCH_OFFER_MIN, "suplente con la plantilla llena: libera sitio para un fichaje mejor"
     else:
-        need, why = LEAGUE_OFFER_MIN, "oferta por encima de su valor"
+        need, why = PARAMS["league_offer_min"], "oferta por encima de su valor"
     if trend_d3 > RISING_D3 and trend_d7 > 5 and not at_risk and not injured:
         # La técnica (Josinho con Yamal): esperar a que suba. Prueba histórica (4/10/2026): comprar
         # una subida y mantener hasta que se frena rinde +72% de media (mediana +21%, ~19 días);

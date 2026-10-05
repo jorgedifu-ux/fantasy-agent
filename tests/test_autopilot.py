@@ -335,7 +335,7 @@ class ClauseInvestmentTests(unittest.TestCase):
 
 class DriftTests(unittest.TestCase):
     def test_expected_drift_levels(self):
-        self.assertEqual(ap.expected_drift(5, 8), 0.17)             # sin datos de forma: valor neutro
+        self.assertEqual(ap.expected_drift(5, 8), 0.15)             # sin datos de forma: valor neutro
         self.assertEqual(ap.expected_drift(5, 8, form=8), 0.25)     # subida fuerte + buena forma
         self.assertEqual(ap.expected_drift(5, 8, form=0.5), 0.08)   # subida sin puntos que la respalden
         self.assertEqual(ap.expected_drift(2.5, 1, form=7), 0.08)   # entrada anticipada: forma buena, subida suave

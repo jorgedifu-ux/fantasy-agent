@@ -35,6 +35,13 @@ class Store:
                 kind TEXT NOT NULL DEFAULT 'emergency_buy',
                 executed_at REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS purchase_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                player_id TEXT NOT NULL,
+                origin TEXT NOT NULL,
+                price INTEGER NOT NULL,
+                ts REAL NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS wealth (
                 day TEXT PRIMARY KEY,
                 cash INTEGER NOT NULL,
@@ -81,6 +88,10 @@ class Store:
             self.db.commit()
         if "market_id" not in cols:
             self.db.execute("ALTER TABLE market_bids ADD COLUMN market_id TEXT")
+            self.db.commit()
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(market_bids)")}
+        if "ask" not in cols:
+            self.db.execute("ALTER TABLE market_bids ADD COLUMN ask INTEGER NOT NULL DEFAULT 0")
             self.db.commit()
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(offer_log)")}
         for col in ("ask", "listed_value"):
@@ -225,6 +236,37 @@ class Store:
         self.db.commit()
 
 
+    # ---- autoajuste: origen de cada compra, resultado de las pujas y parámetros vivos ----
+    def log_purchase(self, player_id: str, origin: str, price: int) -> None:
+        self.db.execute("INSERT INTO purchase_log(player_id, origin, price, ts) VALUES (?, ?, ?, ?)",
+                        (player_id, origin, price, time.time()))
+        self.db.commit()
+
+    def purchases(self) -> list[dict[str, Any]]:
+        rows = self.db.execute("SELECT player_id, origin, price, ts FROM purchase_log ORDER BY ts").fetchall()
+        return [{"pid": r[0], "origin": r[1], "price": r[2], "ts": r[3]} for r in rows]
+
+    def bid_results(self) -> list[bool]:
+        """Pujas de compra ya resueltas, de la más antigua a la más reciente: True = ganada."""
+        rows = self.db.execute(
+            "SELECT status FROM market_bids WHERE direction = 'buy' AND ask > 0 AND status IN ('won', 'lost') "
+            "ORDER BY created_at").fetchall()
+        return [r[0] == "won" for r in rows]
+
+    def get_params(self) -> dict[str, float]:
+        return json.loads(self.get("params") or "{}")
+
+    def set_params(self, values: dict[str, float]) -> None:
+        self.set("params", json.dumps(values))
+
+    def param_history(self) -> list[dict[str, Any]]:
+        return json.loads(self.get("params_history") or "[]")
+
+    def log_param_change(self, key: str, old: float, new: float, why: str) -> None:
+        hist = self.param_history()
+        hist.append({"at": time.time(), "key": key, "old": old, "new": new, "why": why})
+        self.set("params_history", json.dumps(hist[-60:]))
+
     # ---- patrimonio (saldo + valor de la plantilla), una foto al día ----
     def log_wealth(self, day: str, cash: int, squad_value: int) -> None:
         self.db.execute("INSERT OR IGNORE INTO wealth(day, cash, squad_value) VALUES (?, ?, ?)", (day, cash, squad_value))
@@ -264,12 +306,12 @@ class Store:
     # ---- seguimiento de pujas/ventas: "enviada" no es "ganada"/"vendida" — hay que saber en qué queda ----
     def add_market_bid(
         self, player_id: str, player_name: str, price: int, expires_at: float | None, direction: str = "buy",
-        sell_kind: str | None = None, market_id: str | None = None,
+        sell_kind: str | None = None, market_id: str | None = None, ask: int = 0,
     ) -> None:
         self.db.execute(
             "INSERT INTO market_bids(player_id, player_name, price, expires_at, status, direction, "
-            "sell_kind, market_id, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
-            (player_id, player_name, price, expires_at, direction, sell_kind, market_id, time.time()),
+            "sell_kind, market_id, created_at, ask) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
+            (player_id, player_name, price, expires_at, direction, sell_kind, market_id, time.time(), ask),
         )
         self.db.commit()
 
