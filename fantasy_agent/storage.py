@@ -267,6 +267,50 @@ class Store:
         hist.append({"at": time.time(), "key": key, "old": old, "new": new, "why": why})
         self.set("params_history", json.dumps(hist[-60:]))
 
+    def log_proposal(self, changes: dict[str, dict]) -> None:
+        """Ajustes que el autoajuste HARÍA (modo shadow); se acumulan para revisarlos."""
+        items = json.loads(self.get("proposals") or "[]")
+        if items and items[-1]["changes"] == changes:
+            return
+        items.append({"at": time.time(), "changes": changes})
+        self.set("proposals", json.dumps(items[-40:]))
+
+    def proposals(self) -> list[dict[str, Any]]:
+        return json.loads(self.get("proposals") or "[]")
+
+    # ---- exportar / importar el estado (para analizarlo fuera de GitHub, ver export.py) ----
+    TABLES = {
+        "offer_log": ("id", "player_id", "player_name", "value", "money", "is_system", "seen_at", "ask", "listed_value"),
+        "market_bids": ("player_id", "player_name", "price", "expires_at", "status", "direction", "sell_kind", "market_id", "created_at", "ask"),
+        "purchase_log": ("player_id", "origin", "price", "ts"),
+        "wealth": ("day", "cash", "squad_value"),
+        "auto_buys": ("player_id", "price", "kind", "executed_at"),
+        "player_status_history": ("player_id", "status", "recorded_at"),
+    }
+    EXPORT_KV = ("params", "params_history", "proposals", "siege_state", "siege_ids", "liquidity", "rival_premium",
+                 "sold_ids", "lineup_variant")
+
+    def export_state(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"tables": {}, "kv": {}}
+        for table, cols in self.TABLES.items():
+            rows = self.db.execute(f"SELECT {', '.join(cols)} FROM {table}").fetchall()
+            out["tables"][table] = {"columns": list(cols), "rows": [list(r) for r in rows]}
+        for key in self.EXPORT_KV:
+            value = self.get(key)
+            if value is not None:
+                out["kv"][key] = value
+        return out
+
+    def import_state(self, state: dict[str, Any]) -> None:
+        """Carga un estado exportado en esta base de datos (vacía): para analizar lo de la nube en local."""
+        for table, spec in state.get("tables", {}).items():
+            cols = spec["columns"]
+            marks = ", ".join("?" for _ in cols)
+            self.db.executemany(f"INSERT OR IGNORE INTO {table}({', '.join(cols)}) VALUES ({marks})", spec["rows"])
+        for key, value in state.get("kv", {}).items():
+            self.set(key, value)
+        self.db.commit()
+
     # ---- patrimonio (saldo + valor de la plantilla), una foto al día ----
     def log_wealth(self, day: str, cash: int, squad_value: int) -> None:
         self.db.execute("INSERT OR IGNORE INTO wealth(day, cash, squad_value) VALUES (?, ?, ?)", (day, cash, squad_value))

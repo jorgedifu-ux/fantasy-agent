@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import sys
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import analysis, auth, autopilot as ap, confirm, digest, learn, lineup, models, notify, plan as plan_mod, service, siege
+from . import analysis, auth, autopilot as ap, confirm, digest, export, learn, lineup, models, notify, plan as plan_mod, service, siege
 from .api import FantasyAPI
 from .attendance import estimate_start_probability, estimate_titularidad
 from .config import load_settings
@@ -851,7 +852,7 @@ def _weekly_review(store: Store, s, api: FantasyAPI, world) -> list[str]:
 def cmd_review(args, s) -> None:
     import re
     api = FantasyAPI(s)
-    store = Store(s.db_file)
+    store = _open_store(s, args.cloud)
     world = _world(api, s, trends=False)
     print(re.sub(r"</?[bi]>", "", _review_text(api, store, world, since=args.since, html=False)))
 
@@ -956,15 +957,21 @@ PARAM_NAMES = {
 
 
 def _autotune_tick(store: Store, s, api: FantasyAPI, world) -> list[str]:
-    """Una vez al día el ajuste ligero; los domingos, además, la recalibración pesada."""
-    if not s.autotune:
+    """Una vez al día el cálculo ligero; los domingos, además, la recalibración pesada.
+    Modo `shadow` (por defecto): calcula y GUARDA lo que cambiaría, pero no lo aplica ni avisa:
+    la decisión se toma al revisar los datos. `on`: lo aplica (con límites). `off`: nada."""
+    if s.autotune == "off":
         ap.reset_params()
         return []
     now = datetime.now()
     if not store.alert_is_new(f"tune:{now:%Y-%m-%d}", ttl_hours=20):
         return []
     deep = now.weekday() == 6 and store.alert_is_new(f"tune_deep:{now.isocalendar().year}-{now.isocalendar().week}", ttl_hours=24 * 6)
-    events, _ = _tune(store, s, api, world, deep=deep)
+    events, changes = _tune(store, s, api, world, deep=deep, dry=s.autotune != "on")
+    if s.autotune != "on":
+        if changes:
+            store.log_proposal({k: {"old": v[0], "new": v[1], "why": v[2]} for k, v in changes.items()})
+        return []
     return events
 
 
@@ -973,6 +980,12 @@ def _params_text(store: Store) -> str:
     for key, default in ap.DEFAULTS.items():
         mark = "" if abs(ap.PARAMS[key] - default) < 1e-9 else "  ← ajustado"
         lines.append(f"  {PARAM_NAMES[key]}: {default:g} → {ap.PARAMS[key]:g}{mark}")
+    props = store.proposals()[-3:]
+    if props:
+        lines.append("Propuestas del autoajuste (NO aplicadas; decidir al revisar):")
+        for pr in props:
+            for k, v in pr["changes"].items():
+                lines.append(f"  {time.strftime('%d/%m', time.localtime(pr['at']))} {PARAM_NAMES[k]}: {v['old']:g} → {v['new']:g} ({v['why']})")
     recent = store.param_history()[-5:]
     if recent:
         lines.append("Últimos ajustes:")
@@ -985,7 +998,7 @@ def cmd_tune(args, s) -> None:
     """Qué ajustaría el bot ahora (no guarda nada). Con --deep incluye la recalibración semanal."""
     import re
     api = FantasyAPI(s)
-    store = Store(s.db_file)
+    store = _open_store(s, args.cloud)
     ap.apply_params(store.get_params())
     world = _world(api, s, trends=False)
     print(_params_text(store))
@@ -995,9 +1008,65 @@ def cmd_tune(args, s) -> None:
         print(" ", re.sub(r"</?[bi]>", "", e))
 
 
+# ---------------------------------------------------------------------------------------------
+# Exportar el estado para analizarlo fuera de GitHub (ver export.py)
+# ---------------------------------------------------------------------------------------------
+def _publish_state(store: Store, s) -> list[str]:
+    """Cada 6 h publica el estado en la rama `data`. Nunca rompe la pasada: si falla, avisa una vez al día."""
+    token, repo = os.environ.get("GITHUB_TOKEN"), os.environ.get("GITHUB_REPOSITORY")
+    now = datetime.now()
+    if not (s.export_data and token and repo) or not store.alert_is_new(f"export:{now:%Y-%m-%d}:{now.hour // 6}", ttl_hours=7):
+        return []
+    try:
+        export.publish(export.build_state(store), token=token, repo=repo)
+        return []
+    except Exception as exc:
+        print(f"[export] {exc}")
+        if store.alert_is_new(f"export_fail:{now:%Y-%m-%d}", ttl_hours=24):
+            return [f"⚠️ No he podido publicar el estado para análisis: {notify.esc(str(exc))[:200]}"]
+        return []
+
+
+def _open_store(s, cloud: bool = False) -> Store:
+    """La base de datos local, o (con --cloud) una copia temporal de la que ha publicado el bot en GitHub."""
+    if not cloud:
+        return Store(s.db_file)
+    import tempfile
+    from pathlib import Path
+    store = Store(Path(tempfile.mkdtemp()) / "cloud.sqlite3")
+    state = export.fetch()
+    store.import_state(state)
+    print(f"[datos de la nube generados el {state['meta'].get('generated_at')}]\n")
+    return store
+
+
+def cmd_pull(args, s) -> None:
+    """Descarga el estado que ha publicado el bot y lo guarda en data/cloud_state.json."""
+    state = export.fetch()
+    path = s.data_dir / "cloud_state.json"
+    path.write_text(json.dumps(state, ensure_ascii=False))
+    tables = {k: len(v["rows"]) for k, v in state["tables"].items()}
+    print(f"Guardado en {path}\nGenerado: {state['meta'].get('generated_at')} (commit {state['meta'].get('commit', '')[:7]})\nFilas: {tables}")
+    print("Para analizarlo: python3 -m fantasy_agent offers --cloud · review --cloud · tune --cloud")
+
+
+def cmd_export(args, s) -> None:
+    """Escribe el estado local en data/export.json (y con --publish lo sube a la rama `data`)."""
+    store = Store(s.db_file)
+    state = export.build_state(store)
+    path = s.data_dir / "export.json"
+    path.write_text(json.dumps(state, ensure_ascii=False))
+    print(f"Escrito {path} ({path.stat().st_size // 1024} KB)")
+    if args.publish:
+        token, repo = os.environ.get("GITHUB_TOKEN"), os.environ.get("GITHUB_REPOSITORY", export.DEFAULT_REPO)
+        if not token:
+            sys.exit("Falta GITHUB_TOKEN en el entorno para publicar.")
+        print(export.publish(state, token=token, repo=repo))
+
+
 def cmd_offers(args, s) -> None:
     """Cómo se distribuyen las ofertas de la liga respecto al valor (lo que el bot ha visto)."""
-    store = Store(s.db_file)
+    store = _open_store(s, args.cloud)
     ratios = store.offer_ratios()
     if not ratios:
         print("Aún no hay ofertas registradas.")
@@ -1042,10 +1111,10 @@ def _watch_once(store: Store, s) -> str:
     Telegram con lo que se ha hecho (nada si no ha pasado nada)."""
     now = datetime.now()
     api = FantasyAPI(s)
-    if s.autotune:
+    if s.autotune == "on":
         ap.apply_params(store.get_params())
     else:
-        ap.reset_params()
+        ap.reset_params()  # shadow / off: siempre los valores de fábrica
     store.retire_all_pending()
     confirm.poll_and_execute(s, store, api)  # botones antiguos: responde que ya no aplican
 
@@ -1113,6 +1182,7 @@ def _watch_once(store: Store, s) -> str:
         )
 
     events += _weekly_review(store, s, api, world)
+    events += _publish_state(store, s)
     if events:
         notify.send_all(s, "🤖 <b>PILOTO AUTOMÁTICO</b>\n\n" + "\n\n".join(events), html=True)
     if digest.due(store, s):
@@ -1252,11 +1322,19 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(func=cmd_tick)
     p = sub.add_parser("review", help="¿Estamos ganando dinero? Patrimonio y operaciones cerradas")
     p.add_argument("--since", default=PILOT_START, help="fecha AAAA-MM-DD desde la que contar las operaciones")
+    p.add_argument("--cloud", action="store_true", help="usar los datos que ha publicado el bot en GitHub")
     p.set_defaults(func=cmd_review)
     p = sub.add_parser("tune", help="Qué ajustaría el bot ahora en sus propios parámetros (no guarda nada)")
     p.add_argument("--deep", action="store_true", help="incluye la recalibración semanal (≈250 peticiones)")
+    p.add_argument("--cloud", action="store_true", help="usar los datos que ha publicado el bot en GitHub")
     p.set_defaults(func=cmd_tune)
-    sub.add_parser("offers", help="Distribución de las ofertas de la liga respecto al valor").set_defaults(func=cmd_offers)
+    p = sub.add_parser("offers", help="Distribución de las ofertas de la liga respecto al valor")
+    p.add_argument("--cloud", action="store_true", help="usar los datos que ha publicado el bot en GitHub")
+    p.set_defaults(func=cmd_offers)
+    sub.add_parser("pull", help="Descarga el estado que ha publicado el bot (rama data) para analizarlo").set_defaults(func=cmd_pull)
+    p = sub.add_parser("export", help="Escribe el estado local en data/export.json")
+    p.add_argument("--publish", action="store_true", help="y lo sube a la rama data (requiere GITHUB_TOKEN)")
+    p.set_defaults(func=cmd_export)
     sub.add_parser("siege", help="Analiza si dejar sin portero al líder sería viable ahora").set_defaults(func=cmd_siege)
     sub.add_parser("pending", help="Propuestas (pujas/cláusulas) esperando tu confirmación").set_defaults(func=cmd_pending)
 

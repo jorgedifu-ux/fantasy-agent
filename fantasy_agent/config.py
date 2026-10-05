@@ -46,7 +46,8 @@ class Settings:
     debt_ceiling_pct: float
     debt_min_hours_lead: float
     max_squad: int = 16
-    autotune: bool = True      # AUTOTUNE=0 apaga el autoajuste y vuelve a los valores de fábrica
+    autotune: str = "shadow"   # AUTOTUNE: shadow (por defecto: calcula y guarda propuestas, NO aplica) | on (aplica) | off
+    export_data: bool = True   # EXPORT_DATA=0 deja de publicar el estado en la rama `data` (ver export.py)
 
     @property
     def tokens_file(self) -> Path:
@@ -80,5 +81,6 @@ def load_settings() -> Settings:
         debt_ceiling_pct=float(os.environ.get("DEBT_CEILING_PCT", "0.20")),
         debt_min_hours_lead=float(os.environ.get("DEBT_MIN_HOURS_LEAD", "36")),
         max_squad=int(os.environ.get("MAX_SQUAD", "16")),
-        autotune=os.environ.get("AUTOTUNE", "1") != "0",
+        autotune={"1": "on", "on": "on", "0": "off", "off": "off"}.get(os.environ.get("AUTOTUNE", "shadow").lower(), "shadow"),
+        export_data=os.environ.get("EXPORT_DATA", "1") != "0",
     )
