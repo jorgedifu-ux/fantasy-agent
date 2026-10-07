@@ -150,6 +150,28 @@ cierre de las 20:53, cláusulas que se liberan) lo fiable es dispararlo desde fu
    - Cabeceras: `Authorization: Bearer <tu token>`, `Accept: application/vnd.github+json`
 3. Hazlo tú: el token no debe pasar por ninguna conversación ni fichero del repo.
 
+## Revisión del 8/10/2026 (Opus 5.5)
+
+- **Cláusulas: nunca se ha pagado más de lo que marcaba la cláusula.** En los 15 clausulazos, lo enviado y lo
+  cobrado coinciden. Lo que sí pasa es que algunas cláusulas estaban por encima del valor de mercado (Johnny
+  +19%, Herrero +15%, Terrats +14%, Deossa +13%): eso ya lo descuenta `plan_acquisitions` (la prima resta del
+  beneficio neto). Nuevo: `cli._pay_clause` **relee la cláusula en el mismo instante** de pagar (sin caché),
+  paga lo que vale ahora y **no paga si ha subido** más de un 1% sobre lo planeado, o si se ha blindado o ya no
+  está. Se usa en compras, inversión por cláusula, cláusulas al segundo (20:53) y bloqueo.
+- **Fallos del cron**: en 3 días, 290 ejecuciones bien y 7 mal: 5 eran de GitHub ("not acquired by Runner"),
+  2 eran del bot de madrugada (6/10 01:15 UTC, 7/10 03:01 UTC) sin causa visible (los registros de GitHub piden
+  sesión). Cambios: (1) cada paso de la pasada va aislado (`_step`): si falla uno (Telegram, publicar datos…),
+  los demás se hacen igual y te llega un aviso con qué paso falló; (2) los cortes pasajeros (5xx, 429, red,
+  reintentos agotados) ya no marcan la ejecución como fallida (la siguiente, a los 15 min, lo reintenta);
+  (3) toda traza se guarda en `kv.errors` y se exporta en `state.json` **sin secretos** (`storage.redact`
+  tacha el token del bot de Telegram, Bearer y tokens). Para ver la causa: `pull` y mirar `errors`.
+- **Zona horaria**: la máquina de GitHub va en UTC; ahora `TZ: Europe/Madrid` en el workflow (horas de
+  silencio, resumen del domingo, fecha del patrimonio y del autoajuste).
+- **Datos (exportación del 7/10)**: patrimonio 253,9M (5/10) → 256,4M → 259,0M (7/10). 48 ofertas: mediana
+  0,999× valor, p10 0,911, p90 1,065, máx 1,096. **Experimento de precio pedido**: Mayol ×2,0 y Freeman ×1,5 no
+  recibieron ofertas más altas → el precio pedido **no** ancla la oferta (descartado). Valor-al-anunciar: sin
+  datos suficientes aún.
+
 ## Decisiones y políticas acordadas contigo
 
 - **Autonomía total** (26/09): "no voy a usar el fantasy apenas" — nada pide confirmación.

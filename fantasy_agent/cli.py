@@ -284,6 +284,52 @@ SNIPE_WINDOW_S = 25 * 60  # dentro del mismo job de GitHub (timeout 28 min)
 SIEGE_WINDOW_S = 20 * 60  # el bloqueo espera menos: tras la espera aún relee todo y ejecuta
 
 
+# ---------------------------------------------------------------------------------------------
+# Robustez: cada paso por separado y pago de cláusulas releyendo el importe
+# ---------------------------------------------------------------------------------------------
+def _step(store: Store, errors: list[str], name: str, fn, *args, default=None, **kwargs):
+    """Ejecuta un paso de la pasada; si falla, lo registra (con traza) y sigue con los demás.
+    Un corte de Telegram o de la API en un paso no debe dejar sin hacer la alineación."""
+    import traceback
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:
+        store.log_error(name, traceback.format_exc())
+        from .storage import redact
+        errors.append(redact(f"{name}: {exc}"))
+        print(redact(f"[{name}] error: {exc}"))
+        return default
+
+
+def _is_transient(exc: BaseException) -> bool:
+    """Cortes pasajeros (red, 5xx, 429, reintentos agotados): no son fallos del bot."""
+    import socket
+    import urllib.error
+    from .http import HttpError
+    if isinstance(exc, HttpError):
+        return exc.status >= 500 or exc.status == 429
+    if isinstance(exc, (urllib.error.URLError, TimeoutError, socket.timeout, ConnectionError)):
+        return True
+    return isinstance(exc, RuntimeError) and str(exc).startswith("Fallo tras reintentos")
+
+
+def _pay_clause(api: FantasyAPI, league_id: str, slot, planned: int) -> int:
+    """Relee la cláusula en ese mismo instante y paga EXACTAMENTE lo que vale ahora. Si ha subido
+    por encima de lo planeado (+1%), no paga. Devuelve lo pagado. (Comprobado con los 15
+    clausulazos reales: lo enviado y lo cobrado coinciden; esto cubre el caso de que cambie
+    entre que se decide y se paga, p. ej. en una cláusula "al segundo" que espera minutos.)"""
+    fresh = models.parse_squad(api.team_fresh(league_id, slot.owner_team_id), slot.owner_team_id, slot.owner_name)
+    cur = next((x for x in fresh if x.player_team_id == slot.player_team_id), None)
+    if cur is None:
+        raise RuntimeError(f"{slot.player.name} ya no está en el equipo de {slot.owner_name}")
+    if not cur.clause_open(datetime.now(timezone.utc)):
+        raise RuntimeError(f"la cláusula de {slot.player.name} aún está bloqueada o blindada")
+    if cur.clause > planned * 1.01:
+        raise RuntimeError(f"la cláusula de {slot.player.name} ha subido de {planned / 1e6:.2f}M a {cur.clause / 1e6:.2f}M: no pago")
+    api.pay_buyout_clause(league_id, slot.player_team_id, cur.clause)
+    return cur.clause
+
+
 def _committed_bids(store: Store, world) -> tuple[int, list]:
     """Dinero ya comprometido en pujas vivas (si las ganas, se cobran) y los jugadores que
     llegarían con ellas — cuentan para el saldo y para la plantilla simulada del planificador."""
@@ -407,25 +453,25 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
             continue
         if mv.kind == "invest_clause":
             try:
-                api.pay_buyout_clause(world.league_id, mv.slot.player_team_id, mv.cost)
-                store.record_auto_op("clause", mv.player.id, mv.cost)
-                store.log_purchase(mv.player.id, "inversion", mv.cost)
+                paid = _pay_clause(api, world.league_id, mv.slot, mv.cost)
+                store.record_auto_op("clause", mv.player.id, paid)
+                store.log_purchase(mv.player.id, "inversion", paid)
                 tr = trends[mv.player.id]
                 events.append(
                     f"📈 <b>Inversión por cláusula</b>: {name} ({pos}, de {notify.esc(mv.slot.owner_name)}) por "
-                    f"{service.m(mv.cost)} · ha subido {tr.d3:+.1f}% en 3 días y {tr.d7:+.1f}% en 7: se compra para revender"
+                    f"{service.m(paid)} · ha subido {tr.d3:+.1f}% en 3 días y {tr.d7:+.1f}% en 7: se compra para revender"
                 )
             except Exception as exc:
                 events.append(f"❌ Inversión por cláusula fallida por <b>{name}</b>: {notify.esc(str(exc))}")
             continue
         try:
             if mv.kind == "clause":
-                api.pay_buyout_clause(world.league_id, mv.slot.player_team_id, mv.cost)
-                store.record_auto_op("clause", mv.player.id, mv.cost)
-                store.log_purchase(mv.player.id, "puntos", mv.cost)
+                paid = _pay_clause(api, world.league_id, mv.slot, mv.cost)
+                store.record_auto_op("clause", mv.player.id, paid)
+                store.log_purchase(mv.player.id, "puntos", paid)
                 events.append(
                     f"⚡ <b>Clausulazo</b>: {name} ({pos}, de {notify.esc(mv.slot.owner_name)}) por "
-                    f"{service.m(mv.cost)} · +{mv.gain} pts/jornada al once"
+                    f"{service.m(paid)} · +{mv.gain} pts/jornada al once"
                 )
             else:
                 api.bid(world.league_id, mv.item.market_id, mv.cost)
@@ -459,11 +505,11 @@ def _snipe(store: Store, api: FantasyAPI, world, reserved: list[ap.Move]) -> lis
         last_exc = None
         for _ in range(3):
             try:
-                api.pay_buyout_clause(world.league_id, mv.slot.player_team_id, mv.cost)
-                store.record_auto_op("clause", mv.player.id, mv.cost)
-                store.log_purchase(mv.player.id, "inversion" if mv.kind == "invest_clause" else "puntos", mv.cost)
+                paid = _pay_clause(api, world.league_id, mv.slot, mv.cost)
+                store.record_auto_op("clause", mv.player.id, paid)
+                store.log_purchase(mv.player.id, "inversion" if mv.kind == "invest_clause" else "puntos", paid)
                 events.append(
-                    f"⚡ <b>Clausulazo al segundo</b>: {name} ({mv.player.position}) por {service.m(mv.cost)} "
+                    f"⚡ <b>Clausulazo al segundo</b>: {name} ({mv.player.position}) por {service.m(paid)} "
                     f"nada más liberarse · " + ("inversión (en subida)" if mv.kind == "invest_clause" else f"+{mv.gain} pts/jornada")
                 )
                 last_exc = None
@@ -775,8 +821,8 @@ def _siege_go(store: Store, s, api: FantasyAPI, world) -> list[str]:
                 store.add_market_bid(step.player.id, step.player.name, step.cost,
                                      step.item.expires.timestamp() if step.item.expires else None)
             else:
-                api.pay_buyout_clause(fresh.league_id, step.slot.player_team_id, step.cost)
-                store.record_auto_op("siege", step.player.id, step.cost)
+                paid = _pay_clause(api, fresh.league_id, step.slot, step.cost)
+                store.record_auto_op("siege", step.player.id, paid)
             _siege_add(store, step.player.id)
             events.append(f"  ✅ {name}: {service.m(step.cost)} ({notify.esc(step.note)})")
         except Exception as exc:
@@ -1115,49 +1161,51 @@ def _watch_once(store: Store, s) -> str:
         ap.apply_params(store.get_params())
     else:
         ap.reset_params()  # shadow / off: siempre los valores de fábrica
-    store.retire_all_pending()
-    confirm.poll_and_execute(s, store, api)  # botones antiguos: responde que ya no aplican
+    errs: list[str] = []
+    st = lambda name, fn, *a, default=None, **k: _step(store, errs, name, fn, *a, default=default, **k)  # noqa: E731
+    st("propuestas", store.retire_all_pending)
+    st("telegram", confirm.poll_and_execute, s, store, api)  # botones antiguos: responde que ya no aplican
 
-    world = _world(api, s, trends=True)
-    _record_status_history(store, world)
-    team_plan = _sync_plan(store, s, world)
-    _record_wealth(store, world)
-    events: list[str] = _squad_changes(store, world)
-    events += _autotune_tick(store, s, api, world)
-    events += _check_bid_resolutions(store, world)
+    world = _world(api, s, trends=True)  # sin datos no se puede hacer nada: si falla, falla la pasada
+    st("historial", _record_status_history, store, world)
+    team_plan = st("plan", _sync_plan, store, s, world, default=plan_mod.Plan())
+    st("patrimonio", _record_wealth, store, world)
+    events: list[str] = st("plantilla", _squad_changes, store, world, default=[])
+    events += st("autoajuste", _autotune_tick, store, s, api, world, default=[])
+    events += st("pujas resueltas", _check_bid_resolutions, store, world, default=[])
 
-    sold = _resolve_offers(store, s, api, world)
+    sold = st("ofertas", _resolve_offers, store, s, api, world, default=[])
     events += sold
     if sold:
         world = _world(api, s, trends=True)
 
-    pruned = _prune_bids(store, api, world)
+    pruned = st("cancelar pujas", _prune_bids, store, api, world, default=[])
     events += pruned
     if pruned:
         world = _world(api, s, trends=True)
 
-    siege_events, siege_reserve = _siege_tick(store, s, api, world)
+    siege_events, siege_reserve = st("bloqueo", _siege_tick, store, s, api, world, default=([], 0))
     events += siege_events
-    bought, reserved = _acquire(store, s, api, world, extra_reserved=siege_reserve)
+    bought, reserved = st("compras", _acquire, store, s, api, world, extra_reserved=siege_reserve, default=([], []))
     events += bought
     if bought:
         world = _world(api, s, trends=True)
 
     hours = _hours_to_deadline(world)
     if any(analysis.position_shortage(world.my_slots).values()) and hours is not None and hours <= s.lineup_lock_hours:
-        debt = _emergency_debt_buy(store, s, api, world, team_plan)  # último recurso, ver docstring
+        debt = st("crédito", _emergency_debt_buy, store, s, api, world, team_plan)  # último recurso, ver docstring
         if debt:
             events.append(debt)
             world = _world(api, s, trends=True)
 
-    events += _list_for_sale(store, api, world)
-    shielded, shielded_player_id = _auto_shield(store, s, api, world)
+    events += st("en venta", _list_for_sale, store, api, world, default=[])
+    shielded, shielded_player_id = st("blindaje", _auto_shield, store, s, api, world, default=(None, ""))
     if shielded:
         events.append(shielded)
-    raised_clause = _auto_increase_clause(store, s, api, world, skip_player_id=shielded_player_id)
+    raised_clause = st("subir cláusula", _auto_increase_clause, store, s, api, world, skip_player_id=shielded_player_id)
     if raised_clause:
         events.append(raised_clause)
-    lineup_msg = _apply_lineup(store, api, world)
+    lineup_msg = st("alineación", _apply_lineup, store, api, world)
     if lineup_msg:
         events.append(lineup_msg)
     out = world.outlook
@@ -1181,17 +1229,20 @@ def _watch_once(store: Store, s) -> str:
             f"sin 11 completos puntuarías 0. Tienes {len(world.my_slots)} jugadores y {service.m(world.my_cash)}."
         )
 
-    events += _weekly_review(store, s, api, world)
-    events += _publish_state(store, s)
+    events += st("resumen semanal", _weekly_review, store, s, api, world, default=[])
+    events += st("publicar datos", _publish_state, store, s, default=[])
+    if errs and store.alert_is_new("step_errors:" + ",".join(sorted(e.split(":")[0] for e in errs)), ttl_hours=6):
+        events.append("⚠️ Pasos con error en esta pasada (el resto se hizo): " + notify.esc("; ".join(errs))[:600])
     if events:
-        notify.send_all(s, "🤖 <b>PILOTO AUTOMÁTICO</b>\n\n" + "\n\n".join(events), html=True)
-    if digest.due(store, s):
-        notify.send_all(s, service.situational_briefing(world, s))
+        st("enviar", notify.send_all, s, "🤖 <b>PILOTO AUTOMÁTICO</b>\n\n" + "\n\n".join(events), html=True)
+    if st("parte", digest.due, store, s, default=False):
+        st("enviar parte", notify.send_all, s, service.situational_briefing(world, s))
         digest.mark_sent(store)
 
-    sniped = _siege_go(store, s, api, world) + _snipe(store, api, world, reserved)
+    sniped = st("bloqueo (ejecución)", _siege_go, store, s, api, world, default=[]) + \
+        st("cláusulas al segundo", _snipe, store, api, world, reserved, default=[])
     if sniped:
-        notify.send_all(s, "🤖 <b>PILOTO AUTOMÁTICO</b>\n\n" + "\n\n".join(sniped), html=True)
+        st("enviar", notify.send_all, s, "🤖 <b>PILOTO AUTOMÁTICO</b>\n\n" + "\n\n".join(sniped), html=True)
     return f"[{now:%H:%M}] ok · {len(events) + len(sniped)} acciones/avisos"
 
 
@@ -1238,6 +1289,14 @@ def cmd_tick(args, s) -> None:
     try:
         print(_watch_once(store, s))
     except Exception as exc:
+        import traceback
+        store.log_error("pasada", traceback.format_exc())
+        if _is_transient(exc):
+            # Corte pasajero de LaLiga/Telegram/red: la siguiente pasada (15 min) lo reintenta.
+            # No se marca la ejecución como fallida (evita correos de GitHub), pero queda registrado.
+            from .storage import redact
+            print(redact(f"[corte pasajero] {exc}"))
+            return
         if store.alert_is_new("tick_failed", ttl_hours=3):  # como mucho un aviso cada 3 h
             try:
                 notify.send_all(s, f"🔴 <b>El bot ha fallado</b>: {notify.esc(str(exc))[:600]}", html=True)

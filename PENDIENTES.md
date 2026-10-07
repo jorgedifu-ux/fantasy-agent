@@ -1,6 +1,6 @@
 # Pendientes y puntos de fuga — para retomar con datos
 
-Actualizado el **5/10/2026**. Complementa a `ESTADO.md` (qué hace el bot y qué está verificado). Aquí
+Actualizado el **8/10/2026** (revisión completa en `ESTADO.md`, "Revisión del 8/10"). Complementa a `ESTADO.md` (qué hace el bot y qué está verificado). Aquí
 está lo que **todavía puede mejorar**, con la evidencia que hay y cómo comprobarlo la próxima vez.
 
 ## Cómo retomar (primeros 10 minutos de la próxima sesión)
@@ -13,7 +13,7 @@ python3 -m fantasy_agent tune --cloud --deep   # parámetros y propuestas del au
 python3 -m fantasy_agent siege                 # ¿habría sido viable el bloqueo al líder?
 ```
 
-Y mirar: `git log --oneline -15`, las ejecuciones de GitHub Actions (fallos "not acquired by Runner" =
+Y mirar: `errors` dentro de `data/state.json` tras el `pull` (trazas de los pasos que fallaron), `git log --oneline -15`, las ejecuciones de GitHub Actions (fallos "not acquired by Runner" =
 incidencia de GitHub, no del código) y los puntos reales de la jornada 8 (viernes 9/10).
 **Antes de tocar reglas, compara con estos números** (referencia del 5/10, `review`): patrimonio 253,8M
 (saldo 29,6M + plantilla 224,2M); compras por puja desde el 26/09 −11,7M (8 operaciones), por cláusula +5,2M (4);
@@ -51,16 +51,17 @@ posteriori; si 4-4-2 fue buena elección; peso del banquillo (`BENCH_WEIGHT`), d
 ~23M hasta mayo. No hay endpoint conocido (15 rutas, 404). Pasos para capturar la petición en `ESTADO.md`/conversación del 4/10.
 Si la petición lleva firma del anuncio, no se puede automatizar.
 
-### 7. Experimento: ¿de qué depende la oferta? (hasta el 12/10)
+### 7. Experimento: ¿de qué depende la oferta? (hasta el 12/10) — (c) descartada el 8/10
 Mayol anunciado a ×2,0 su valor y Freeman a ×1,5; el resto a ×1,1. `offers --cloud` agrupa la oferta media por precio pedido y por
 cuánto subió el valor desde el anuncio. Hipótesis: (a) valor actual, (b) valor al anunciar (idea del usuario), (c) precio pedido.
-**Si (b)**: la reanunciación de risers (ya implementada) cobra más sentido. **Si (c)**: gran palanca (pedir más).
+**Si (b)**: la reanunciación de risers (ya implementada) cobra más sentido. 8/10: Mayol (×2) y Freeman (×1,5) no recibieron
+ofertas mayores que el resto → **(c) descartada**. Al acabar (12/10) quitar `ASK_EXPERIMENT` y decidir (a) vs (b).
 
 ### 8. Autoajuste en modo `shadow`
 Calcula y guarda propuestas pero no aplica nada (`AUTOTUNE=on` para aplicarlas, `off` para apagarlo). **Decidir** con los datos si alguna
 merece aplicarse. Hoy proponía: "fuerte+forma" 25%→24%, "anticipada" 8%→6,8% (la deja casi desactivada: rinde +5,6% a 7 días, menos que el coste).
 
-### 9. Fiabilidad de GitHub Actions
+### 9. Fiabilidad de GitHub Actions — 8/10: pasos aislados, cortes pasajeros no fallan, trazas exportadas
 5/10: 4 ejecuciones fallaron con "The job was not acquired by Runner of type hosted" (infraestructura de GitHub). El disparo externo
 (cron-job.org cada 15 min) ya compensa la mayoría; el riesgo es perder la ventana de las 20:53. Sin alternativa gratuita equivalente
 evaluada. El token de cron-job.org caduca el **14/06/2027**.

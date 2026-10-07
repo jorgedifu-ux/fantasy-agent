@@ -8,6 +8,16 @@ from pathlib import Path
 from typing import Any
 
 
+
+def redact(text: str) -> str:
+    """Quita secretos de un texto que se va a publicar (la rama `data` es pública): el token del bot de
+    Telegram va en la URL, y por si acaso cualquier Bearer, token o code que aparezca en un cuerpo."""
+    import re
+    text = re.sub(r"bot\d+:[\w-]+", "bot***", text)
+    text = re.sub(r"(?i)(bearer\s+)[\w.~+/=-]+", r"\1***", text)
+    return re.sub(r'(?i)("?(?:access_token|refresh_token|id_token|code|client_secret|password)"?\s*[:=]\s*"?)[^"&\s,}]+', r"\1***", text)
+
+
 class Store:
     def __init__(self, path: Path):
         self.db = sqlite3.connect(path)
@@ -267,6 +277,15 @@ class Store:
         hist.append({"at": time.time(), "key": key, "old": old, "new": new, "why": why})
         self.set("params_history", json.dumps(hist[-60:]))
 
+    def log_error(self, step: str, detail: str) -> None:
+        """Errores de las pasadas (con traza): se exportan para poder diagnosticarlos fuera de GitHub."""
+        items = json.loads(self.get("errors") or "[]")
+        items.append({"at": time.time(), "step": step, "detail": redact(detail)[-2000:]})
+        self.set("errors", json.dumps(items[-40:]))
+
+    def errors(self) -> list[dict[str, Any]]:
+        return json.loads(self.get("errors") or "[]")
+
     def log_proposal(self, changes: dict[str, dict]) -> None:
         """Ajustes que el autoajuste HARÍA (modo shadow); se acumulan para revisarlos."""
         items = json.loads(self.get("proposals") or "[]")
@@ -287,7 +306,7 @@ class Store:
         "auto_buys": ("player_id", "price", "kind", "executed_at"),
         "player_status_history": ("player_id", "status", "recorded_at"),
     }
-    EXPORT_KV = ("params", "params_history", "proposals", "siege_state", "siege_ids", "liquidity", "rival_premium",
+    EXPORT_KV = ("errors", "params", "params_history", "proposals", "siege_state", "siege_ids", "liquidity", "rival_premium",
                  "sold_ids", "lineup_variant")
 
     def export_state(self) -> dict[str, Any]:

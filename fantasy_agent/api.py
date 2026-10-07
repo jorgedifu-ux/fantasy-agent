@@ -76,6 +76,10 @@ class FantasyAPI:
         """Puntos de cada equipo en UNA jornada (no el acumulado)."""
         return self.get(f"{COMP}/leagues/{league_id}/standing/{week}", cache=True)
 
+    def team_fresh(self, league_id: str, team_id: str) -> dict:
+        """Igual que `team` pero sin caché: para releer una cláusula justo antes de pagarla."""
+        return self.get(f"{COMP}/leagues/{league_id}/teams/{team_id}")
+
     def team(self, league_id: str, team_id: str) -> dict:
         return self.get(f"{COMP}/leagues/{league_id}/teams/{team_id}", cache=True)
 

@@ -35,6 +35,11 @@ def make_plan(feasible=True):
 class FakeAPI:
     def __init__(self):
         self.calls = []
+        self.live_clause = 2_000_000  # lo que la API dice que vale la cláusula al releerla
+
+    def team_fresh(self, league, team_id):
+        return {"players": [{"playerMaster": {"id": "g1", "nickname": "g1", "positionId": 1, "marketValue": 2_000_000},
+                             "playerTeamId": "pt-g1", "buyoutClause": self.live_clause}]}
 
     def clear_cache(self): pass
     def pay_buyout_clause(self, league, ptid, amount): self.calls.append(("clause", ptid, amount))
@@ -90,6 +95,12 @@ class FlowTests(unittest.TestCase):
             self.store.set("siege_state", json.dumps({"jornada": (FIRST + timedelta(hours=10)).isoformat(), "armed": True}))
             self.assertEqual(cli._siege_go(self.store, None, self.api, far), [])
         self.assertEqual(self.api.calls, [])
+
+    def test_does_not_pay_if_the_clause_rose(self):
+        self.api.live_clause = 2_400_000
+        events = self.go(make_plan())
+        self.assertEqual(self.api.calls, [])
+        self.assertTrue(any("ha subido" in e for e in events))
 
     def test_failed_kill_stops_the_rest(self):
         plan = make_plan()

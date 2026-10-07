@@ -45,6 +45,7 @@ jobs:
       - name: fantasy tick
         run: python -m fantasy_agent tick
         env:
+          TZ: Europe/Madrid  # horas de silencio, días del resumen y del patrimonio en hora española
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
