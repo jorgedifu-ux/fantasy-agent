@@ -23,6 +23,7 @@ quieres cambiar la estrategia.
   AUTOMÁTICO" por pasada con todo lo hecho (nada si no ha pasado nada), más un parte de
   situación corto cada ~90 min (silencio de 23h a 7h).
 - **Terminal** (en esta carpeta): `python3 -m fantasy_agent <comando>`:
+  - `learn-rivals` — cómo opera cada mánager (prima, tendencia previa, resultado a 14 días)
   - `tick --dry-run` — **"¿qué harías ahora?"**: lee todo de verdad y lo imprime, sin escribir
     nada en la API, Telegram ni la base de datos. Úsalo antes de cambiar reglas.
   - `tick` — una pasada real (lo mismo que hace GitHub).
@@ -171,6 +172,32 @@ cierre de las 20:53, cláusulas que se liberan) lo fiable es dispararlo desde fu
   0,999× valor, p10 0,911, p90 1,065, máx 1,096. **Experimento de precio pedido**: Mayol ×2,0 y Freeman ×1,5 no
   recibieron ofertas más altas → el precio pedido **no** ancla la oferta (descartado). Valor-al-anunciar: sin
   datos suficientes aún.
+
+## Lo que enseñan los rivales (8/10/2026, `learn-rivals`)
+
+Liga de 4, empezó en la J3. Clasificación tras la J7: Josinho 279 pts (43, 99, 48, 42, 47), Aleix 160, Pep 122,
+nosotros 89 (49 y 40 en J3–J4; **0 en J5–J7 por no tener once guardable**). Cuando alineamos, puntuamos cerca del
+líder. La diferencia grande está en el **dinero**: Josinho ~393M de plantilla + ~80M de saldo estimado; Aleix
+316M + 74M; Pep 315M + 52M; nosotros 259M + 1,4M.
+
+| Mánager | Operaciones cerradas | Beneficio | Pujas: prima / subida previa 7d / valor a 14d |
+|---|---|---|---|
+| Josinho | 26 | **+151M** | +3,9% / **+15%** / +10% |
+| Aleix | 24 | +102M | +7,6% / +9% / +13% |
+| Pep | 12 | +89M | +16,5% / +4% / +54% |
+| Nosotros | 20 | +11,5M | +9,2% / **−0,4%** / −4% |
+
+- **El líder compra jugadores que ya suben** (+15% en 7 días), grandes (89% del gasto en jugadores ≥15M), con poca
+  prima, y los mantiene ~14 días: muchas salidas son **que le paguen la cláusula** al acabar la protección (le han
+  pagado 441M en cláusulas; Pep 234M de ellos). Mejores: Lamine +30%, Roberto +75%, Fermín +22%, Koski +171%.
+- **Toda la liga (83 compras con 14 días de recorrido)**, según la subida en la semana previa a comprar:
+  <0% → valor −9% a 14 días, neto con prima y venta −17%, gana el 18%; 0–10% → +1,5% / −6% / 39%;
+  10–25% → +23% / +14% / 74%; ≥25% → +70% / +36% / 75%. Coincide con la prueba histórica del 4/10.
+- Nuestras pérdidas eran **fichajes por puntos de jugadores planos o en bajada con prima alta** (Gueye −7M, Dani
+  Lorenzo, Dolan, Nacho Pérez, Rafita, Gayá), casi todos antes de la regla de beneficio neto (4–5/10). Desde el 3/10
+  todas las compras del bot son de jugadores en subida (Yoel Lago, Terrats, Fofana, Zabiri, Deossa: todos en positivo).
+- Cambio hecho: `autopilot.DRIFT_DECLINING` = −5%: un jugador que baja en la semana (sin llegar a "en caída") ya
+  no cuenta como revalorización 0 sino como pérdida esperada en el beneficio neto del fichaje.
 
 ## Decisiones y políticas acordadas contigo
 

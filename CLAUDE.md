@@ -3,7 +3,7 @@
 ## Al empezar una sesión
 1. Lee `ESTADO.md` (qué hace el bot y qué está verificado) y **`PENDIENTES.md`** (puntos de fuga, evidencia y orden de trabajo).
 2. Descarga los datos reales del bot: `python3 -m fantasy_agent pull` y analízalos con `review --cloud`, `offers --cloud`,
-   `tune --cloud --deep`, `siege` (los comandos están en PENDIENTES.md). Los datos del bot viven en GitHub, no en local.
+   `tune --cloud --deep`, `siege`, `learn-rivals` (los comandos están en PENDIENTES.md). Los datos del bot viven en GitHub, no en local.
 3. El usuario no quiere que el bot "aprenda a lo loco": el autoajuste va en modo `shadow` (propone, no aplica). Las decisiones de
    cambio se toman aquí, con los datos, y se dejan por escrito en ESTADO.md/PENDIENTES.md.
 
@@ -47,6 +47,7 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
 - `autopilot.py` decisiones autónomas (puro, testeable): cartera de fichajes/cláusulas por puntos
   que suman al once, ofertas (aceptar/rechazar/esperar), venta antes de que acabe la protección,
   cuerpo de la alineación
+- `rivals.py`   aprender de los rivales (puro): compras con su tendencia previa y resultado a 14 días (`learn-rivals`)
 - `siege.py`    operación bloqueo al líder (puro): viabilidad, certeza, coste; la ejecución está en `cli._siege_*`
 - `analysis.py` tendencias, puntuación de oportunidades (once vs inversión), alarmas de cláusula (puro, testeable)
 - `lineup.py`   mejor once legal por puntos esperados

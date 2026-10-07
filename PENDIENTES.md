@@ -11,6 +11,7 @@ python3 -m fantasy_agent review --cloud        # patrimonio, operaciones cerrada
 python3 -m fantasy_agent offers --cloud        # distribución de ofertas + experimento de precio pedido (hasta el 12/10)
 python3 -m fantasy_agent tune --cloud --deep   # parámetros y propuestas del autoajuste (modo shadow: NO aplica)
 python3 -m fantasy_agent siege                 # ¿habría sido viable el bloqueo al líder?
+python3 -m fantasy_agent learn-rivals          # cómo operan los rivales y qué rinde en esta liga (tarda ~1 min)
 ```
 
 Y mirar: `errors` dentro de `data/state.json` tras el `pull` (trazas de los pasos que fallaron), `git log --oneline -15`, las ejecuciones de GitHub Actions (fallos "not acquired by Runner" =
@@ -73,6 +74,19 @@ operación de bloqueo (casi nunca viable; es lo esperado). Si alguno falla, sald
 ### 11. Privacidad de los datos publicados
 La rama `data` del repositorio (público) contiene ofertas vistas, pujas, compras y saldo diario; **no** contiene tokens ni datos de
 Telegram. Desactivar con `EXPORT_DATA=0` en el workflow si no se quiere.
+
+### 12. Copiar al líder: más capital a jugadores grandes en subida — *decidir con datos de la J8–J10*
+Evidencia (8/10, `learn-rivals`): comprar con subida previa ≥10% en 7 días rinde +14% a +36% neto a 14 días (74–75% ganan);
+el líder pone casi todo su dinero ahí y tiene 1,8× nuestro patrimonio. Hoy dedicamos a inversión el 25% del saldo libre (60% en
+parón) y los fichajes por puntos solo cuentan la subida si el jugador ya está en subida fuerte. **Ideas**: (a) subir
+`INVEST_FRACTION_NORMAL`; (b) que entre dos fichajes con puntos parecidos gane el que sube; (c) mantener ~10–15M de saldo
+para las cláusulas que se abren a las 20:53 (los rivales tienen 50–80M; nosotros 1,4M y no podemos aprovecharlas).
+**Medir antes**: el resultado real de las inversiones del bot (Yoel Lago, Terrats, Fofana, Zabiri, Deossa, Marc Roca) a 14 días.
+
+### 13. Nuestros jugadores salen por cláusula a su valor: no es malo
+El líder gana mucho siendo "clausulado" al final de la protección (cobra el valor entero, sin el ~3% de la venta). Encaja con
+tu regla ("mejor que nos hagan cláusula a perder dinero"). Pendiente de probar: subir nuestra cláusula (pagas la mitad de lo
+que sube) en jugadores que los rivales persiguen — ruta sin probar.
 
 ## Ideas descartadas (con motivo)
 - Fase "económica vs competitiva": el usuario prioriza puntos siempre.

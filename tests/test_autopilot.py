@@ -341,6 +341,8 @@ class DriftTests(unittest.TestCase):
         self.assertEqual(ap.expected_drift(2.5, 1, form=7), 0.08)   # entrada anticipada: forma buena, subida suave
         self.assertEqual(ap.expected_drift(2.5, 4, form=1), 0.0)    # subida suave sin forma: nada
         self.assertEqual(ap.expected_drift(0, 1, form=9), 0.0)      # forma buena con precio plano: nada
+        self.assertEqual(ap.expected_drift(-1, -3, form=9), ap.DRIFT_DECLINING)  # bajando un poco: cuesta
+        self.assertLess(ap.DRIFT_DECLINING, 0)
 
     def test_rising_candidate_beats_an_equal_flat_one(self):
         mine = eleven()[:-1]            # falta un delantero

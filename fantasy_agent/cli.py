@@ -1110,6 +1110,29 @@ def cmd_export(args, s) -> None:
         print(export.publish(state, token=token, repo=repo))
 
 
+def cmd_rivals(args, s) -> None:
+    """Aprender de los rivales: qué compran, a qué prima, con qué tendencia, y cómo les sale."""
+    import re
+    from datetime import date
+    from . import rivals
+    api = FantasyAPI(s)
+    league_id, _, _ = service.resolve_league(api, s)
+    standing = models.parse_standing(api.standing(league_id))
+    managers = {r.manager_id: r.manager_name for r in standing}
+    activity = service._all_activity(api, league_id)
+    pids = sorted({str(a.get("playerMasterId")) for a in activity if a.get("activityTypeId") in (1, 31)})
+    print(f"Leyendo el histórico de {len(pids)} jugadores…", file=sys.stderr)
+    hist = {}
+    for pid in pids:
+        try:
+            hist[pid] = models.parse_value_history(api.market_value_history(pid))
+        except Exception:
+            pass
+    names = {str(p.get("id")): p.get("nickname") for p in api.players()}
+    since = date.fromisoformat(args.since) if args.since else None
+    print(re.sub(r"</?b>", "", rivals.report(activity, hist, managers, names, date.today(), since)))
+
+
 def cmd_offers(args, s) -> None:
     """Cómo se distribuyen las ofertas de la liga respecto al valor (lo que el bot ha visto)."""
     store = _open_store(s, args.cloud)
@@ -1387,6 +1410,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--deep", action="store_true", help="incluye la recalibración semanal (≈250 peticiones)")
     p.add_argument("--cloud", action="store_true", help="usar los datos que ha publicado el bot en GitHub")
     p.set_defaults(func=cmd_tune)
+    p = sub.add_parser("learn-rivals", help="Aprender de los rivales: qué compran, a qué prima y cómo les sale")
+    p.add_argument("--since", help="solo compras desde esta fecha (AAAA-MM-DD)")
+    p.set_defaults(func=cmd_rivals)
     p = sub.add_parser("offers", help="Distribución de las ofertas de la liga respecto al valor")
     p.add_argument("--cloud", action="store_true", help="usar los datos que ha publicado el bot en GitHub")
     p.set_defaults(func=cmd_offers)

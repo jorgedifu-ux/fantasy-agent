@@ -220,6 +220,13 @@ def drift_tier(d3: float, d7: float, form: float | None) -> str | None:
     return None
 
 
+# Revalorización esperada de un jugador que baja algo en 7 días sin llegar a "en caída" (`is_falling`).
+# Datos de la liga (8/10/2026, las 83 compras de los 4 mánagers con 14 días de recorrido): con la
+# semana previa en negativo, el valor a 14 días cae un 9% (mediana) y solo el 18% acaba ganando;
+# entre 0 y +10%, +1,5%; desde +10%, +23% y más. Se usa la mitad de esa caída, por prudencia.
+DRIFT_DECLINING = -0.05
+
+
 def expected_drift(d3: float, d7: float, form: float | None = None) -> float:
     """Revalorización esperada a ~7 días (valores de fábrica de la prueba histórica del 4/10/2026,
     300 jugadores y 4 jornadas; el bot los recalibra cada semana, ver learn.calibrate_drift):
@@ -227,9 +234,12 @@ def expected_drift(d3: float, d7: float, form: float | None = None) -> float:
       forma floja (<2 pts): +8%.
     - subida suave (≥1,5%/3d) pero con buena forma: +8% — entrada anticipada, "dos o tres
       partidos buenos y el precio aún no ha saltado" (con precio plano y sin subida, solo +3%).
-    - subida suave sin forma que la respalde: nada."""
+    - subida suave sin forma que la respalde: nada.
+    - bajando en la semana (sin llegar a caída): `DRIFT_DECLINING` (−5%), coste para el fichaje."""
     tier = drift_tier(d3, d7, form)
-    return PARAMS[f"drift_{tier}"] if tier else 0.0
+    if tier:
+        return PARAMS[f"drift_{tier}"]
+    return DRIFT_DECLINING if d7 < 0 else 0.0
 
 
 def plan_acquisitions(
