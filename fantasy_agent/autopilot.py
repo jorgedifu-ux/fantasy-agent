@@ -26,7 +26,11 @@ MIN_GAIN = 0.5               # pts/jornada que como mínimo debe sumar una compr
 COMPLETE_XI_BONUS = 15.0     # completar el once pesa más que cualquier fichaje
 BENCH_WEIGHT = 0.15          # los suplentes cuentan algo (lesiones, rotaciones)
 BENCH_SLOTS = 4
-PENALTY_FACTOR = 0.6         # clausular al líder o por venganza: se puede, con menos prioridad
+PENALTY_FACTOR = 0.6         # clausular por venganza o pagando prima al líder: se puede, con menos prioridad
+# Quitarle un jugador al líder (8/10/2026): si su cláusula ≈ su valor no le regalamos dinero (cobra lo que
+# vale) y pierde los puntos de ese jugador y su subida futura: doble efecto en la clasificación.
+LEADER_BONUS = 1.3
+LEADER_FAIR_RATIO = 1.05
 MAX_OVERBID = 0.12           # nunca pujar más de +12% sobre el precio de salida (4/10/2026: con +20%
 # se pagó Soria un 18% sobre su valor y Gueye un 15%: pérdida inmediata de ~15M)
 
@@ -128,6 +132,7 @@ class Move:
     item: MarketItem | None = None  # puja: el anuncio de LaLiga
     unlock_at: datetime | None = None  # cláusula que aún no se ha liberado: solo reserva saldo
     penalized: bool = False
+    bonus: bool = False             # jugador del líder a precio justo (ver LEADER_BONUS)
     score: float = 0.0              # solo "invest": fuerza del momentum (d3 + d7)
     drift: float = 0.0              # revalorización esperada a ~7 días (0,17 = +17%), ver expected_drift
 
@@ -139,7 +144,7 @@ class Move:
 def clause_moves(
     rival_slots: list[SquadSlot], now: datetime, *, lookahead_hours: float = 24,
     freeze: tuple[datetime, datetime] | None = None,
-    avoid_team_ids: frozenset[str] = frozenset(),
+    avoid_team_ids: frozenset[str] = frozenset(), leader_team_id: str = "",
 ) -> list[Move]:
     """Cláusulas lógicas de rivales: pagables ya, o que se liberan dentro de `lookahead_hours`
     (esas no se ejecutan todavía, pero reservan su dinero para no gastarlo en otra cosa)."""
@@ -161,8 +166,10 @@ def clause_moves(
                 unlock = freeze[1]
         if unlock is not None and (unlock - now).total_seconds() > lookahead_hours * 3600:
             continue
-        out.append(Move("clause", p, sl.clause, slot=sl, unlock_at=unlock,
-                        penalized=sl.owner_team_id in avoid_team_ids))
+        fair_leader = bool(leader_team_id) and sl.owner_team_id == leader_team_id \
+            and sl.clause <= p.market_value * LEADER_FAIR_RATIO
+        out.append(Move("clause", p, sl.clause, slot=sl, unlock_at=unlock, bonus=fair_leader,
+                        penalized=sl.owner_team_id in avoid_team_ids and not fair_leader))
     return out
 
 
@@ -181,14 +188,24 @@ def bid_moves(market: list[MarketItem], skip_player_ids: frozenset[str] = frozen
 
 # Pujar al final (8/10/2026): el número de pujas de cada anuncio lo ven todos, así que pujar pronto
 # avisa a los rivales (Aitor Fdez: el líder pagó +70% sobre un jugador en el que ya habíamos pujado).
-# Como fantasybot (Ramos-SportsData), las pujas de mercado se mandan solo en la última hora y media
-# antes del cierre; con un disparo cada 15 min hay ~6 intentos.
-BID_WINDOW_H = 1.5
+# La pasada que arranca en los últimos 25 min antes del cierre espera dentro del mismo job y puja a
+# falta de `LATE_BID_LEAD_S` (como las cláusulas al segundo). Si a falta de `BID_FALLBACK_S` aún no
+# hay ninguna pasada en esa ventana (cron caído), se puja igualmente: mejor pronto que nunca.
+LATE_BID_WINDOW_S = 25 * 60
+LATE_BID_LEAD_S = 150
+BID_FALLBACK_S = 0  # 0 = sin puja anticipada; ver `bid_timing`
 
 
-def bid_now(item: MarketItem, now: datetime) -> bool:
-    """¿Toca ya mandar la puja de este anuncio? (sin fecha de cierre conocida: sí)."""
-    return item.expires is None or (item.expires - now).total_seconds() <= BID_WINDOW_H * 3600
+def bid_timing(item: MarketItem, now: datetime) -> str:
+    """"now" (pujar ya), "late" (esperar en este job hasta el último minuto) o "wait" (aún es pronto)."""
+    if item.expires is None:
+        return "now"
+    left = (item.expires - now).total_seconds()
+    if left <= LATE_BID_LEAD_S + 30:
+        return "now"
+    if left <= LATE_BID_WINDOW_S:
+        return "late"
+    return "now" if left <= BID_FALLBACK_S else "wait"
 
 
 # Portero suplente: con uno solo, una lesión, una sanción o una cláusula dejan la portería vacía y la
@@ -307,7 +324,7 @@ def plan_acquisitions(
             net_m = gain * GAIN_HORIZON * POINT_VALUE_M + m.drift * cost_m - (premium + RESALE_SPREAD) * cost_m
             if net_m <= 0:
                 continue
-            eff = net_m / (cost_m + slot_cost + 0.25) * (PENALTY_FACTOR if m.penalized else 1.0)
+            eff = net_m / (cost_m + slot_cost + 0.25) * (PENALTY_FACTOR if m.penalized else 1.0) * (LEADER_BONUS if m.bonus else 1.0)
             if best is None or eff > best[0]:
                 best = (eff, m, gain, cost)
         if best is None:
@@ -407,7 +424,9 @@ def offer_decision(
         need, why = BENCH_OFFER_MIN, "suplente con la plantilla llena: libera sitio para un fichaje mejor"
     else:
         need, why = PARAMS["league_offer_min"], "oferta por encima de su valor"
-    if trend_d3 > RISING_D3 and trend_d7 > 5 and not at_risk and not injured:
+    if trend_d3 > RISING_D3 and trend_d7 > 5 and not injured:
+        # También cerca de que se abra su cláusula (8/10/2026): si un rival lo clausula, cobras su
+        # cláusula, que sube con su valor; venderlo antes regala la subida que queda.
         # La técnica (Josinho con Yamal): esperar a que suba. Prueba histórica (4/10/2026): comprar
         # una subida y mantener hasta que se frena rinde +72% de media (mediana +21%, ~19 días);
         # vender a los 7 días, solo +17%. Mientras sigue subiendo no se vende (las ofertas no pasan de ~1,13×).
@@ -529,13 +548,14 @@ def invest_moves(market: list[MarketItem], trends: dict, skip_player_ids: frozen
 def clause_invest_moves(
     rival_slots: list[SquadSlot], trends: dict, now: datetime, *, freeze: tuple[datetime, datetime] | None = None,
     lookahead_hours: float = 24, avoid_team_ids: frozenset[str] = frozenset(),
-    skip_player_ids: frozenset[str] = frozenset(), form: dict[str, float] | None = None,
+    skip_player_ids: frozenset[str] = frozenset(), form: dict[str, float] | None = None, leader_team_id: str = "",
 ) -> list[Move]:
     """Cláusulas de rivales (abiertas o que se abren en <24 h) de jugadores en subida:
     es lo que han hecho los rivales para hacer dinero (Josinho +76M sin vender nada). La cláusula
     acompaña al valor, así que la ganancia viene solo de la inercia: se compra lo que ya sube."""
     out = []
-    for m in clause_moves(rival_slots, now, lookahead_hours=lookahead_hours, freeze=freeze, avoid_team_ids=avoid_team_ids):
+    for m in clause_moves(rival_slots, now, lookahead_hours=lookahead_hours, freeze=freeze, avoid_team_ids=avoid_team_ids,
+                          leader_team_id=leader_team_id):
         p, tr = m.player, trends.get(m.player.id)
         if tr is None or p.id in skip_player_ids or m.cost > p.market_value * CLAUSE_INVEST_MAX_RATIO:
             continue
@@ -543,7 +563,7 @@ def clause_invest_moves(
         net = drift - max(0.0, m.cost / p.market_value - 1) - RESALE_SPREAD
         if drift >= 0.08 and net >= 0.03:
             m.kind, m.drift = "invest_clause", drift
-            m.score = round(net * 100 + (tr.d3 + tr.d7) / 10 - (10 if m.penalized else 0), 1)
+            m.score = round(net * 100 + (tr.d3 + tr.d7) / 10 - (10 if m.penalized else 0) + (5 if m.bonus else 0), 1)
             out.append(m)
     return sorted(out, key=lambda m: -m.score)
 

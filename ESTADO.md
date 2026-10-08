@@ -182,8 +182,17 @@ cierre de las 20:53, cláusulas que se liberan) lo fiable es dispararlo desde fu
   más barato es perder dinero frente a que te lo quiten (caso David Soria: pagado 46,6M, vale 38,3M, cláusula 46,6M =
   1,22×; nadie la pagará y el bot lo mantiene; no se vende por debajo de lo pagado salvo lesión o caída fuerte, y al
   ser el titular, solo con una oferta ≥1,25×).
-- **Pujas al final**: el número de pujas de cada anuncio lo ven todos. Las pujas de mercado (fichajes e inversión)
-  se mandan solo en la última hora y media antes del cierre (`autopilot.BID_WINDOW_H`), como hace fantasybot.
+- **Pujas en el último minuto**: el número de pujas de cada anuncio lo ven todos. Los anuncios de LaLiga cierran a
+  las 20:53; la pasada que arranca en los 25 min previos espera dentro del job y puja a las ~20:50:30, releyendo el
+  anuncio (`cli._timed_actions`, junto con las cláusulas al segundo, en orden de hora). Disparo extra recomendado en
+  cron-job.org a las 20:27 (hora de Madrid) para asegurar que hay una pasada en esa ventana.
+- **Subida aguantada hasta el final**: un jugador que sigue subiendo (≥1%/3d y ≥5%/7d) no se vende por menos de
+  1,25× aunque su cláusula esté a punto de abrirse: si un rival lo clausula, cobramos la cláusula, que sube con él.
+- **Jugadores del líder a precio justo**: si su cláusula es ≤1,05× su valor, no le regalamos dinero y pierde los
+  puntos y la subida de ese jugador → prioridad ×1,3 (antes ×0,6). Con prima, sigue penalizado.
+- **Subir cláusulas**: se quita la "protección a 1,5×" (costaba el 25% del valor). Una prueba única y barata
+  (`_clause_raise_probe`, ~55K con Mayol) mide qué sube y qué cobra la API; queda en `clause_raise_test`.
+  Datos para la política: los rivales han pagado como mucho ~1,10–1,15× el valor por una cláusula.
 - **Portero suplente**: con un solo portero disponible, el bot puja por el mejor portero de LaLiga ≤1,5M que tenga
   puntos esta temporada (`autopilot.backup_keeper`). El líder lleva 4 porteros.
 - Otros bots revisados (8/10): Ramos-SportsData/fantasybot (pujas al final, Python stdlib, LLM opcional),
@@ -191,6 +200,10 @@ cierre de las 20:53, cláusulas que se liberan) lo fiable es dispararlo desde fu
   (Go; cruza con futbolfantasy.com: % de titularidad, puntos de la temporada pasada al inicio, rivales ±12%,
   casa ±4%), Kickbase-Trading-Advisor (alemán: predice la subida de mañana con puntos, minutos, valor y subidas
   recientes — lo mismo que nuestros niveles de subida + forma).
+- **¿Se puede ganar la liga?** Tras J7: −190 puntos con 31 jornadas → hacen falta +6,1 pts/jornada sobre el
+  líder. Mejor once con la media de la temporada de cada jugador (8/10): nosotros 63,0, Josinho 55,7, Aleix 50,4,
+  Pep sin once completo. Viable pero ajustado: depende de no perder ninguna jornada más, de seguir creciendo en
+  dinero y de quitarle jugadores al líder a precio justo.
 - **Revalorización de la plantilla actual** (8/10): nosotros +11,4% en 7 días (+26,5M), Josinho +9,7%, Aleix +7,6%,
   Pep +3,6%. La cartera ya crece al mejor ritmo de la liga; la diferencia de dinero viene de antes del piloto.
 

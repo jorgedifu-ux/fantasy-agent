@@ -306,7 +306,7 @@ class Store:
         "auto_buys": ("player_id", "price", "kind", "executed_at"),
         "player_status_history": ("player_id", "status", "recorded_at"),
     }
-    EXPORT_KV = ("errors", "params", "params_history", "proposals", "siege_state", "siege_ids", "liquidity", "rival_premium",
+    EXPORT_KV = ("errors", "clause_raise_test", "params", "params_history", "proposals", "siege_state", "siege_ids", "liquidity", "rival_premium",
                  "sold_ids", "lineup_variant")
 
     def export_state(self) -> dict[str, Any]:

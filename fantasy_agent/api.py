@@ -151,8 +151,8 @@ class FantasyAPI:
 
     def increase_buyout_clause(self, league_id: str, player_team_id: str, value_to_increase: int) -> Any:
         """Sube tu propia cláusula pagando la mitad de lo que sube (factor 2), según el
-        cliente de la comunidad Externoak/LaLigaApp. `cli._auto_increase_clause` verifica
-        releyendo la plantilla que de verdad subió."""
+        cliente de la comunidad Externoak/LaLigaApp (las guías: relación 1:2). `cli._clause_raise_probe`
+        la prueba una vez con un jugador barato y anota lo que subió y lo que cobró."""
         return self._write("PUT", f"{COMP}/league/{league_id}/buyout/player",
                             {"factor": 2.0, "playerId": player_team_id, "valueToIncrease": value_to_increase})
 

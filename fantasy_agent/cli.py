@@ -240,44 +240,42 @@ def _auto_shield(store: Store, s, api: FantasyAPI, world) -> tuple[str | None, s
     return f"🛡️ <b>BLINDADO</b>: {name} protegido de clausulazos (gratis, automático).", target.player.id
 
 
-def _auto_increase_clause(store: Store, s, api: FantasyAPI, world, skip_player_id: str = "") -> str | None:
-    """Protección DE PAGO para tus mejores jugadores (media ≥5) cuya cláusula queda al alcance
-    de los rivales en <24h y no se han vendido antes (ver la venta por riesgo en
-    `autopilot.offer_decision`): la sube a 1.5x su valor, por encima de lo que es un objetivo
-    lógico. Se paga la mitad de lo que sube; solo si cabe sin tocar el colchón. Se verifica
-    releyendo la plantilla."""
+def _clause_raise_probe(store: Store, s, api: FantasyAPI, world, skip_player_id: str = "") -> str | None:
+    """Prueba ÚNICA y barata de la subida de cláusula (ruta sin probar): sube un 10% la de un
+    jugador barato (≤2,5M, coste ~50-125K) y anota cuánto subió y cuánto se cobró de verdad, en
+    `kv.clause_raise_test` (se exporta). Con eso se decide la política de "cláusula tentadora".
+    Sustituye a la antigua protección a 1,5x: costaba el 25% del valor y, como la cláusula ya es
+    lo que pagaste o más, que te clausulen nunca es perder dinero (decisión del usuario)."""
+    if store.get("clause_raise_test"):
+        return None
     now = datetime.now(timezone.utc)
     if world.clause_freeze and world.clause_freeze[0] <= now < world.clause_freeze[1]:
         return None
-    candidates = []
-    for sl in world.my_slots:
-        exposed = ap.hours_until_exposed(sl, now)
-        if sl.player.id != skip_player_id and exposed is not None and exposed <= 24 and sl.player.avg_points >= 5.0:
-            candidates.append((exposed, sl))
-    if not candidates:
+    options = [sl for sl in world.my_slots if sl.player.id != skip_player_id and sl.player_team_id
+               and 500_000 <= sl.player.market_value <= 2_500_000 and sl.player.status.lower() == "ok"]
+    if not options or not world.my_cash:
         return None
-    _, target = min(candidates, key=lambda t: t[0])
-    p = target.player
-    if not store.alert_is_new(f"raise_clause:{p.id}", ttl_hours=96):
+    target = min(options, key=lambda sl: sl.player.market_value)
+    increase = max(100_000, round(target.player.market_value * 0.10))
+    if increase > world.my_cash * 0.5:
         return None
-    increase = round(p.market_value * 1.5) - target.clause
-    cost = round(increase / 2)
-    reserve = world.my_cash * s.budget_reserve_pct if world.my_cash else 0
-    if increase <= 0 or not world.my_cash or cost > (world.my_cash - reserve):
-        return None
-    name = notify.esc(p.name)
+    name = notify.esc(target.player.name)
+    result = {"at": time.time(), "player": target.player.name, "value": target.player.market_value,
+              "clause_before": target.clause, "increase": increase, "cash_before": world.my_cash}
     try:
         api.increase_buyout_clause(world.league_id, target.player_team_id, increase)
     except Exception as exc:
-        return f"❌ Intento de subir la cláusula de <b>{name}</b> fallido: {notify.esc(str(exc))}"
+        result["error"] = str(exc)[:300]
+        store.set("clause_raise_test", json.dumps(result))
+        return f"🧪 Prueba de subir cláusula ({name}): la API ha dicho que no — {notify.esc(str(exc))[:150]}"
+    api.clear_cache()
     squad = models.parse_squad(api.team(world.league_id, world.my_team_id), world.my_team_id, "")
-    after = next((sl.clause for sl in squad if sl.player_team_id == target.player_team_id), 0)
-    if after < target.clause + increase * 0.9:
-        return f"⚠️ Pedí subir la cláusula de <b>{name}</b> pero no ha cambiado ({service.m(after)})."
-    return (
-        f"⬆️ <b>CLÁUSULA SUBIDA</b>: <b>{name}</b> de {service.m(target.clause)} a {service.m(after)} "
-        f"(coste ~{service.m(cost)}): ya no es un objetivo lógico para ningún rival."
-    )
+    result["clause_after"] = next((sl.clause for sl in squad if sl.player_team_id == target.player_team_id), 0)
+    result["cash_after"] = service.resolve_league(api, s)[2]
+    store.set("clause_raise_test", json.dumps(result))
+    paid = (result["cash_before"] - (result["cash_after"] or 0))
+    return (f"🧪 <b>Prueba de subir cláusula</b>: {name} de {service.m(target.clause)} a {service.m(result['clause_after'])} "
+            f"pidiendo +{service.m(increase)}; me han cobrado {service.m(paid)}. Con esto se decide cuánto subir las demás.")
 
 
 SNIPE_WINDOW_S = 25 * 60  # dentro del mismo job de GitHub (timeout 28 min)
@@ -387,7 +385,8 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
         return [], []
     mine = [sl.player for sl in world.my_slots] + incoming
     avoid = frozenset(t for t in (world.leader_team_id, world.revenge_against_team_id) if t)
-    moves = ap.clause_moves(world.rival_slots, now, freeze=world.clause_freeze, avoid_team_ids=avoid) + \
+    moves = ap.clause_moves(world.rival_slots, now, freeze=world.clause_freeze, avoid_team_ids=avoid,
+                            leader_team_id=world.leader_team_id or "") + \
         ap.bid_moves(world.market, skip_player_ids=frozenset(pl.id for pl in incoming))
     trends = {pid: tr for pid, (_, tr) in world.trends.items()}
     # Tendencia de las cláusulas de rivales con precio razonable (no están en `world.trends`).
@@ -416,7 +415,8 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
     taken = frozenset(pl.id for pl in mine) | {m.player.id for m in plan}
     candidates = (ap.invest_moves(world.market, trends, skip_player_ids=taken, form=world.recent_form)
                   + ap.clause_invest_moves(world.rival_slots, trends, now, freeze=world.clause_freeze, avoid_team_ids=avoid,
-                                           skip_player_ids=taken, form=world.recent_form)) if trends else []
+                                           skip_player_ids=taken, form=world.recent_form,
+                                           leader_team_id=world.leader_team_id or "")) if trends else []
     if invest_budget > 0 and slots_left > 0 and candidates:
         plan += ap.plan_investments(candidates, invest_budget, slots_left)
     # Rotación de capital: si hay inversiones buenas que no se han podido pagar (o no caben en la
@@ -431,8 +431,8 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
                                        "best": unfunded[0].player.name if unfunded else ""}))
     for mv in plan:
         name, pos = notify.esc(mv.player.name), mv.player.position
-        if mv.kind in ("bid", "invest") and not ap.bid_now(mv.item, now):
-            continue  # se puja en la última hora y media (ver autopilot.BID_WINDOW_H); su dinero queda sin gastar hoy
+        if mv.kind in ("bid", "invest") and ap.bid_timing(mv.item, now) != "now":
+            continue  # se puja en el último minuto (ver autopilot.bid_timing y `_timed_actions`)
         if mv.kind == "invest":
             try:
                 api.bid(world.league_id, mv.item.market_id, mv.cost)
@@ -492,7 +492,57 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
                 )
         except Exception as exc:
             events.append(f"❌ {'Clausulazo' if mv.kind == 'clause' else 'Puja'} fallido por <b>{name}</b>: {notify.esc(str(exc))}")
-    return events, [mv for mv in plan if not mv.executable_now]
+    late = [mv for mv in plan if mv.kind in ("bid", "invest") and ap.bid_timing(mv.item, now) == "late"]
+    return events, [mv for mv in plan if not mv.executable_now] + late
+
+
+def _late_bid(store: Store, api: FantasyAPI, world, mv: ap.Move) -> str | None:
+    """Puja del último minuto: relee el anuncio (sigue ahí, sin puja nuestra) y puja lo planeado."""
+    api.clear_cache()
+    market = models.parse_market(api.market(world.league_id))
+    it = next((x for x in market if x.market_id == mv.item.market_id), None)
+    name = notify.esc(mv.player.name)
+    if it is None or it.my_bid:
+        return None
+    if it.player.status.lower() in ap.INJURED:
+        return f"🚫 No pujo por <b>{name}</b>: ahora está {notify.esc(it.player.status)}."
+    api.bid(world.league_id, it.market_id, mv.cost)
+    expires = it.expires.timestamp() if it.expires else None
+    store.add_market_bid(mv.player.id, mv.player.name, mv.cost, expires, ask=it.price)
+    store.log_purchase(mv.player.id, "inversion" if mv.kind == "invest" else "puntos", mv.cost)
+    motivo = ("inversión (en subida)" if mv.kind == "invest" else
+              "portero suplente" if mv.player.position_id == 1 and not mv.gain else f"+{mv.gain} pts/jornada")
+    return (f"🛒 <b>Puja en el último minuto</b>: {name} ({mv.player.position}) {service.m(mv.cost)} "
+            f"(salida {service.m(it.price)}) · {motivo} · los rivales no la han visto venir")
+
+
+def _timed_actions(store: Store, api: FantasyAPI, world, reserved: list[ap.Move]) -> list[str]:
+    """Lo que hay que hacer al segundo dentro de este job, en orden de hora: pujas a falta de
+    `LATE_BID_LEAD_S` del cierre y cláusulas nada más liberarse (`_snipe`)."""
+    now = datetime.now(timezone.utc)
+    jobs = []
+    for mv in reserved:
+        if mv.kind in ("bid", "invest") and mv.item and mv.item.expires:
+            jobs.append((mv.item.expires - timedelta(seconds=ap.LATE_BID_LEAD_S), "bid", mv))
+        elif mv.kind in ("clause", "invest_clause") and mv.unlock_at and 0 < (mv.unlock_at - now).total_seconds() <= SNIPE_WINDOW_S:
+            jobs.append((mv.unlock_at, "clause", mv))
+    events: list[str] = []
+    for when, kind, mv in sorted(jobs, key=lambda j: j[0]):
+        if kind == "clause":
+            events += _snipe(store, api, world, [mv])
+            continue
+        wait = (when - datetime.now(timezone.utc)).total_seconds()
+        if wait > SNIPE_WINDOW_S:
+            continue
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            msg = _late_bid(store, api, world, mv)
+        except Exception as exc:
+            msg = f"❌ Puja del último minuto fallida por <b>{notify.esc(mv.player.name)}</b>: {notify.esc(str(exc))}"
+        if msg:
+            events.append(msg)
+    return events
 
 
 def _snipe(store: Store, api: FantasyAPI, world, reserved: list[ap.Move]) -> list[str]:
@@ -1232,7 +1282,7 @@ def _watch_once(store: Store, s) -> str:
     shielded, shielded_player_id = st("blindaje", _auto_shield, store, s, api, world, default=(None, ""))
     if shielded:
         events.append(shielded)
-    raised_clause = st("subir cláusula", _auto_increase_clause, store, s, api, world, skip_player_id=shielded_player_id)
+    raised_clause = st("subir cláusula", _clause_raise_probe, store, s, api, world, skip_player_id=shielded_player_id)
     if raised_clause:
         events.append(raised_clause)
     lineup_msg = st("alineación", _apply_lineup, store, api, world)
@@ -1270,7 +1320,7 @@ def _watch_once(store: Store, s) -> str:
         digest.mark_sent(store)
 
     sniped = st("bloqueo (ejecución)", _siege_go, store, s, api, world, default=[]) + \
-        st("cláusulas al segundo", _snipe, store, api, world, reserved, default=[])
+        st("al segundo", _timed_actions, store, api, world, reserved, default=[])
     if sniped:
         st("enviar", notify.send_all, s, "🤖 <b>PILOTO AUTOMÁTICO</b>\n\n" + "\n\n".join(sniped), html=True)
     return f"[{now:%H:%M}] ok · {len(events) + len(sniped)} acciones/avisos"

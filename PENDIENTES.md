@@ -3,6 +3,13 @@
 Actualizado el **8/10/2026** (revisión completa en `ESTADO.md`, "Revisión del 8/10"). Complementa a `ESTADO.md` (qué hace el bot y qué está verificado). Aquí
 está lo que **todavía puede mejorar**, con la evidencia que hay y cómo comprobarlo la próxima vez.
 
+## Próximas revisiones (fechas)
+- **Lunes 13/10** (tras la J8 y el fin del experimento de precio): puntos reales de la J8 vs esperados; ¿se pujó en
+  el último minuto y se ganó con menos prima? (`market_bids`); resultado de `clause_raise_test`; quitar `ASK_EXPERIMENT`.
+- **Lunes 20/10** (tras la J9; primeras compras del bot con 14 días: Yoel Lago 17/10, Terrats y Fofana 19/10): decidir
+  % a inversión, saldo reservado para cláusulas de las 20:53, política de "cláusula tentadora" y si vender para
+  financiar jugadores del líder (punto 15).
+
 ## Cómo retomar (primeros 10 minutos de la próxima sesión)
 
 ```bash
@@ -86,6 +93,17 @@ para las cláusulas que se abren a las 20:53 (los rivales tienen 50–80M; nosot
 ### 14. Verificar pujas al final y portero suplente
 ¿Ganamos más pujas y con menos prima desde el 8/10 (`market_bids`)? ¿Se ha fichado un segundo portero? Si un cron se cae
 entre las 19:20 y las 20:50 se pierden las pujas de ese día: mirar en `errors` y en las ejecuciones de esa franja.
+
+### 15. Financiar jugadores del líder vendiendo los nuestros
+El plan de compras solo usa el saldo; no contempla vender A para clausular B. El líder abre cláusulas pronto: Giuliano,
+Hancko y Giménez (12/10), Barrenetxea (15/10), Kang-In Lee y Diomande (16/10). Con 1,6M no llegamos a ninguno. Idea: que
+la rotación de capital (hoy solo suplentes que no suben, para inversiones) cubra también estos objetivos del líder con
+cláusula ≤1,05×, y ejecutarlos justo antes de la congelación de jornada (no puede contraatacar por cláusula).
+
+### 16. Cláusula "tentadora"
+Idea del usuario: subir nuestras cláusulas hasta donde un rival aún se arriesgue (≈1,10× para jugadores en subida, lo
+máximo que han pagado), para que si la paga nos deje +5% neto (pagamos la mitad de la subida). Solo compensa si la
+probabilidad de que la paguen es alta. Decidir con `clause_raise_test` y con qué jugadores nuestros intentan clausular.
 
 ### 13. Nuestros jugadores salen por cláusula a su valor: no es malo
 El líder gana mucho siendo "clausulado" al final de la protección (cobra el valor entero, sin el ~3% de la venta). Encaja con

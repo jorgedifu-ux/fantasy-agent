@@ -154,12 +154,31 @@ class OfferDecisionTests(unittest.TestCase):
         self.assertEqual(ap.offer_decision(self.offer(10_100_000), p, loss=1.0, exposed_in=70)[0], "hold")
         self.assertEqual(ap.offer_decision(self.offer(10_400_000), p, loss=1.0, exposed_in=70)[0], "accept")
 
-    def test_bids_only_in_the_last_window(self):
+    def test_bids_wait_for_the_last_minute(self):
         now = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
-        it = lambda h: SimpleNamespace(expires=now + timedelta(hours=h))  # noqa: E731
-        self.assertFalse(ap.bid_now(it(8), now))
-        self.assertTrue(ap.bid_now(it(1), now))
-        self.assertTrue(ap.bid_now(SimpleNamespace(expires=None), now))
+        it = lambda m: SimpleNamespace(expires=now + timedelta(minutes=m))  # noqa: E731
+        self.assertEqual(ap.bid_timing(it(8 * 60), now), "wait")
+        self.assertEqual(ap.bid_timing(it(40), now), "wait")
+        self.assertEqual(ap.bid_timing(it(20), now), "late")   # este job espera y puja a falta de 2,5 min
+        self.assertEqual(ap.bid_timing(it(2), now), "now")
+        self.assertEqual(ap.bid_timing(SimpleNamespace(expires=None), now), "now")
+
+    def test_rising_player_is_kept_even_near_its_clause(self):
+        p = player("p", 3)
+        d, why = ap.offer_decision(self.offer(10_400_000), p, loss=1.0, exposed_in=30, trend_d3=4, trend_d7=12, clause=10_000_000)
+        self.assertEqual(d, "hold")
+        self.assertIn("subiendo", why)
+
+    def test_leader_players_at_fair_clause_get_priority(self):
+        now = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
+        mk = lambda owner, clause: SquadSlot(player=player("x" + owner + str(clause), 3), owner_team_id=owner, owner_name=owner,  # noqa: E731
+                                              clause=clause, clause_locked_until=None, player_team_id="pt")
+        moves = ap.clause_moves([mk("L", 10_000_000), mk("L", 11_500_000), mk("R", 10_000_000)], now,
+                                avoid_team_ids=frozenset({"L"}), leader_team_id="L")
+        flags = [(m.slot.owner_team_id, m.slot.clause, m.bonus, m.penalized) for m in moves]
+        self.assertIn(("L", 10_000_000, True, False), flags)    # a su valor: no le regalo nada y pierde puntos
+        self.assertIn(("L", 11_500_000, False, True), flags)    # con prima: le regalaría dinero
+        self.assertIn(("R", 10_000_000, False, False), flags)
 
     def test_backup_keeper_only_with_a_single_keeper(self):
         def gk(pid, price, avg, pts=10):
