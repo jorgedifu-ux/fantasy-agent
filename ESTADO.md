@@ -188,8 +188,14 @@ cierre de las 20:53, cláusulas que se liberan) lo fiable es dispararlo desde fu
   cron-job.org a las 20:27 (hora de Madrid) para asegurar que hay una pasada en esa ventana.
 - **Subida aguantada hasta el final**: un jugador que sigue subiendo (≥1%/3d y ≥5%/7d) no se vende por menos de
   1,25× aunque su cláusula esté a punto de abrirse: si un rival lo clausula, cobramos la cláusula, que sube con él.
-- **Jugadores del líder a precio justo**: si su cláusula es ≤1,05× su valor, no le regalamos dinero y pierde los
-  puntos y la subida de ese jugador → prioridad ×1,3 (antes ×0,6). Con prima, sigue penalizado.
+- **Golpe al líder (general, cada jornada)**: cada fichaje suma, además de lo que mejora nuestro once, los puntos que
+  pierde el líder si se lo quitamos (`autopilot.leader_loss`: cuánto empeora su mejor once; si se queda sin once
+  completo, +15). Solo con cláusula ≤1,05× su valor (no le regalamos dinero). Si la congelación de cláusulas llega
+  en <24 h, el pago se hace **3 min antes de la congelación** (no puede reponerlo por cláusula; solo le queda el
+  mercado de ese día). Si no hay saldo y el golpe le quita ≥2 pts, se activa la venta de suplentes que no suben.
+  Ranking del 8/10 (pts/jornada que le quitaría): Kang-In Lee 5,4 (85M), Herrero 4,2 (21M, su portero), Hancko 4,2
+  (47M), Giuliano 4,1 (57M), Navarro 3,9, Ilaix 2,9, H. González 2,5 (¡4,9M!), Barrenetxea 2,2, Diomande 2,2.
+  La operación "sin portero" (dejarle a 0) no es viable mientras tenga 4 porteros.
 - **Subir cláusulas**: se quita la "protección a 1,5×" (costaba el 25% del valor). Una prueba única y barata
   (`_clause_raise_probe`, ~55K con Mayol) mide qué sube y qué cobra la API; queda en `clause_raise_test`.
   Datos para la política: los rivales han pagado como mucho ~1,10–1,15× el valor por una cláusula.

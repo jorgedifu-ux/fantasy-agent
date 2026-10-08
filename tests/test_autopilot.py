@@ -190,6 +190,30 @@ class OfferDecisionTests(unittest.TestCase):
         self.assertEqual(ap.backup_keeper([player("mine", 1)], market, 700_000).player.id, "b")
         self.assertIsNone(ap.backup_keeper([player("mine", 1)], market, 400_000))
 
+    def test_leader_loss_counts_his_eleven(self):
+        squad = eleven(4.0)
+        star = player("star", 3, avg=10.0)
+        self.assertGreater(ap.leader_loss(squad + [star], "star"), 5)           # su mejor once empeora
+        self.assertGreater(ap.leader_loss(squad, squad[0].id), ap.COMPLETE_XI_BONUS - 1)  # sin portero: sin once
+
+    def test_strike_on_the_leader_waits_for_the_freeze(self):
+        now = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
+        freeze = (now + timedelta(hours=9), now + timedelta(hours=33))
+        sl = SquadSlot(player=player("s", 3), owner_team_id="L", owner_name="L", clause=10_000_000,
+                       clause_locked_until=None, player_team_id="pt")
+        mv = ap.clause_moves([sl], now, freeze=freeze, avoid_team_ids=frozenset({"L"}), leader_team_id="L")[0]
+        self.assertEqual(mv.unlock_at, freeze[0] - ap.STRIKE_MARGIN)
+        far = (now + timedelta(hours=40), now + timedelta(hours=64))
+        self.assertIsNone(ap.clause_moves([sl], now, freeze=far, leader_team_id="L")[0].unlock_at)  # lejos: ya
+
+    def test_plan_counts_what_the_leader_loses(self):
+        mine = eleven(6.0)
+        cand = player("c", 3, avg=5.0, value=30_000_000)   # no mejora mi once...
+        plain = ap.Move("clause", cand, 30_000_000)
+        hit = ap.Move("clause", cand, 30_000_000, bonus=True, rival_loss=6.0)  # ...pero al líder le quita 6 pts
+        self.assertEqual(ap.plan_acquisitions(mine, [plain], 50_000_000), [])  # 30M por un suplente: no compensa
+        self.assertEqual(len(ap.plan_acquisitions(mine, [hit], 50_000_000)), 1)
+
     def test_at_risk_threshold_decreases_as_protection_ends(self):
         self.assertGreater(ap.at_risk_min(72, key=False), ap.at_risk_min(48, key=False))
         self.assertGreater(ap.at_risk_min(48, key=False), ap.at_risk_min(10, key=False))

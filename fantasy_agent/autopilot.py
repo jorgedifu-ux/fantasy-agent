@@ -12,7 +12,7 @@ Sustituye a los "Confirmar" y a los topes de nº de operaciones por reglas econ�
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from . import lineup
 from .models import MarketItem, Offer, Player, SquadSlot
@@ -28,9 +28,13 @@ BENCH_WEIGHT = 0.15          # los suplentes cuentan algo (lesiones, rotaciones)
 BENCH_SLOTS = 4
 PENALTY_FACTOR = 0.6         # clausular por venganza o pagando prima al líder: se puede, con menos prioridad
 # Quitarle un jugador al líder (8/10/2026): si su cláusula ≈ su valor no le regalamos dinero (cobra lo que
-# vale) y pierde los puntos de ese jugador y su subida futura: doble efecto en la clasificación.
-LEADER_BONUS = 1.3
+# vale) y pierde los puntos de ese jugador: doble efecto en la clasificación. Lo que pierde se mide
+# (`leader_loss`: cuánto empeora su mejor once, y mucho más si se queda sin once completo) y se suma al
+# beneficio del fichaje para UNA jornada; por eso se ejecuta justo antes de la congelación de cláusulas
+# (`STRIKE_MARGIN`): ya no puede reponerlo por cláusula y solo le queda el mercado de ese día.
 LEADER_FAIR_RATIO = 1.05
+STRIKE_MARGIN = timedelta(minutes=3)
+STRIKE_HORIZON_H = 24       # si la congelación llega en <24 h, se espera a ella en vez de pagar ya
 MAX_OVERBID = 0.12           # nunca pujar más de +12% sobre el precio de salida (4/10/2026: con +20%
 # se pagó Soria un 18% sobre su valor y Gueye un 15%: pérdida inmediata de ~15M)
 
@@ -132,7 +136,8 @@ class Move:
     item: MarketItem | None = None  # puja: el anuncio de LaLiga
     unlock_at: datetime | None = None  # cláusula que aún no se ha liberado: solo reserva saldo
     penalized: bool = False
-    bonus: bool = False             # jugador del líder a precio justo (ver LEADER_BONUS)
+    bonus: bool = False             # jugador del líder a precio justo (ver LEADER_FAIR_RATIO)
+    rival_loss: float = 0.0         # pts/jornada que pierde el líder si se lo quitamos (ver leader_loss)
     score: float = 0.0              # solo "invest": fuerza del momentum (d3 + d7)
     drift: float = 0.0              # revalorización esperada a ~7 días (0,17 = +17%), ver expected_drift
 
@@ -168,6 +173,10 @@ def clause_moves(
             continue
         fair_leader = bool(leader_team_id) and sl.owner_team_id == leader_team_id \
             and sl.clause <= p.market_value * LEADER_FAIR_RATIO
+        if fair_leader and freeze and not frozen_now:
+            strike = freeze[0] - STRIKE_MARGIN
+            if now < strike and (strike - now).total_seconds() <= STRIKE_HORIZON_H * 3600 and (unlock is None or unlock <= strike):
+                unlock = strike  # golpe justo antes de que se congelen las cláusulas
         out.append(Move("clause", p, sl.clause, slot=sl, unlock_at=unlock, bonus=fair_leader,
                         penalized=sl.owner_team_id in avoid_team_ids and not fair_leader))
     return out
@@ -311,7 +320,7 @@ def plan_acquisitions(
         best: tuple[float, Move, float, int] | None = None
         for m in pool:
             gain = squad_value(roster + [m.player], form) - base
-            if gain < MIN_GAIN:
+            if gain + m.rival_loss < MIN_GAIN:
                 continue
             cost = bid_amount(m.item, gain, rivals) if m.kind == "bid" and m.item else m.cost
             if cost > left:
@@ -321,10 +330,10 @@ def plan_acquisitions(
             # Así no se paga un 19% de más (Johnny) por +0,6 pts/jornada.
             cost_m, value = cost / 1_000_000, m.player.market_value
             premium = max(0.0, cost / value - 1) if value else 0.0
-            net_m = gain * GAIN_HORIZON * POINT_VALUE_M + m.drift * cost_m - (premium + RESALE_SPREAD) * cost_m
+            net_m = (gain * GAIN_HORIZON + m.rival_loss) * POINT_VALUE_M + m.drift * cost_m - (premium + RESALE_SPREAD) * cost_m
             if net_m <= 0:
                 continue
-            eff = net_m / (cost_m + slot_cost + 0.25) * (PENALTY_FACTOR if m.penalized else 1.0) * (LEADER_BONUS if m.bonus else 1.0)
+            eff = net_m / (cost_m + slot_cost + 0.25) * (PENALTY_FACTOR if m.penalized else 1.0)
             if best is None or eff > best[0]:
                 best = (eff, m, gain, cost)
         if best is None:
@@ -336,6 +345,13 @@ def plan_acquisitions(
         left -= pick.cost
         pool = [m for m in pool if m.player.id != pick.player.id]
     return chosen
+
+
+def leader_loss(leader: list[Player], player_id: str, form: dict[str, float] | None = None) -> float:
+    """Puntos por jornada que pierde el líder sin ese jugador (incluye el castigo de quedarse sin
+    once completo, `COMPLETE_XI_BONUS`): la otra mitad del "doble efecto" de quitárselo."""
+    rest = [p for p in leader if p.id != player_id]
+    return round(max(0.0, squad_value(leader, form) - squad_value(rest, form)), 2)
 
 
 def sale_loss(mine: list[Player], player_id: str, form: dict[str, float] | None = None) -> float:

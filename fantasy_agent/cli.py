@@ -397,12 +397,15 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
             except Exception:
                 pass
     short = {pos for pos, n in analysis.position_shortage(world.my_slots).items() if n}
+    leader_players = [sl.player for sl in world.rival_slots if sl.owner_team_id == world.leader_team_id]
     kept = []
     for m in moves:
         tr = trends.get(m.player.id, analysis.Trend(0, 0, 0))
         if m.player.position_id not in short and ap.is_falling(tr.d3, tr.d7):
             continue
         m.drift = ap.expected_drift(tr.d3, tr.d7, world.recent_form.get(m.player.id))
+        if m.bonus:
+            m.rival_loss = ap.leader_loss(leader_players, m.player.id, world.recent_form)
         kept.append(m)
     moves = kept
     plan = ap.plan_acquisitions(mine, moves, budget, form=world.recent_form, max_squad=s.max_squad,
@@ -426,7 +429,9 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
         cost = min(ap.bid_amount(gk, 0.0), budget - sum(m.cost for m in plan))
         plan.append(ap.Move("bid", gk.player, cost, item=gk, score=0.0))
     funded = {m.player.id for m in plan}
-    unfunded = [m for m in candidates if m.player.id not in funded]
+    # Sin dinero para un buen golpe al líder (le quita ≥2 pts): también se libera capital vendiendo suplentes.
+    unfunded = [m for m in candidates if m.player.id not in funded] + \
+        [m for m in moves if m.bonus and m.rival_loss >= 2 and m.player.id not in funded]
     store.set("liquidity", json.dumps({"at": time.time(), "n": len(unfunded),
                                        "best": unfunded[0].player.name if unfunded else ""}))
     for mv in plan:
@@ -452,6 +457,9 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
                 when = mv.unlock_at.astimezone().strftime("%d/%m %H:%M")
                 motivo = (f"inversión: ha subido {trends[mv.player.id].d3:+.1f}% en 3 días y {trends[mv.player.id].d7:+.1f}% en 7"
                           if mv.kind == "invest_clause" else f"+{mv.gain} pts/jornada")
+                if mv.bonus:
+                    motivo += (f" · al líder le quita {mv.rival_loss:.1f} pts; se paga justo antes de que se congelen "
+                               f"las cláusulas para que no pueda reponerlo")
                 events.append(
                     f"⏳ Reservo {service.m(mv.cost)} para clausular a <b>{name}</b> ({pos}, de "
                     f"{notify.esc(mv.slot.owner_name)}) cuando se libere el {when} · {motivo}"

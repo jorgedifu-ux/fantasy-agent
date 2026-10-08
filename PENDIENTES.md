@@ -4,6 +4,7 @@ Actualizado el **8/10/2026** (revisión completa en `ESTADO.md`, "Revisión del 
 está lo que **todavía puede mejorar**, con la evidencia que hay y cómo comprobarlo la próxima vez.
 
 ## Próximas revisiones (fechas)
+- **Revisión principal acordada con el usuario: lunes 20/10.** Si antes llega un 🔴 o muchos ❌ por Telegram, antes.
 - **Lunes 13/10** (tras la J8 y el fin del experimento de precio): puntos reales de la J8 vs esperados; ¿se pujó en
   el último minuto y se ganó con menos prima? (`market_bids`); resultado de `clause_raise_test`; quitar `ASK_EXPERIMENT`.
 - **Lunes 20/10** (tras la J9; primeras compras del bot con 14 días: Yoel Lago 17/10, Terrats y Fofana 19/10): decidir
@@ -99,6 +100,11 @@ El plan de compras solo usa el saldo; no contempla vender A para clausular B. El
 Hancko y Giménez (12/10), Barrenetxea (15/10), Kang-In Lee y Diomande (16/10). Con 1,6M no llegamos a ninguno. Idea: que
 la rotación de capital (hoy solo suplentes que no suben, para inversiones) cubra también estos objetivos del líder con
 cláusula ≤1,05×, y ejecutarlos justo antes de la congelación de jornada (no puede contraatacar por cláusula).
+
+### 17. Golpe al líder antes de cada congelación — *verificar el 20/10*
+Programado (ver ESTADO "Golpe al líder"). Verificar: ¿se ejecutó alguno?, ¿cuántos puntos le quitó de verdad (su once de esa
+jornada vs el esperado)?, ¿repuso por mercado? Límite real: el saldo. Si nunca hay dinero, decidir si financiarlos vendiendo
+titulares que ya no suben (hoy solo suplentes). Idea pendiente: priorizar los baratos con mucho efecto (H. González 2,5 pts por 4,9M).
 
 ### 16. Cláusula "tentadora"
 Idea del usuario: subir nuestras cláusulas hasta donde un rival aún se arriesgue (≈1,10× para jugadores en subida, lo
