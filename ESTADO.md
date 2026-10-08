@@ -173,6 +173,27 @@ cierre de las 20:53, cláusulas que se liberan) lo fiable es dispararlo desde fu
   recibieron ofertas más altas → el precio pedido **no** ancla la oferta (descartado). Valor-al-anunciar: sin
   datos suficientes aún.
 
+## Regla de la cláusula, pujas al final y portero suplente (8/10/2026)
+
+- **Cláusula = lo máximo entre lo que pagó su dueño y su valor actual** (mínimo 1M). Comprobado en 49 de 55
+  jugadores de la liga; los 6 restantes son cláusulas de menos de 1M o subidas a mano (Ryan, Ángel Pérez, I. Romero).
+  Consecuencia: si un rival te clausula, cobras **al menos lo que pagaste** y al menos su valor. Por eso la venta
+  "antes de que se abra la cláusula" ya no acepta nada por debajo de la cláusula (`offer_decision(clause=…)`): vender
+  más barato es perder dinero frente a que te lo quiten (caso David Soria: pagado 46,6M, vale 38,3M, cláusula 46,6M =
+  1,22×; nadie la pagará y el bot lo mantiene; no se vende por debajo de lo pagado salvo lesión o caída fuerte, y al
+  ser el titular, solo con una oferta ≥1,25×).
+- **Pujas al final**: el número de pujas de cada anuncio lo ven todos. Las pujas de mercado (fichajes e inversión)
+  se mandan solo en la última hora y media antes del cierre (`autopilot.BID_WINDOW_H`), como hace fantasybot.
+- **Portero suplente**: con un solo portero disponible, el bot puja por el mejor portero de LaLiga ≤1,5M que tenga
+  puntos esta temporada (`autopilot.backup_keeper`). El líder lleva 4 porteros.
+- Otros bots revisados (8/10): Ramos-SportsData/fantasybot (pujas al final, Python stdlib, LLM opcional),
+  menaweb/laliga-fantasy-bot (GitHub Actions; fases de escritura y "kill switch"), PlatanosVerdes/laliga-fantasy
+  (Go; cruza con futbolfantasy.com: % de titularidad, puntos de la temporada pasada al inicio, rivales ±12%,
+  casa ±4%), Kickbase-Trading-Advisor (alemán: predice la subida de mañana con puntos, minutos, valor y subidas
+  recientes — lo mismo que nuestros niveles de subida + forma).
+- **Revalorización de la plantilla actual** (8/10): nosotros +11,4% en 7 días (+26,5M), Josinho +9,7%, Aleix +7,6%,
+  Pep +3,6%. La cartera ya crece al mejor ritmo de la liga; la diferencia de dinero viene de antes del piloto.
+
 ## Lo que enseñan los rivales (8/10/2026, `learn-rivals`)
 
 Liga de 4, empezó en la J3. Clasificación tras la J7: Josinho 279 pts (43, 99, 48, 42, 47), Aleix 160, Pep 122,

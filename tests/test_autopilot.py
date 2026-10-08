@@ -4,6 +4,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from fantasy_agent import autopilot as ap
+from types import SimpleNamespace
+
 from fantasy_agent.models import MarketItem, Offer, Player, SquadSlot
 
 NOW = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)
@@ -135,13 +137,39 @@ class OfferDecisionTests(unittest.TestCase):
         self.assertEqual(d, "hold")
 
     def test_last_day_before_protection_ends_sells_at_value(self):
-        d, _ = ap.offer_decision(self.offer(9_900_000), player("p", 3), loss=1.0, exposed_in=10)
-        self.assertEqual(d, "accept")
+        self.assertEqual(ap.offer_decision(self.offer(9_900_000), player("p", 3), loss=1.0, exposed_in=10)[0], "hold")
+        self.assertEqual(ap.offer_decision(self.offer(10_050_000), player("p", 3), loss=1.0, exposed_in=10)[0], "accept")
+
+    def test_never_sells_below_what_the_clause_would_pay(self):
+        # Caso Soria: pagado 46,6M, vale 38,3M, cláusula 46,6M. Si se lo llevan, cobro 46,6M.
+        p = player("p", 1)
+        p.market_value = 38_300_000
+        d, why = ap.offer_decision(self.offer(41_000_000), p, loss=0, exposed_in=10, clause=46_650_000, cut_loss=True)
+        self.assertEqual(d, "hold")
+        self.assertIn("clausulan", why)
+        self.assertEqual(ap.offer_decision(self.offer(47_000_000), p, loss=0, exposed_in=10, clause=46_650_000)[0], "accept")
 
     def test_three_days_before_protection_ends_needs_a_good_offer(self):
         p = player("p", 3)
         self.assertEqual(ap.offer_decision(self.offer(10_100_000), p, loss=1.0, exposed_in=70)[0], "hold")
         self.assertEqual(ap.offer_decision(self.offer(10_400_000), p, loss=1.0, exposed_in=70)[0], "accept")
+
+    def test_bids_only_in_the_last_window(self):
+        now = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
+        it = lambda h: SimpleNamespace(expires=now + timedelta(hours=h))  # noqa: E731
+        self.assertFalse(ap.bid_now(it(8), now))
+        self.assertTrue(ap.bid_now(it(1), now))
+        self.assertTrue(ap.bid_now(SimpleNamespace(expires=None), now))
+
+    def test_backup_keeper_only_with_a_single_keeper(self):
+        def gk(pid, price, avg, pts=10):
+            pl = player(pid, 1); pl.avg_points, pl.points = avg, pts
+            return SimpleNamespace(player=pl, price=price, seller="LaLiga", market_id="m" + pid, my_bid=0)
+        market = [gk("a", 900_000, 3.0), gk("b", 600_000, 4.0), gk("c", 3_000_000, 6.0), gk("d", 500_000, 5.0, pts=0)]
+        self.assertEqual(ap.backup_keeper([player("mine", 1)], market, 10_000_000).player.id, "b")
+        self.assertIsNone(ap.backup_keeper([player("mine", 1), player("mine2", 1)], market, 10_000_000))
+        self.assertEqual(ap.backup_keeper([player("mine", 1)], market, 700_000).player.id, "b")
+        self.assertIsNone(ap.backup_keeper([player("mine", 1)], market, 400_000))
 
     def test_at_risk_threshold_decreases_as_protection_ends(self):
         self.assertGreater(ap.at_risk_min(72, key=False), ap.at_risk_min(48, key=False))

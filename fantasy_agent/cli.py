@@ -421,12 +421,18 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
         plan += ap.plan_investments(candidates, invest_budget, slots_left)
     # Rotación de capital: si hay inversiones buenas que no se han podido pagar (o no caben en la
     # plantilla), se anota para que `_resolve_offers` venda antes algún suplente que no suba.
+    gk = ap.backup_keeper(mine + [m.player for m in plan], world.market, budget - sum(m.cost for m in plan))
+    if gk is not None and s.max_squad - len(mine) - len(plan) > 0:
+        cost = min(ap.bid_amount(gk, 0.0), budget - sum(m.cost for m in plan))
+        plan.append(ap.Move("bid", gk.player, cost, item=gk, score=0.0))
     funded = {m.player.id for m in plan}
     unfunded = [m for m in candidates if m.player.id not in funded]
     store.set("liquidity", json.dumps({"at": time.time(), "n": len(unfunded),
                                        "best": unfunded[0].player.name if unfunded else ""}))
     for mv in plan:
         name, pos = notify.esc(mv.player.name), mv.player.position
+        if mv.kind in ("bid", "invest") and not ap.bid_now(mv.item, now):
+            continue  # se puja en la última hora y media (ver autopilot.BID_WINDOW_H); su dinero queda sin gastar hoy
         if mv.kind == "invest":
             try:
                 api.bid(world.league_id, mv.item.market_id, mv.cost)
@@ -479,9 +485,10 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
                 store.add_market_bid(mv.player.id, mv.player.name, mv.cost, expires, ask=mv.item.price)
                 store.log_purchase(mv.player.id, "puntos", mv.cost)
                 cierre = mv.item.expires.astimezone().strftime("%H:%M") if mv.item.expires else "?"
+                motivo = "portero suplente (solo tienes uno)" if mv.player.position_id == 1 and not mv.gain else f"+{mv.gain} pts/jornada"
                 events.append(
                     f"🛒 <b>Puja</b>: {name} ({pos}) {service.m(mv.cost)} (salida {service.m(mv.item.price)}) "
-                    f"· +{mv.gain} pts/jornada · se resuelve a las {cierre}"
+                    f"· {motivo} · se resuelve a las {cierre}"
                 )
         except Exception as exc:
             events.append(f"❌ {'Clausulazo' if mv.kind == 'clause' else 'Puja'} fallido por <b>{name}</b>: {notify.esc(str(exc))}")
@@ -563,7 +570,7 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
                 trend_d7=trend.d7, trend_d3=trend.d3, breaks_xi=ap.breaks_eleven(mine, pid), hours_to_deadline=hours,
                 exposed_in=ap.hours_until_exposed(sl, now), squad_full=len(world.my_slots) >= s.max_squad,
                 cost_basis=None if in_siege else paid.get(pid),
-                injured=sl.player.status.lower() in ap.INJURED,
+                injured=sl.player.status.lower() in ap.INJURED, clause=sl.clause,
             )
             if decision == "accept" and not done:
                 try:

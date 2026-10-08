@@ -47,7 +47,10 @@ RIVAL_OFFER_MIN = 1.30       # ofertas de rivales: casi nunca convienen
 AT_RISK_HOURS = 72           # se empieza a intentar vender 3 días antes de que acabe su
 # protección: la liga genera una oferta al día (~20:53), así hay 3 oportunidades
 AT_RISK_OFFER_START = 1.03   # a 3 días: solo una buena oferta...
-AT_RISK_OFFER_LAST = 0.98    # ...el último día: ~su valor, antes que perderlo por cláusula
+AT_RISK_OFFER_LAST = 1.00    # ...el último día: su valor. Nunca menos que la cláusula: si un rival la paga,
+# cobras la cláusula entera, que es lo máximo entre lo que pagaste y su valor (comprobado el 8/10/2026 en 49
+# de 55 jugadores de la liga; el resto, cláusulas subidas a mano). Vender por debajo de eso es perder dinero
+# frente a que te lo quiten (caso David Soria, decisión del usuario).
 AT_RISK_KEY_EXTRA = 0.07     # un jugador clave exige un poco más en todo el tramo
 LISTING_MARKUP = 1.10        # precio al que se ponen a la venta los tuyos
 
@@ -174,6 +177,32 @@ def bid_moves(market: list[MarketItem], skip_player_ids: frozenset[str] = frozen
             continue
         out.append(Move("bid", p, it.price, item=it))
     return out
+
+
+# Pujar al final (8/10/2026): el número de pujas de cada anuncio lo ven todos, así que pujar pronto
+# avisa a los rivales (Aitor Fdez: el líder pagó +70% sobre un jugador en el que ya habíamos pujado).
+# Como fantasybot (Ramos-SportsData), las pujas de mercado se mandan solo en la última hora y media
+# antes del cierre; con un disparo cada 15 min hay ~6 intentos.
+BID_WINDOW_H = 1.5
+
+
+def bid_now(item: MarketItem, now: datetime) -> bool:
+    """¿Toca ya mandar la puja de este anuncio? (sin fecha de cierre conocida: sí)."""
+    return item.expires is None or (item.expires - now).total_seconds() <= BID_WINDOW_H * 3600
+
+
+# Portero suplente: con uno solo, una lesión, una sanción o una cláusula dejan la portería vacía y la
+# jornada a 0 puntos en ese hueco (el líder lleva 4). Se busca uno barato que juegue en su equipo.
+BACKUP_GK_MAX = 1_500_000
+
+
+def backup_keeper(mine: list[Player], market: list[MarketItem], budget: int) -> MarketItem | None:
+    """Anuncio de LaLiga del mejor portero barato (≤1,5M, con puntos esta temporada) si solo tienes uno disponible."""
+    if sum(1 for p in mine if p.position_id == 1 and p.status.lower() not in INJURED) >= 2:
+        return None
+    options = [it for it in market if it.seller == "LaLiga" and it.market_id and not it.my_bid and it.player.position_id == 1
+               and it.player.status.lower() not in INJURED and it.player.points > 0 and 0 < it.price <= min(BACKUP_GK_MAX, budget)]
+    return max(options, key=lambda it: (it.player.avg_points, -it.price), default=None)
 
 
 @dataclass(frozen=True)
@@ -338,7 +367,7 @@ def offer_decision(
     offer: Offer, player: Player, *, loss: float, cut_loss: bool = False, trend_d7: float = 0.0, trend_d3: float = 0.0,
     breaks_xi: bool = False, hours_to_deadline: float | None = None, exposed_in: float | None = None,
     squad_full: bool = False, cost_basis: int | None = None, no_sell: bool = False, liquidity: bool = False,
-    injured: bool = False,
+    injured: bool = False, clause: int = 0,
 ) -> tuple[str, str]:
     """("accept" | "reject" | "hold", motivo). "hold" = no hacer nada y dejar que caduque.
     `no_sell`: jugador de una operación en curso (bloqueo al líder): no se vende todavía."""
@@ -355,9 +384,10 @@ def offer_decision(
     key = loss >= KEY_PLAYER_LOSS
     at_risk = exposed_in is not None and exposed_in <= AT_RISK_HOURS
     if at_risk:
-        need = at_risk_min(exposed_in, key)
+        need = max(at_risk_min(exposed_in, key), clause / value if clause and value else 0.0)
         cuando = "ya es clausulable" if exposed_in == 0 else f"su protección acaba en {exposed_in:.0f}h"
-        why = f"{cuando}: mejor venderlo que ver cómo se lo lleva un rival"
+        why = f"{cuando}: solo lo vendo si la oferta supera lo que cobraría si me lo clausulan ({clause / 1e6:.2f}M)" if clause \
+            else f"{cuando}: mejor venderlo que ver cómo se lo lleva un rival"
     elif injured:
         # Lesionado: no puntúa y su valor puede caer cuando se enfríe lo que hizo antes. Se cobra a
         # ~su valor (siempre sin bajar de lo pagado) en vez de esperar una subida que ya no usa.

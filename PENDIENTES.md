@@ -83,6 +83,10 @@ parón) y los fichajes por puntos solo cuentan la subida si el jugador ya está 
 para las cláusulas que se abren a las 20:53 (los rivales tienen 50–80M; nosotros 1,4M y no podemos aprovecharlas).
 **Medir antes**: el resultado real de las inversiones del bot (Yoel Lago, Terrats, Fofana, Zabiri, Deossa, Marc Roca) a 14 días.
 
+### 14. Verificar pujas al final y portero suplente
+¿Ganamos más pujas y con menos prima desde el 8/10 (`market_bids`)? ¿Se ha fichado un segundo portero? Si un cron se cae
+entre las 19:20 y las 20:50 se pierden las pujas de ese día: mirar en `errors` y en las ejecuciones de esa franja.
+
 ### 13. Nuestros jugadores salen por cláusula a su valor: no es malo
 El líder gana mucho siendo "clausulado" al final de la protección (cobra el valor entero, sin el ~3% de la venta). Encaja con
 tu regla ("mejor que nos hagan cláusula a perder dinero"). Pendiente de probar: subir nuestra cláusula (pagas la mitad de lo
