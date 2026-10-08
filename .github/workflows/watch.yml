@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-24.04  # fijo: 'ubuntu-latest' pasa a Ubuntu 26 el 19/10/2026
     permissions:
       contents: write  # solo para publicar el estado en la rama `data` (export.py); EXPORT_DATA=0 lo desactiva
-    timeout-minutes: 28  # deja margen para esperar al segundo exacto de un clausulazo programado (ver confirm.run_scheduled)
+    timeout-minutes: 40  # margen para esperar dentro del job: pujas a las ~20:50, cláusulas a las 20:53 y golpes antes de la congelación (cli._timed_actions)
     steps:
       - uses: actions/checkout@v4
 

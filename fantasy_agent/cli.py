@@ -278,7 +278,7 @@ def _clause_raise_probe(store: Store, s, api: FantasyAPI, world, skip_player_id:
             f"pidiendo +{service.m(increase)}; me han cobrado {service.m(paid)}. Con esto se decide cuánto subir las demás.")
 
 
-SNIPE_WINDOW_S = 25 * 60  # dentro del mismo job de GitHub (timeout 28 min)
+SNIPE_WINDOW_S = 25 * 60  # dentro del mismo job de GitHub (timeout 40 min)
 SIEGE_WINDOW_S = 20 * 60  # el bloqueo espera menos: tras la espera aún relee todo y ejecuta
 
 
