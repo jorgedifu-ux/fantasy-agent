@@ -196,6 +196,12 @@ cierre de las 20:53, cláusulas que se liberan) lo fiable es dispararlo desde fu
   Ranking del 8/10 (pts/jornada que le quitaría): Kang-In Lee 5,4 (85M), Herrero 4,2 (21M, su portero), Hancko 4,2
   (47M), Giuliano 4,1 (57M), Navarro 3,9, Ilaix 2,9, H. González 2,5 (¡4,9M!), Barrenetxea 2,2, Diomande 2,2.
   La operación "sin portero" (dejarle a 0) no es viable mientras tenga 4 porteros.
+- **Crédito solo en parones largos** (`LEVERAGE_PCT`, 10% del valor de la plantilla ≈ 26M; 0 lo apaga). El saldo solo
+  cuenta al empezar la jornada (negativo = 0 puntos; fuente: ayuda de Fantasy MARCA) y el juego deja deber hasta el 20%.
+  Con ≥7 días hasta la siguiente jornada, el dinero de inversión puede ir a crédito; desde 72 h antes, `_delever` acepta
+  ofertas de la liga (primero de suplentes; ≥0,98× a 72–48 h, ≥0,94× a 48–24 h, ≥0,85× a <24 h; nunca rompe el once)
+  hasta volver a positivo, con aviso 🔴 si no llega. Primera vez: parón del 8 al 22/11. Entre jornadas normales NO se usa:
+  3 días de subida no pagan la ida y vuelta (~5–6%) y un fallo cuesta una jornada entera.
 - **Subir cláusulas**: se quita la "protección a 1,5×" (costaba el 25% del valor). Una prueba única y barata
   (`_clause_raise_probe`, ~55K con Mayol) mide qué sube y qué cobra la API; queda en `clause_raise_test`.
   Datos para la política: los rivales han pagado como mucho ~1,10–1,15× el valor por una cláusula.

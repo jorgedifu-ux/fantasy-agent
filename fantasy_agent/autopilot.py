@@ -347,6 +347,37 @@ def plan_acquisitions(
     return chosen
 
 
+# Crédito para inversión (8/10/2026). El saldo solo cuenta al EMPEZAR la jornada (negativo = 0 puntos esa
+# jornada; durante la jornada da igual) y el juego deja deber hasta el 20% del valor de la plantilla. Entre
+# jornadas normales no compensa (3 días de subida no pagan la ida y vuelta y un fallo cuesta una jornada
+# entera), pero en un parón (≥7 días sin jornada) sí: la subida de 7-10 días (+17%/7d en la prueba
+# histórica) paga de sobra el ~5-6% de ida y vuelta. Se pide solo con ≥`LEVER_OPEN_H` hasta la jornada y
+# se devuelve vendiendo desde `DELEVER_H` antes, cada vez con menos exigencia (`delever_min`).
+LEVER_OPEN_H = 7 * 24
+DELEVER_H = 72
+
+
+def credit_room(squad_value: int, cash_after_bids: int, hours_to_start: float | None, pct: float) -> int:
+    """Crédito que aún se puede usar para inversión ahora mismo (0 si no es un parón largo)."""
+    if pct <= 0 or hours_to_start is None or hours_to_start < LEVER_OPEN_H:
+        return 0
+    return max(0, int(pct * squad_value - max(0, -cash_after_bids)))
+
+
+def delever_min(hours_to_start: float | None) -> float | None:
+    """Mínimo (× valor) que se acepta por una oferta cuando hay que volver a saldo positivo antes de la
+    jornada: nada que hacer lejos de ella; cuanto más cerca, menos exigente (0 puntos es mucho peor)."""
+    if hours_to_start is None:
+        return 0.94
+    if hours_to_start > DELEVER_H:
+        return None
+    if hours_to_start > 48:
+        return 0.98
+    if hours_to_start > 24:
+        return 0.94
+    return 0.85
+
+
 def leader_loss(leader: list[Player], player_id: str, form: dict[str, float] | None = None) -> float:
     """Puntos por jornada que pierde el líder sin ese jugador (incluye el castigo de quedarse sin
     once completo, `COMPLETE_XI_BONUS`): la otra mitad del "doble efecto" de quitárselo."""

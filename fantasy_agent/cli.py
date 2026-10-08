@@ -381,8 +381,11 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
     now = datetime.now(timezone.utc)
     committed, incoming = _committed_bids(store, world)
     budget = int((world.my_cash or 0) * (1 - s.budget_reserve_pct)) - committed - extra_reserved
-    if budget <= 0:
+    credit = ap.credit_room(sum(sl.player.market_value for sl in world.my_slots), (world.my_cash or 0) - committed - extra_reserved,
+                            _hours_to_deadline(world), s.leverage_pct)
+    if budget <= 0 and credit <= 0:
         return [], []
+    budget = max(0, budget)
     mine = [sl.player for sl in world.my_slots] + incoming
     avoid = frozenset(t for t in (world.leader_team_id, world.revenge_against_team_id) if t)
     moves = ap.clause_moves(world.rival_slots, now, freeze=world.clause_freeze, avoid_team_ids=avoid,
@@ -413,7 +416,7 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
     events: list[str] = []
     spent = sum(m.cost for m in plan)
     invest_budget = int((budget - spent) * ap.PARAMS["invest_mult"] * (
-        ap.INVEST_FRACTION_BREAK if world.outlook.in_break else ap.INVEST_FRACTION_NORMAL))
+        ap.INVEST_FRACTION_BREAK if world.outlook.in_break else ap.INVEST_FRACTION_NORMAL)) + credit
     slots_left = s.max_squad - len(mine) - len(plan)
     taken = frozenset(pl.id for pl in mine) | {m.player.id for m in plan}
     candidates = (ap.invest_moves(world.market, trends, skip_player_ids=taken, form=world.recent_form)
@@ -434,6 +437,10 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
         [m for m in moves if m.bonus and m.rival_loss >= 2 and m.player.id not in funded]
     store.set("liquidity", json.dumps({"at": time.time(), "n": len(unfunded),
                                        "best": unfunded[0].player.name if unfunded else ""}))
+    if credit > 0 and any(m.kind in ("invest", "invest_clause") for m in plan) and store.alert_is_new(
+            f"credit:{world.clause_freeze[1]:%Y%m%d}" if world.clause_freeze else "credit", ttl_hours=24 * 10):
+        events.append(f"💳 <b>Parón largo: invierto también a crédito</b> (hasta {service.m(credit)}). Se devuelve "
+                      f"vendiendo desde {ap.DELEVER_H} h antes de la jornada: con saldo negativo al empezar no se puntúa.")
     for mv in plan:
         name, pos = notify.esc(mv.player.name), mv.player.position
         if mv.kind in ("bid", "invest") and ap.bid_timing(mv.item, now) != "now":
@@ -584,6 +591,55 @@ def _snipe(store: Store, api: FantasyAPI, world, reserved: list[ap.Move]) -> lis
                 time.sleep(5)
         if last_exc:
             events.append(f"❌ No he podido clausular a <b>{name}</b> al liberarse: {notify.esc(str(last_exc))}")
+    return events
+
+
+def _delever(store: Store, s, api: FantasyAPI, world) -> list[str]:
+    """Volver a saldo positivo antes de que empiece la jornada (si no, esa jornada puntúa 0): acepta
+    ofertas de la liga, primero de quien menos aporta al once, con un mínimo cada vez menor según se
+    acerca el primer partido (`autopilot.delever_min`). Nunca deja el once incompleto."""
+    committed, _ = _committed_bids(store, world)
+    need = committed - (world.my_cash or 0)
+    hours = _hours_to_deadline(world)
+    floor = ap.delever_min(hours)
+    if need <= 0 or floor is None:
+        return []
+    need = int(need * 1.03) + 100_000  # margen: el valor puede moverse antes de la jornada
+    mine = [sl.player for sl in world.my_slots]
+    listed = {it.player.id: it for it in world.market if it.seller_team_id == world.my_team_id}
+    options = []
+    for sl in world.my_slots:
+        it = listed.get(sl.player.id)
+        if not it or it.offers_count <= 0 or not sl.player.market_value or sl.player.id in _siege_ids(store):
+            continue
+        try:
+            offers = models.parse_player_offers(api.player_team_offers(world.league_id, sl.player_team_id))
+        except Exception:
+            continue
+        for o in offers:
+            if o.is_system and o.money >= sl.player.market_value * floor:
+                options.append((ap.sale_loss(mine, sl.player.id, world.recent_form), -o.money / sl.player.market_value, sl, it, o))
+    events: list[str] = []
+    sold = set(json.loads(store.get("sold_ids") or "[]"))
+    for _, _, sl, it, o in sorted(options, key=lambda x: (x[0], x[1])):
+        if need <= 0:
+            break
+        if sl.player.id in sold or ap.breaks_eleven(mine, sl.player.id):
+            continue
+        try:
+            api.accept_offer(world.league_id, it.market_id, o.id, o.money)
+        except Exception as exc:
+            events.append(f"❌ No he podido aceptar la oferta por <b>{notify.esc(sl.player.name)}</b>: {notify.esc(str(exc))}")
+            continue
+        need -= o.money
+        sold.add(sl.player.id)
+        mine = [p for p in mine if p.id != sl.player.id]
+        events.append(f"💳 <b>Devuelvo crédito</b>: vendido {notify.esc(sl.player.name)} por {service.m(o.money)} "
+                      f"(x{o.money / sl.player.market_value:.2f} el valor) — a {hours:.0f} h de la jornada hay que estar en positivo")
+    store.set("sold_ids", json.dumps(sorted(sold)))
+    if need > 0 and hours is not None and hours <= 36 and store.alert_is_new(f"delever_short:{int(hours // 6)}", ttl_hours=6):
+        events.append(f"🔴 <b>Sigo en negativo</b> (faltan {service.m(need)}) a {hours:.0f} h de la jornada: si empieza así, "
+                      f"no puntuamos. Mañana a las 20:53 llegan ofertas nuevas y bajo el mínimo exigido.")
     return events
 
 
@@ -1262,6 +1318,10 @@ def _watch_once(store: Store, s) -> str:
     events += st("autoajuste", _autotune_tick, store, s, api, world, default=[])
     events += st("pujas resueltas", _check_bid_resolutions, store, world, default=[])
 
+    repaid = st("devolver crédito", _delever, store, s, api, world, default=[])
+    events += repaid
+    if any("Devuelvo" in e for e in repaid):
+        world = _world(api, s, trends=True)
     sold = st("ofertas", _resolve_offers, store, s, api, world, default=[])
     events += sold
     if sold:
