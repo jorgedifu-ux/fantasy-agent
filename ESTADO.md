@@ -195,7 +195,7 @@ cierre de las 20:53, cláusulas que se liberan) lo fiable es dispararlo desde fu
   mercado de ese día). Si no hay saldo y el golpe le quita ≥2 pts, se activa la venta de suplentes que no suben.
   Ranking del 8/10 (pts/jornada que le quitaría): Kang-In Lee 5,4 (85M), Herrero 4,2 (21M, su portero), Hancko 4,2
   (47M), Giuliano 4,1 (57M), Navarro 3,9, Ilaix 2,9, H. González 2,5 (¡4,9M!), Barrenetxea 2,2, Diomande 2,2.
-  La operación "sin portero" (dejarle a 0) no es viable mientras tenga 4 porteros.
+  La operación "sin portero" (dejarle a 0) no es viable de momento: tiene 3 porteros (solo Herrero es bueno) y Aitor Fdez está bloqueado hasta el 18/10 (corregido el 9/10; antes decía 4).
 - **Crédito solo en parones largos** (`LEVERAGE_PCT`, 10% del valor de la plantilla ≈ 26M; 0 lo apaga). El saldo solo
   cuenta al empezar la jornada (negativo = 0 puntos; fuente: ayuda de Fantasy MARCA) y el juego deja deber hasta el 20%.
   Con ≥7 días hasta la siguiente jornada, el dinero de inversión puede ir a crédito; desde 72 h antes, `_delever` acepta
