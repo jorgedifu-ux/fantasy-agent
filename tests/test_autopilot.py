@@ -180,16 +180,6 @@ class OfferDecisionTests(unittest.TestCase):
         self.assertIn(("L", 11_500_000, False, True), flags)    # con prima: le regalaría dinero
         self.assertIn(("R", 10_000_000, False, False), flags)
 
-    def test_backup_keeper_only_with_a_single_keeper(self):
-        def gk(pid, price, avg, pts=10):
-            pl = player(pid, 1); pl.avg_points, pl.points = avg, pts
-            return SimpleNamespace(player=pl, price=price, seller="LaLiga", market_id="m" + pid, my_bid=0)
-        market = [gk("a", 900_000, 3.0), gk("b", 600_000, 4.0), gk("c", 3_000_000, 6.0), gk("d", 500_000, 5.0, pts=0)]
-        self.assertEqual(ap.backup_keeper([player("mine", 1)], market, 10_000_000).player.id, "b")
-        self.assertIsNone(ap.backup_keeper([player("mine", 1), player("mine2", 1)], market, 10_000_000))
-        self.assertEqual(ap.backup_keeper([player("mine", 1)], market, 700_000).player.id, "b")
-        self.assertIsNone(ap.backup_keeper([player("mine", 1)], market, 400_000))
-
     def test_leader_loss_counts_his_eleven(self):
         squad = eleven(4.0)
         star = player("star", 3, avg=10.0)

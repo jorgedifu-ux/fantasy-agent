@@ -225,18 +225,77 @@ def bid_timing(item: MarketItem, now: datetime) -> str:
     return "now" if left <= BID_FALLBACK_S else "wait"
 
 
-# Portero suplente: con uno solo, una lesión, una sanción o una cláusula dejan la portería vacía y la
-# jornada a 0 puntos en ese hueco (el líder lleva 4). Se busca uno barato que juegue en su equipo.
-BACKUP_GK_MAX = 1_500_000
+# Portero de reserva PROTEGIDO (10/10/2026). Sin portero no hay once legal y la jornada puntúa 0; hay gente
+# que quita hasta tres porteros para dejar a un rival sin jugar (decisión del usuario: tener siempre uno de
+# reserva aunque sea barato y no juegue, y renovarlo antes de que se pueda clausular). Una compra bloquea la
+# cláusula del jugador 14 días, así que un portero comprado hace poco no se puede quitar: "protegido" = su
+# cláusula sigue bloqueada (o blindada) cuando se congelen las cláusulas de la próxima jornada. Hace falta
+# tener ≥2 porteros disponibles y ≥1 protegido; al acercarse el fin de su bloqueo se compra otro (rotación).
+MIN_KEEPERS = 2
+BACKUP_GK_MAX = 3_000_000        # coste máximo del portero de reserva (cláusula o puja), sea cual sea su ratio
 
 
-def backup_keeper(mine: list[Player], market: list[MarketItem], budget: int) -> MarketItem | None:
-    """Anuncio de LaLiga del mejor portero barato (≤1,5M, con puntos esta temporada) si solo tienes uno disponible."""
-    if sum(1 for p in mine if p.position_id == 1 and p.status.lower() not in INJURED) >= 2:
+def keeper_cover(slots: list[SquadSlot], incoming: list[Player], freeze_start: datetime) -> tuple[int, int]:
+    """(porteros disponibles, de ellos protegidos de un clausulazo hasta la congelación). Los que están
+    en una puja viva cuentan como disponibles y protegidos (si se ganan, se bloquean 14 días)."""
+    avail = prot = 0
+    for sl in slots:
+        if sl.player.position_id != 1 or not sl.player.available:
+            continue
+        avail += 1
+        until = max((d for d in (sl.clause_locked_until, sl.shielded_until) if d), default=None)
+        if until and until >= freeze_start:
+            prot += 1
+    for p in incoming:
+        if p.position_id == 1 and p.available:
+            avail += 1
+            prot += 1
+    return avail, prot
+
+
+def backup_keeper_move(
+    slots: list[SquadSlot], incoming: list[Player], market: list[MarketItem], rival_slots: list[SquadSlot],
+    now: datetime, freeze: tuple[datetime, datetime] | None, budget: int,
+) -> Move | None:
+    """Fichaje de un portero barato si falta reserva o ninguno está protegido. Primero cláusulas abiertas
+    (seguras e inmediatas; no se pueden pagar con las cláusulas congeladas) y luego el mercado de LaLiga;
+    dentro de cada grupo, el de más media y el más barato."""
+    freeze_start = freeze[0] if freeze else now + timedelta(days=7)
+    avail, prot = keeper_cover(slots, incoming, freeze_start)
+    if avail >= MIN_KEEPERS and prot >= 1:
         return None
-    options = [it for it in market if it.seller == "LaLiga" and it.market_id and not it.my_bid and it.player.position_id == 1
-               and it.player.status.lower() not in INJURED and it.player.points > 0 and 0 < it.price <= min(BACKUP_GK_MAX, budget)]
-    return max(options, key=lambda it: (it.player.avg_points, -it.price), default=None)
+    cap = min(BACKUP_GK_MAX, budget)
+    owned = {sl.player.id for sl in slots} | {p.id for p in incoming}
+    frozen_now = bool(freeze and freeze[0] <= now < freeze[1])
+    options: list[tuple[int, float, int, Move]] = []
+    if not frozen_now:
+        for sl in rival_slots:
+            p = sl.player
+            if p.position_id == 1 and p.available and p.id not in owned and sl.clause_open(now) and 0 < sl.clause <= cap:
+                options.append((1, p.avg_points, -sl.clause, Move("clause", p, sl.clause, slot=sl)))
+    for it in market:
+        p = it.player
+        if it.seller == "LaLiga" and it.market_id and not it.my_bid and p.position_id == 1 and p.available \
+                and p.id not in owned and 0 < it.price <= cap:
+            cost = min(bid_amount(it, 0.0), cap)
+            options.append((0, p.avg_points, -cost, Move("bid", p, cost, item=it)))
+    return max(options, key=lambda o: o[:3])[3] if options else None
+
+
+def add_reserve_keeper(plan: list[Move], keeper: Move | None, n_mine: int, max_squad: int) -> tuple[list[Move], int]:
+    """Pone el portero de reserva el PRIMERO del plan. Si no hay plaza, quita los últimos fichajes del plan (los
+    menos eficientes; se volverán a plantear cuando haya hueco). Devuelve (plan, plazas que faltan): con eso
+    `_resolve_offers` libera plazas vendiendo suplentes baratos (ver `offer_decision(free_slot=…)`)."""
+    plan = list(plan)
+    if keeper is None:
+        return plan, 0
+    missing = 0
+    while n_mine + len(plan) + 1 > max_squad and plan:
+        plan.pop()
+        missing += 1
+    if n_mine + len(plan) + 1 > max_squad:       # la plantilla ya está llena sin nada que quitar del plan
+        return plan, missing + 1
+    return [keeper] + plan, missing
 
 
 @dataclass(frozen=True)
@@ -439,7 +498,7 @@ def offer_decision(
     offer: Offer, player: Player, *, loss: float, cut_loss: bool = False, trend_d7: float = 0.0, trend_d3: float = 0.0,
     breaks_xi: bool = False, hours_to_deadline: float | None = None, exposed_in: float | None = None,
     squad_full: bool = False, cost_basis: int | None = None, no_sell: bool = False, liquidity: bool = False,
-    injured: bool = False, clause: int = 0,
+    injured: bool = False, clause: int = 0, reserve_keeper: bool = False, free_slot: bool = False,
 ) -> tuple[str, str]:
     """("accept" | "reject" | "hold", motivo). "hold" = no hacer nada y dejar que caduque.
     `no_sell`: jugador de una operación en curso (bloqueo al líder): no se vende todavía."""
@@ -451,6 +510,8 @@ def offer_decision(
         if ratio >= RIVAL_OFFER_MIN:
             return "accept", f"oferta de {offer.from_manager} excepcional (x{ratio:.2f} el valor)"
         return "reject", f"oferta de {offer.from_manager} (x{ratio:.2f} el valor): las de rivales casi nunca convienen"
+    if reserve_keeper:
+        return "hold", "portero de reserva: hace falta para tener siempre un once legal (y rotarlo antes de que se pueda clausular)"
     if breaks_xi and (hours_to_deadline is None or hours_to_deadline < 48):
         return "hold", "venderlo ahora te dejaría sin 11 para la jornada"
     key = loss >= KEY_PLAYER_LOSS
@@ -475,11 +536,15 @@ def offer_decision(
         # no sube se vende a ~su valor aunque sea por debajo de lo pagado (reinvertido rinde +8-25%).
         return ("accept", f"libero capital para una inversión en subida: x{ratio:.2f} el valor") if ratio >= LIQUIDITY_OFFER_MIN \
             else ("hold", f"x{ratio:.2f} el valor, para liberar capital exijo x{LIQUIDITY_OFFER_MIN:.2f}")
+    elif free_slot and loss < BENCH_LOSS:
+        # Hace falta una plaza para un fichaje necesario (portero de reserva, defensa para completar el once): se
+        # vende un suplente barato aunque esté subiendo (la plaza vale más que su subida), sin bajar de lo pagado.
+        need, why = BENCH_OFFER_MIN, "libero una plaza para un fichaje necesario"
     elif squad_full and loss < BENCH_LOSS:
         need, why = BENCH_OFFER_MIN, "suplente con la plantilla llena: libera sitio para un fichaje mejor"
     else:
         need, why = PARAMS["league_offer_min"], "oferta por encima de su valor"
-    if trend_d3 > RISING_D3 and trend_d7 > 5 and not injured:
+    if trend_d3 > RISING_D3 and trend_d7 > 5 and not injured and not (free_slot and loss < BENCH_LOSS):
         # También cerca de que se abra su cláusula (8/10/2026): si un rival lo clausula, cobras su
         # cláusula, que sube con su valor; venderlo antes regala la subida que queda.
         # La técnica (Josinho con Yamal): esperar a que suba. Prueba histórica (4/10/2026): comprar

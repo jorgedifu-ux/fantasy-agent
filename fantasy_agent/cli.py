@@ -339,6 +339,11 @@ def _committed_bids(store: Store, world) -> tuple[int, list]:
     for b in store.unresolved_market_bids("buy"):
         it = market.get(b["player_id"])
         if it and b["player_id"] not in by_player and (not b["expires_at"] or b["expires_at"] > now):
+            if b.get("created_at") and now - b["created_at"] > 600:
+                # El anuncio sigue en el mercado pero ya no muestra nuestra puja (la cancelamos, a mano o con
+                # la API): no es dinero comprometido. Antes seguía reservando saldo y plaza hasta que caducaba.
+                store.resolve_market_bid(b["id"], "cancelled")
+                continue
             by_player[b["player_id"]] = (b["price"], it.player)
     return sum(v for v, _ in by_player.values()), [pl for _, pl in by_player.values()]
 
@@ -356,22 +361,32 @@ def _rival_premium(store: Store, api: FantasyAPI, world) -> ap.RivalPremium | No
     return ap.RivalPremium(cached["median"], cached["p75"]) if "median" in cached else None
 
 
-def _prune_bids(store: Store, api: FantasyAPI, world) -> list[str]:
-    """Cancela pujas vivas por jugadores que se han lesionado/sancionado antes de resolverse."""
+def _prune_bids(store: Store, api: FantasyAPI, world, lock_hours: float = 24) -> list[str]:
+    """Cancela pujas vivas que ya no tienen sentido: por jugadores lesionados/sancionados, y las de
+    EMERGENCIA (fichaje a crédito) cuando la jornada ya no está a punto de empezar (10/10/2026: una
+    puja de emergencia hecha por un fallo del plazo seguía viva aunque el fallo ya estuviera corregido)."""
     events = []
+    hours = _hours_to_deadline(world)
+    emergency_ids = {r["player_id"] for r in store.recent_auto_ops("emergency_debt_buy", within_days=5)}
     for it in world.market:
-        if not (it.my_bid and it.my_bid_id and it.player.status.lower() in ap.INJURED):
+        if not (it.my_bid and it.my_bid_id):
+            continue
+        injured = it.player.status.lower() in ap.INJURED
+        stale_emergency = it.player.id in emergency_ids and (hours is None or hours > lock_hours + 12)
+        if not (injured or stale_emergency):
             continue
         name = notify.esc(it.player.name)
+        why = (f"ahora está {notify.esc(it.player.status)}" if injured else
+               f"ya no es una emergencia (la jornada empieza en {hours:.0f} h)" if hours is not None else "ya no es una emergencia")
         try:
             api.cancel_bid(world.league_id, it.market_id, it.my_bid_id)
         except Exception as exc:
-            events.append(f"❌ No he podido cancelar la puja por <b>{name}</b> ({it.player.status}): {notify.esc(str(exc))}")
+            events.append(f"❌ No he podido cancelar la puja por <b>{name}</b>: {notify.esc(str(exc))}")
             continue
         for b in store.unresolved_market_bids("buy"):
             if b["player_id"] == it.player.id:
                 store.resolve_market_bid(b["id"], "cancelled")
-        events.append(f"🚫 Puja cancelada por <b>{name}</b>: ahora está {notify.esc(it.player.status)}.")
+        events.append(f"🚫 Puja cancelada por <b>{name}</b>: {why}.")
     return events
 
 
@@ -413,6 +428,13 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
     moves = kept
     plan = ap.plan_acquisitions(mine, moves, budget, form=world.recent_form, max_squad=s.max_squad,
                                 rivals=_rival_premium(store, api, world))
+    # El portero de reserva va ANTES que las inversiones (protege el once). Si no hay plaza, se quita lo último del
+    # plan y se avisa a `_resolve_offers` de que hay que liberar plazas (kv `slots_needed`).
+    planned_gks = [m.player for m in plan if m.player.position_id == 1]
+    keeper = ap.backup_keeper_move(world.my_slots, incoming + planned_gks, world.market, world.rival_slots, now,
+                                   world.clause_freeze, budget - sum(m.cost for m in plan))
+    plan, missing = ap.add_reserve_keeper(plan, keeper, len(mine), s.max_squad)
+    store.set("slots_needed", json.dumps({"n": missing, "at": time.time()}))
     events: list[str] = []
     spent = sum(m.cost for m in plan)
     invest_budget = int((budget - spent) * ap.PARAMS["invest_mult"] * (
@@ -427,10 +449,6 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
         plan += ap.plan_investments(candidates, invest_budget, slots_left)
     # Rotación de capital: si hay inversiones buenas que no se han podido pagar (o no caben en la
     # plantilla), se anota para que `_resolve_offers` venda antes algún suplente que no suba.
-    gk = ap.backup_keeper(mine + [m.player for m in plan], world.market, budget - sum(m.cost for m in plan))
-    if gk is not None and s.max_squad - len(mine) - len(plan) > 0:
-        cost = min(ap.bid_amount(gk, 0.0), budget - sum(m.cost for m in plan))
-        plan.append(ap.Move("bid", gk.player, cost, item=gk, score=0.0))
     funded = {m.player.id for m in plan}
     # Sin dinero para un buen golpe al líder (le quita ≥2 pts): también se libera capital vendiendo suplentes.
     unfunded = [m for m in candidates if m.player.id not in funded] + \
@@ -489,8 +507,12 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
             if mv.kind == "clause":
                 paid = _pay_clause(api, world.league_id, mv.slot, mv.cost)
                 store.record_auto_op("clause", mv.player.id, paid)
-                store.log_purchase(mv.player.id, "puntos", paid)
+                reserve = mv.player.position_id == 1 and not mv.gain
+                store.log_purchase(mv.player.id, "reserva" if reserve else "puntos", paid)
                 events.append(
+                    f"🧤 <b>Portero de reserva</b>: {name} (de {notify.esc(mv.slot.owner_name)}) por {service.m(paid)} · su cláusula "
+                    f"queda bloqueada 14 días: nadie puede quitártelo, siempre tendrás portero para el once"
+                    if reserve else
                     f"⚡ <b>Clausulazo</b>: {name} ({pos}, de {notify.esc(mv.slot.owner_name)}) por "
                     f"{service.m(paid)} · +{mv.gain} pts/jornada al once"
                 )
@@ -498,9 +520,10 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
                 api.bid(world.league_id, mv.item.market_id, mv.cost)
                 expires = mv.item.expires.timestamp() if mv.item.expires else None
                 store.add_market_bid(mv.player.id, mv.player.name, mv.cost, expires, ask=mv.item.price)
-                store.log_purchase(mv.player.id, "puntos", mv.cost)
+                reserve = mv.player.position_id == 1 and not mv.gain
+                store.log_purchase(mv.player.id, "reserva" if reserve else "puntos", mv.cost)
                 cierre = mv.item.expires.astimezone().strftime("%H:%M") if mv.item.expires else "?"
-                motivo = "portero suplente (solo tienes uno)" if mv.player.position_id == 1 and not mv.gain else f"+{mv.gain} pts/jornada"
+                motivo = "portero de reserva (protegido 14 días si se gana)" if reserve else f"+{mv.gain} pts/jornada"
                 events.append(
                     f"🛒 <b>Puja</b>: {name} ({pos}) {service.m(mv.cost)} (salida {service.m(mv.item.price)}) "
                     f"· {motivo} · se resuelve a las {cierre}"
@@ -526,7 +549,7 @@ def _late_bid(store: Store, api: FantasyAPI, world, mv: ap.Move) -> str | None:
     store.add_market_bid(mv.player.id, mv.player.name, mv.cost, expires, ask=it.price)
     store.log_purchase(mv.player.id, "inversion" if mv.kind == "invest" else "puntos", mv.cost)
     motivo = ("inversión (en subida)" if mv.kind == "invest" else
-              "portero suplente" if mv.player.position_id == 1 and not mv.gain else f"+{mv.gain} pts/jornada")
+              "portero de reserva" if mv.player.position_id == 1 and not mv.gain else f"+{mv.gain} pts/jornada")
     return (f"🛒 <b>Puja en el último minuto</b>: {name} ({mv.player.position}) {service.m(mv.cost)} "
             f"(salida {service.m(it.price)}) · {motivo} · los rivales no la han visto venir")
 
@@ -654,6 +677,13 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
     sold = set(json.loads(store.get("sold_ids") or "[]"))
     events: list[str] = []
     paid: dict[str, int] | None = None  # lo que pagué por cada uno: se consulta solo si hay ofertas
+    need_slots = json.loads(store.get("slots_needed") or "{}")
+    n_slots = int(need_slots.get("n", 0)) if time.time() - need_slots.get("at", 0) < 6 * 3600 else 0
+    # Plazas que faltan para fichajes necesarios: los suplentes más baratos (que no puntúan) se ofrecen a la venta.
+    slot_victims = {sl.player.id for sl in sorted(
+        (x for x in world.my_slots if x.player.position_id in (2, 3, 4) and ap.sale_loss(mine, x.player.id, world.recent_form) < ap.BENCH_LOSS
+         and x.player.id not in _siege_ids(store)),
+        key=lambda x: (ap.sale_loss(mine, x.player.id, world.recent_form), x.player.market_value))[:n_slots]}
     for sl in world.my_slots:
         it = listed.get(sl.player.id)
         if not it or it.offers_count <= 0:
@@ -677,14 +707,19 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
         liq = json.loads(store.get("liquidity") or "{}")
         liquidity = bool(liq.get("n")) and time.time() - liq.get("at", 0) < 3 * 3600
         released = in_siege and hours is not None and hours <= 0  # jornada ya empezada: se puede vender
+        loss_now = ap.sale_loss(mine, pid, world.recent_form)
+        free_slot = pid in slot_victims
+        reserve_keeper = (sl.player.position_id == 1 and sl.player.available and loss_now < ap.KEY_PLAYER_LOSS
+                          and sum(1 for x in world.my_slots if x.player.position_id == 1 and x.player.available) <= ap.MIN_KEEPERS)
         for o in sorted(offers, key=lambda o: -o.money):
             decision, why = ap.offer_decision(
-                o, sl.player, loss=ap.sale_loss(mine, pid, world.recent_form), cut_loss=(pid in cut) or released,
+                o, sl.player, loss=loss_now, cut_loss=(pid in cut) or released,
                 no_sell=in_siege and not released, liquidity=liquidity and not in_siege,
                 trend_d7=trend.d7, trend_d3=trend.d3, breaks_xi=ap.breaks_eleven(mine, pid), hours_to_deadline=hours,
                 exposed_in=ap.hours_until_exposed(sl, now), squad_full=len(world.my_slots) >= s.max_squad,
                 cost_basis=None if in_siege else paid.get(pid),
-                injured=sl.player.status.lower() in ap.INJURED, clause=sl.clause,
+                injured=sl.player.status.lower() in ap.INJURED, clause=sl.clause, reserve_keeper=reserve_keeper,
+                free_slot=free_slot,
             )
             if decision == "accept" and not done:
                 try:
@@ -693,6 +728,8 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
                     events.append(f"❌ No he podido aceptar la oferta por <b>{name}</b>: {notify.esc(str(exc))}")
                     continue
                 done = True
+                if free_slot:
+                    store.set("slots_needed", json.dumps({"n": max(0, n_slots - 1), "at": time.time()}))
                 sold.add(pid)
                 mine = [pl for pl in mine if pl.id != pid]
                 events.append(
@@ -1329,7 +1366,7 @@ def _watch_once(store: Store, s) -> str:
     if sold:
         world = _world(api, s, trends=True)
 
-    pruned = st("cancelar pujas", _prune_bids, store, api, world, default=[])
+    pruned = st("cancelar pujas", _prune_bids, store, api, world, s.lineup_lock_hours, default=[])
     events += pruned
     if pruned:
         world = _world(api, s, trends=True)

@@ -13,11 +13,17 @@ está lo que **todavía puede mejorar**, con la evidencia que hay y cómo compro
 
 ## LISTA DE PENDIENTES (resumen, 10/10/2026)
 
-**Decisiones tuyas, ya (antes del dom 11/10 20:53 y del vie 16/10 21:00)**
-1. ¿Cancelar la puja de 21,8M por Marcos Alonso (fichaje a crédito por el fallo del plazo)? Resuelve el dom 11/10 20:53. Recomendado: cancelar (ruta de cancelar sin probar).
-2. ¿Cubrir el portero único? Soria es clausulable desde el dom 11/10 20:53 hasta el jue 15/10 21:00 y sin él no hay once. Hoy el bot descartaría a los porteros baratos
-   por la regla cláusula ≤1,2× y no hay ninguno en el mercado. Arreglo propuesto: con 1 solo portero, permitir clausular uno barato (≤3M) sin límite de ratio.
-3. Faltan 2 defensas para la J9 (vie 16/10 21:00). El planificador ve a J. Berrocal (0,7M, media 1,6) y a Javi Rueda (5,3M, +3,3 pts); comprueba que quede un once legal el jueves.
+**Hecho el 10/10 (noche)**
+1. Puja de 21,8M por Marcos Alonso: cancelada a mano (ruta `DELETE .../bid/{id}/cancel` verificada: la API devuelve `status: canceled`; el mercado tarda unos segundos
+   en reflejarlo). El bot no la quitó solo porque nada revisaba las pujas ya hechas; ahora (a) las pujas de emergencia se cancelan solas cuando la jornada no está a <36 h,
+   (b) el registro deja de contar como comprometida una puja que ya no aparece en el mercado (antes seguía reservando 21,8M y una plaza hasta que caducaba).
+2. Portero de reserva protegido (decisión del usuario): siempre ≥2 porteros disponibles y ≥1 PROTEGIDO (su cláusula sigue bloqueada cuando se congelen las
+   cláusulas de la próxima jornada; una compra bloquea 14 días). Se compra por cláusula abierta (sin límite de ratio, ≤3M) o del mercado, el de más media; se
+   renueva solo antes de que acabe el bloqueo ("rotación"); no se vende mientras haga falta. Si no hay plaza, se quita lo último del plan y se vende el suplente
+   más barato (aunque suba, sin bajar de lo pagado) para hacer hueco. Hoy: Szczesny (1,6M) y Javi Rueda (5,3M); la plantilla de 10 centrocampistas que suben deja pocas plazas.
+
+**Decisiones tuyas, ya (antes del vie 16/10 21:00)**
+3. Faltan 2 defensas para la J9: Rueda (5,3M) y un segundo (J. Berrocal 0,7M/Carreira 6,5M); el bot lo plantea en cuanto haya plaza. Comprobar el jueves que hay once legal.
 
 **Vigilar (sin decisión)**
 4. Rayo–Athletic: mirar en la app antes del mar 13/10 03:00 qué hace LaLiga Fantasy con los puntos provisionales.

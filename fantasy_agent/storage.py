@@ -380,15 +380,22 @@ class Store:
 
     def unresolved_market_bids(self, direction: str = "buy") -> list[dict[str, Any]]:
         rows = self.db.execute(
-            "SELECT id, player_id, player_name, price, expires_at, sell_kind, market_id FROM market_bids "
+            "SELECT id, player_id, player_name, price, expires_at, sell_kind, market_id, created_at FROM market_bids "
             "WHERE status = 'pending' AND direction = ?",
             (direction,),
         ).fetchall()
         return [
             {"id": r[0], "player_id": r[1], "player_name": r[2], "price": r[3], "expires_at": r[4],
-             "sell_kind": r[5], "market_id": r[6]}
+             "sell_kind": r[5], "market_id": r[6], "created_at": r[7]}
             for r in rows
         ]
+
+    def recent_auto_ops(self, kind: str, within_days: float = 5) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            "SELECT player_id, price, executed_at FROM auto_buys WHERE kind = ? AND executed_at >= ?",
+            (kind, time.time() - within_days * 86400),
+        ).fetchall()
+        return [{"player_id": r[0], "price": r[1], "executed_at": r[2]} for r in rows]
 
     def resolve_market_bid(self, bid_id: int, status: str) -> None:
         self.db.execute("UPDATE market_bids SET status = ? WHERE id = ?", (status, bid_id))
