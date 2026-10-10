@@ -278,6 +278,11 @@ clave (Soria) y los titulares a <48 h de la jornada quedan fuera.
   de +0,4% a −0,4%, −0,6%, −0,7%. En jugadores que ya subían (≥5% en 4 días), un partido malo no los frena de golpe, solo desacelera: +13,7% acumulado a 5 días (normal +20%, bueno +26%);
   tipo Johnny (≤3 pts, media ≤4): +8,4% a 5 días. Por eso mantener a los que suben hasta que se frenen es correcto, y `trend_d1` (la salida al frenarse) reacciona al valor ya movido.
 
+- (10/10, noche) **Permutas, en modo aviso**: `autopilot.swap_candidates` compara vender A para fichar B con los mismos pesos del planificador (puntos del once durante 3 jornadas +
+  subida esperada − prima y márgenes de ida y vuelta; el efecto en el once sale de comparar el mejor once con y sin la permuta). Solo propone cuando el fichaje no cabe en el saldo
+  libre; no vende al único portero ni a los protegidos. Avisa por Telegram una vez al día por pareja y guarda `kv.swap_log` (se exporta). NO ejecuta: se activará cuando sus propuestas se vean razonables.
+- (10/10, noche) Cláusulas de una posición que falta cubrir: se admite hasta 1,35× el valor (antes 1,2×; Ryan, 1,22×, quedaba fuera). El fichaje a crédito de emergencia descarta a los que caen.
+
 ### Hallazgos y notas de la J8 (evidencia)
 #### Exploración del 9/10 (sin cambios de código) — decidir el 20/10
 **Cron**: 16 ejecuciones seguidas OK cada 15 min (última 20:45). Prueba de subir cláusula OK: Mayol 1.112.342 → 1.223.576

@@ -128,6 +128,9 @@ def _emergency_debt_buy(store: Store, s, api: FantasyAPI, world, team_plan: plan
     squad_value = sum(sl.player.market_value for sl in world.my_slots)
     debt_room = int(squad_value * s.debt_ceiling_pct)
     with_debt = analysis.emergency_candidates(world.my_slots, world.market, world.my_cash + debt_room, 1.0)
+    # Nada que esté cayendo (caso Marcos Alonso, −7% en 7 días): a crédito solo se ficha lo que no se hunde.
+    with_debt = [o for o in with_debt if not (o.item.player.id in world.trends and ap.is_falling(
+        world.trends[o.item.player.id][1].d3, world.trends[o.item.player.id][1].d7))]
     only_with_debt = [o for o in with_debt if o.item.price > world.my_cash]
     if not only_with_debt:
         return None
@@ -403,8 +406,9 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
     budget = max(0, budget)
     mine = [sl.player for sl in world.my_slots] + incoming
     avoid = frozenset(t for t in (world.leader_team_id, world.revenge_against_team_id) if t)
+    short_pos = frozenset(pos for pos, n in analysis.position_shortage(world.my_slots).items() if n)
     moves = ap.clause_moves(world.rival_slots, now, freeze=world.clause_freeze, avoid_team_ids=avoid,
-                            leader_team_id=world.leader_team_id or "") + \
+                            leader_team_id=world.leader_team_id or "", short_positions=short_pos) + \
         ap.bid_moves(world.market, skip_player_ids=frozenset(pl.id for pl in incoming))
     trends = {pid: tr for pid, (_, tr) in world.trends.items()}
     # Tendencia de las cláusulas de rivales con precio razonable (no están en `world.trends`).
@@ -414,7 +418,7 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
                 trends[m.player.id] = analysis.trend_from_history(models.parse_value_history(api.market_value_history(m.player.id)))
             except Exception:
                 pass
-    short = {pos for pos, n in analysis.position_shortage(world.my_slots).items() if n}
+    short = set(short_pos)
     leader_players = [sl.player for sl in world.rival_slots if sl.owner_team_id == world.leader_team_id]
     kept = []
     for m in moves:
@@ -531,7 +535,38 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
         except Exception as exc:
             events.append(f"❌ {'Clausulazo' if mv.kind == 'clause' else 'Puja'} fallido por <b>{name}</b>: {notify.esc(str(exc))}")
     late = [mv for mv in plan if mv.kind in ("bid", "invest") and ap.bid_timing(mv.item, now) == "late"]
+    try:
+        events += _swap_notices(store, world, moves, candidates, trends, budget - sum(m.cost for m in plan), plan)
+    except Exception as exc:  # solo informa: nunca debe romper las compras
+        store.log_error("permutas", repr(exc))
     return events, [mv for mv in plan if not mv.executable_now] + late
+
+
+def _swap_notices(store: Store, world, moves, candidates, trends, free_cash: int, plan) -> list[str]:
+    """Permutas posibles (vender A para fichar B), SOLO AVISO: se guardan en `kv.swap_log` (se exporta) y se avisa una vez al día
+    por pareja. No se ejecutan: primero hay que ver si lo que propone es razonable (ver autopilot.swap_candidates)."""
+    planned = {m.player.id for m in plan}
+    wanted = [m for m in (list(moves) + list(candidates)) if m.player.id not in planned and m.executable_now]
+    for m in wanted:                      # drift para los que aún no lo tienen
+        tr = trends.get(m.player.id)
+        if tr is not None and not m.drift:
+            m.drift = ap.expected_drift(tr.d3, tr.d7, world.recent_form.get(m.player.id))
+    protected = frozenset(sl.player.id for sl in world.my_slots if sl.player.position_id == 1) | frozenset(_siege_ids(store))
+    swaps = ap.swap_candidates(world.my_slots, wanted, {pid: tr for pid, tr in trends.items()}, world.recent_form,
+                               max(0, free_cash), protected_ids=protected)
+    out: list[str] = []
+    log = json.loads(store.get("swap_log") or "[]")
+    for sw in swaps:
+        key = f"swap:{sw.sell.id}:{sw.buy.player.id}"
+        if not store.alert_is_new(key, ttl_hours=20):
+            continue
+        log.append({"at": time.time(), "sell": sw.sell.name, "sell_value": sw.sell.market_value, "buy": sw.buy.player.name,
+                    "buy_cost": sw.buy.cost, "edge_m": sw.edge_m, "keep_m": sw.keep_m, "buy_net_m": sw.buy_net_m})
+        out.append(f"🔁 <b>Permuta posible</b> (solo aviso, no ejecuto): vender <b>{notify.esc(sw.sell.name)}</b> "
+                   f"({service.m(sw.sell.market_value)}) para fichar a <b>{notify.esc(sw.buy.player.name)}</b> ({service.m(sw.buy.cost)}): "
+                   f"ventaja esperada +{sw.edge_m:.1f}M (fichaje +{sw.buy_net_m:.1f}M frente a conservar {sw.keep_m:.1f}M)")
+    store.set("swap_log", json.dumps(log[-40:]))
+    return out
 
 
 def _late_bid(store: Store, api: FantasyAPI, world, mv: ap.Move) -> str | None:

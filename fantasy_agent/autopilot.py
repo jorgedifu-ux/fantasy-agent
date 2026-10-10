@@ -22,6 +22,7 @@ POINT_VALUE_M = 0.30         # lo que vale un punto de jornada (0,1M de premio +
 GAIN_HORIZON = 3             # jornadas durante las que se espera disfrutar de lo que un fichaje suma al once
 RESALE_SPREAD = 0.05         # lo que se pierde al revender (las ofertas medias están ~5% bajo lo que se paga)
 MAX_CLAUSE_RATIO = 1.2       # cláusula "lógica": ≤1.2x el valor de mercado
+SHORT_CLAUSE_RATIO = 1.35    # si falta cubrir esa posición (sin ella no hay once legal) se admite algo más de prima
 MIN_GAIN = 0.5               # pts/jornada que como mínimo debe sumar una compra
 COMPLETE_XI_BONUS = 15.0     # completar el once pesa más que cualquier fichaje
 BENCH_WEIGHT = 0.15          # los suplentes cuentan algo (lesiones, rotaciones)
@@ -158,6 +159,7 @@ def clause_moves(
     rival_slots: list[SquadSlot], now: datetime, *, lookahead_hours: float = 24,
     freeze: tuple[datetime, datetime] | None = None,
     avoid_team_ids: frozenset[str] = frozenset(), leader_team_id: str = "",
+    short_positions: frozenset[int] = frozenset(),
 ) -> list[Move]:
     """Cláusulas lógicas de rivales: pagables ya, o que se liberan dentro de `lookahead_hours`
     (esas no se ejecutan todavía, pero reservan su dinero para no gastarlo en otra cosa)."""
@@ -167,7 +169,8 @@ def clause_moves(
         p = sl.player
         if p.position_id not in FIELD_POSITIONS or not p.market_value or sl.clause <= 0:
             continue
-        if sl.clause / p.market_value > MAX_CLAUSE_RATIO or p.status.lower() in INJURED:
+        limit = SHORT_CLAUSE_RATIO if p.position_id in short_positions else MAX_CLAUSE_RATIO
+        if sl.clause / p.market_value > limit or p.status.lower() in INJURED:
             continue
         if sl.clause_open(now):
             unlock = freeze[1] if frozen_now and freeze else None
@@ -289,6 +292,58 @@ def backup_keeper_move(
     return max(options, key=lambda o: o[:3])[3] if options else None
 
 
+# Permutas (10/10/2026): "vender A para fichar B". Hasta ahora el bot solo liberaba capital vendiendo suplentes que no suben
+# (`liquidity`) o plazas (`free_slot`), sin COMPARAR lo que rinde A con lo que rinde B. Aquí se compara con los mismos pesos del
+# planificador: puntos del once durante GAIN_HORIZON jornadas + subida esperada, menos la prima y los márgenes de ida y vuelta.
+# De momento solo AVISA (kv `swap_log` + Telegram, sin ejecutar): se activará cuando sus propuestas se vean razonables.
+SWAP_MARGIN_M = 0.5            # la permuta debe ganar al menos 0,5M esperados
+SWAP_SELL_SPREAD = 0.03        # coste de vender a una oferta típica (~0,97× el valor)
+
+
+@dataclass
+class Swap:
+    sell: Player
+    buy: Move
+    edge_m: float                # ventaja esperada de la permuta (M€)
+    keep_m: float                # lo que se pierde por no conservar a `sell` (puntos + subida)
+    buy_net_m: float             # beneficio neto del fichaje
+
+
+def swap_candidates(
+    slots: list[SquadSlot], wanted: list[Move], trends: dict, form: dict[str, float] | None, free_cash: int, *,
+    protected_ids: frozenset[str] = frozenset(), limit: int = 3,
+) -> list[Swap]:
+    """Mejores permutas: fichajes interesantes que no caben en el saldo libre, pagados vendiendo uno de los nuestros.
+    El efecto en puntos sale de comparar el mejor once con y sin la permuta (así un titular o el único portero casi
+    nunca sale, y un suplente que no puntúa y no sube, sí)."""
+    mine = [sl.player for sl in slots]
+    base = squad_value(mine, form)
+    out: list[Swap] = []
+    for m in wanted:
+        if m.cost <= free_cash or not m.player.market_value:
+            continue
+        for sl in slots:
+            a = sl.player
+            if a.id in protected_ids or a.market_value + free_cash < m.cost or a.position_id not in FIELD_POSITIONS:
+                continue
+            roster = [x for x in mine if x.id != a.id] + [m.player]
+            gain = squad_value(roster, form) - base                      # cambio TOTAL del once (incluye perder a `a`)
+            tr = trends.get(a.id)
+            drift_a = expected_drift(tr.d3, tr.d7, (form or {}).get(a.id)) if tr else 0.0
+            keep_m = drift_a * a.market_value / 1e6 + SWAP_SELL_SPREAD * a.market_value / 1e6
+            buy_net = net_value_m(gain, m.cost, m.player.market_value, m.drift, m.rival_loss)
+            edge = buy_net - keep_m
+            if edge >= SWAP_MARGIN_M:
+                out.append(Swap(a, m, round(edge, 2), round(keep_m, 2), round(buy_net, 2)))
+    out.sort(key=lambda s: -s.edge_m)
+    seen_sell, seen_buy, picked = set(), set(), []
+    for s in out:                                                        # una sola permuta por jugador vendido y por fichaje
+        if s.sell.id in seen_sell or s.buy.player.id in seen_buy:
+            continue
+        seen_sell.add(s.sell.id); seen_buy.add(s.buy.player.id); picked.append(s)
+    return picked[:limit]
+
+
 def add_reserve_keeper(plan: list[Move], keeper: Move | None, n_mine: int, max_squad: int) -> tuple[list[Move], int]:
     """Pone el portero de reserva el PRIMERO del plan. Si no hay plaza, quita los últimos fichajes del plan (los
     menos eficientes; se volverán a plantear cuando haya hueco). Devuelve (plan, plazas que faltan): con eso
@@ -371,6 +426,14 @@ def expected_drift(d3: float, d7: float, form: float | None = None) -> float:
     return DRIFT_DECLINING if d7 < 0 else 0.0
 
 
+def net_value_m(gain: float, cost: int, value: int, drift: float, rival_loss: float = 0.0) -> float:
+    """Beneficio neto esperado (M€) de un fichaje: lo que suma al once durante `GAIN_HORIZON` jornadas (+ lo que le quita al
+    líder) + lo que se espera que se revalorice, menos lo que se pierde de ida y vuelta (prima pagada + margen al revender)."""
+    cost_m = cost / 1_000_000
+    premium = max(0.0, cost / value - 1) if value else 0.0
+    return (gain * GAIN_HORIZON + rival_loss) * POINT_VALUE_M + drift * cost_m - (premium + RESALE_SPREAD) * cost_m
+
+
 # Tope de prima en cláusulas (10/10/2026). La cláusula de un rival es lo que él pagó (o el valor): si pagó de más, pagas de más.
 # Nuestras compras con prima ≥13% (Johnny +19%, Terrats +14%, Deossa +13%) subieron un 13–15% desde el día de compra y aun así
 # quedaron en −4%/0%/0% frente a lo pagado; las de prima 0% dieron +3% a +22%. En ligas simuladas con todos los jugadores, el
@@ -414,7 +477,7 @@ def plan_acquisitions(
             premium = max(0.0, cost / value - 1) if value else 0.0
             if m.kind == "clause" and premium > MAX_CLAUSE_PREMIUM and gain < PREMIUM_OVERRIDE_GAIN and not m.bonus:
                 continue   # prima alta sin una mejora real del once: se la come la prima (ver MAX_CLAUSE_PREMIUM)
-            net_m = (gain * GAIN_HORIZON + m.rival_loss) * POINT_VALUE_M + m.drift * cost_m - (premium + RESALE_SPREAD) * cost_m
+            net_m = net_value_m(gain, cost, value, m.drift, m.rival_loss)
             if net_m <= 0:
                 continue
             eff = net_m / (cost_m + slot_cost + 0.25) * (PENALTY_FACTOR if m.penalized else 1.0)
