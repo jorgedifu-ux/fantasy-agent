@@ -204,6 +204,20 @@ class OfferDecisionTests(unittest.TestCase):
         self.assertEqual(ap.plan_acquisitions(mine, [plain], 50_000_000), [])  # 30M por un suplente: no compensa
         self.assertEqual(len(ap.plan_acquisitions(mine, [hit], 50_000_000)), 1)
 
+    def test_stalled_riser_is_sold_at_value_without_looking_at_cost(self):
+        p = player("p", 3, value=10_000_000)
+        kw = dict(loss=1.5, trend_d7=12.0, trend_d3=2.0, cost_basis=11_000_000, hours_to_deadline=100)
+        o = lambda r: self.offer(int(10_000_000 * r))  # noqa: E731
+        self.assertEqual(ap.offer_decision(o(1.00), p, trend_d1=0.0, **kw)[0], "accept")      # se frena: a su valor, aunque se pagó más
+        self.assertEqual(ap.offer_decision(o(0.97), p, trend_d1=-1.2, **kw)[0], "hold")       # por debajo de su valor, no
+        self.assertEqual(ap.offer_decision(o(1.05), p, trend_d1=1.5, **kw)[0], "hold")        # sigue subiendo: se aguanta
+        # no aplica: clave, valor pequeño, sin subida previa, o a <48 h de la jornada con un titular
+        self.assertEqual(ap.offer_decision(o(1.00), p, trend_d1=0.0, **{**kw, "loss": 5.0})[0], "hold")
+        small = player("s", 3, value=2_000_000)
+        self.assertEqual(ap.offer_decision(self.offer(2_000_000), small, trend_d1=0.0, **kw)[0], "hold")
+        self.assertEqual(ap.offer_decision(o(1.00), p, trend_d1=0.0, **{**kw, "trend_d7": 3.0})[0], "hold")
+        self.assertEqual(ap.offer_decision(o(1.00), p, trend_d1=0.0, **{**kw, "hours_to_deadline": 30})[0], "hold")
+
     def test_lineup_retry_is_fast_near_the_deadline(self):
         self.assertEqual(ap.lineup_retry_seconds(5), 900)
         self.assertEqual(ap.lineup_retry_seconds(30), 6 * 3600)

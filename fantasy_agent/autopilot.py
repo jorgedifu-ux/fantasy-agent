@@ -494,11 +494,26 @@ def at_risk_min(hours_left: float, key: bool) -> float:
     return round(need + (AT_RISK_KEY_EXTRA if key else 0.0), 3)
 
 
+# Salida al frenarse una subida (10/10/2026). Datos de LaLiga Fantasy (476 jugadores, valores diarios): de los que habían
+# subido (>+5% en 7 días), si el último día el valor queda plano el valor cae de media un 6% en los 7 días siguientes (y un 12%
+# si ese día ya baja); esperar a una oferta de 1,05× (llega el 22% de los días) pierde frente a vender a la primera oferta ≥1,00×
+# (+3,7% medio, p10 −0,9%, frente a −6,3% por esperar). La venta por caída de antes (≥4% en 3 días) llegaba tarde.
+STALL_D7 = 5.0                  # había subido: ≥+5% en 7 días
+STALL_D1 = 0.4                  # y el último día ya no sube (≤ +0,4%)
+STALL_EXIT_MIN = 1.00           # se vende a la primera oferta ≥ su valor, sin mirar lo pagado (es dinero ya perdido)
+STALL_MIN_VALUE = 3_000_000     # por debajo, los valores se mueven a saltos y "plano" no significa nada
+
+
+def is_stalled(trend_d1: float | None, trend_d7: float, value: int) -> bool:
+    return trend_d1 is not None and value >= STALL_MIN_VALUE and trend_d7 > STALL_D7 and trend_d1 <= STALL_D1
+
+
 def offer_decision(
     offer: Offer, player: Player, *, loss: float, cut_loss: bool = False, trend_d7: float = 0.0, trend_d3: float = 0.0,
     breaks_xi: bool = False, hours_to_deadline: float | None = None, exposed_in: float | None = None,
     squad_full: bool = False, cost_basis: int | None = None, no_sell: bool = False, liquidity: bool = False,
     injured: bool = False, clause: int = 0, reserve_keeper: bool = False, free_slot: bool = False,
+    trend_d1: float | None = None,
 ) -> tuple[str, str]:
     """("accept" | "reject" | "hold", motivo). "hold" = no hacer nada y dejar que caduque.
     `no_sell`: jugador de una operación en curso (bloqueo al líder): no se vende todavía."""
@@ -515,6 +530,7 @@ def offer_decision(
     if breaks_xi and (hours_to_deadline is None or hours_to_deadline < 48):
         return "hold", "venderlo ahora te dejaría sin 11 para la jornada"
     key = loss >= KEY_PLAYER_LOSS
+    stalled = is_stalled(trend_d1, trend_d7, value) and not key and not no_sell
     at_risk = exposed_in is not None and exposed_in <= AT_RISK_HOURS
     if at_risk:
         need = max(at_risk_min(exposed_in, key), clause / value if clause and value else 0.0)
@@ -529,6 +545,8 @@ def offer_decision(
         need, why = KEY_PLAYER_OFFER_MIN, "jugador clave"
     elif loss >= STARTER_LOSS and hours_to_deadline is not None and hours_to_deadline < 48:
         need, why = KEY_PLAYER_OFFER_MIN, "titular y la jornada empieza en <48h, sin tiempo de reponerlo"
+    elif stalled:
+        need, why = STALL_EXIT_MIN, f"se ha frenado tras subir (+{trend_d7:.0f}% en 7 días, hoy {trend_d1:+.1f}%): tiende a caer, salgo"
     elif cut_loss:
         need, why = CUT_LOSS_OFFER_MIN, "en caída/lesionado, conviene salir"
     elif liquidity and loss < BENCH_LOSS and trend_d7 <= 5:
@@ -544,14 +562,14 @@ def offer_decision(
         need, why = BENCH_OFFER_MIN, "suplente con la plantilla llena: libera sitio para un fichaje mejor"
     else:
         need, why = PARAMS["league_offer_min"], "oferta por encima de su valor"
-    if trend_d3 > RISING_D3 and trend_d7 > 5 and not injured and not (free_slot and loss < BENCH_LOSS):
+    if trend_d3 > RISING_D3 and trend_d7 > 5 and not injured and not stalled and not (free_slot and loss < BENCH_LOSS):
         # También cerca de que se abra su cláusula (8/10/2026): si un rival lo clausula, cobras su
         # cláusula, que sube con su valor; venderlo antes regala la subida que queda.
         # La técnica (Josinho con Yamal): esperar a que suba. Prueba histórica (4/10/2026): comprar
         # una subida y mantener hasta que se frena rinde +72% de media (mediana +21%, ~19 días);
         # vender a los 7 días, solo +17%. Mientras sigue subiendo no se vende (las ofertas no pasan de ~1,13×).
         need, why = max(need, RISING_HOLD_MIN), f"sigue subiendo ({trend_d3:+.1f}% en 3 días): espero a que se frene"
-    if cost_basis and value and not cut_loss:
+    if cost_basis and value and not cut_loss and not stalled:
         # Nunca por debajo de lo que costó, tampoco por riesgo de cláusula (decisión del
         # usuario, 4/10/2026: mejor que te paguen la cláusula que vender con pérdida). Solo
         # se sale con pérdida si está lesionado o cayendo (`cut_loss`).

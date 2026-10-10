@@ -25,6 +25,10 @@ está lo que **todavía puede mejorar**, con la evidencia que hay y cómo compro
 **Decisiones tuyas, ya (antes del vie 16/10 21:00)**
 3. Faltan 2 defensas para la J9: Rueda (5,3M) y un segundo (J. Berrocal 0,7M/Carreira 6,5M); el bot lo plantea en cuanto haya plaza. Comprobar el jueves que hay once legal.
 
+**Hecho el 10/10 (tarde-noche)**: salida al frenarse una subida: si un jugador que subía (>+5% en 7 días, valor ≥3M) deja de subir (hoy ≤+0,4%), se vende a la primera
+oferta ≥1,00× su valor, sin mirar lo pagado. Datos: esperar 7 días tras frenarse da −6,3% (−11,9% si ya baja el primer día); vender a la 1.ª oferta ≥1,00× da +3,7%. Los
+clave (Soria) y los titulares a <48 h de la jornada quedan fuera.
+
 **Vigilar (sin decisión)**
 4. Rayo–Athletic: mirar en la app antes del mar 13/10 03:00 qué hace LaLiga Fantasy con los puntos provisionales.
 5. Primera puja del último minuto (20:50) y primeros golpes al líder antes de la congelación (jue 15/10 21:00): comprobar en `kv.errors` y en Telegram.
@@ -33,17 +37,22 @@ está lo que **todavía puede mejorar**, con la evidencia que hay y cómo compro
 8. Experimento de precio pedido (Mayol, Freeman): termina el 12/10; quitar `ASK_EXPERIMENT`. La hipótesis del precio pedido ya está descartada.
 
 **Para la revisión del lunes 20/10 (con datos de J8 y J9)**
-9. Pujas de inversión: hoy al precio de salida exacto, pierden contra cualquier puja; para subidas fuertes +4–5% (ver 21.D).
-10. Comprar para revender ("flip") sin momentum: con cláusula ≈1,0× y venta paciente a ≥1,05× da ~+6% en 4–5 días; hoy `RESALE_SPREAD` lo trata como coste (ver 21.C y 20.C).
-11. Cuánto dinero a inversión (hoy 25%), saldo reservado para cláusulas de las 20:53, y financiar golpes al líder vendiendo titulares que ya no suben.
-12. Política de cláusulas ("tentadora"/subir): dejado para el futuro; datos en 21 (los que suben se los llevan igual; ≥6% sobre el valor casi nunca se paga).
-13. Crédito para inversión en parones (10% / 20% / apagado; primera vez en el parón del 8/11) y devolución antes de la jornada.
-14. Estrategia por momento de la liga (últimas ~8 jornadas todo a puntos; última jornada, golpes al líder).
-15. El planificador completa el once con el relleno más barato (eficiencia por coste): a veces elige a un 1,6 de media por 0,7M en vez de uno de 3,0 por 5M; revisar con la plantilla llena (16).
-16. `_emergency_debt_buy` elige por precio sin mirar tendencia ni forma (caso Marcos Alonso): usar el mismo filtro de "cayendo" que el planificador.
-17. Ajuste del rival: revalidar con más jornadas; valorar usarlo también al fichar solo si la revisión lo justifica.
-18. Autoajuste en `shadow`: revisar propuestas (umbral de venta 1,05→1,04, etc.) y decidir si alguna se aplica.
-19. Bloqueo al líder: tiene 3 porteros (Herrero 37 pts, Aitor Fdez 8 pts bloqueado hasta el 18/10, Szczesny 1 pt); viable como pronto en la J10 y cabe mal en la plantilla.
+A. PESOS Y UMBRALES (hoy son números fijos, no una comparación de rendimientos esperados): umbral de venta 1,05× (el autoajuste propone 1,04×), "clave" 1,25×,
+   "subiendo" 1,25×, suplentes 0,97×, rivales 1,30×, salida al frenarse 1,00× (nueva), techo de puja +12%. Calibrarlos con las ofertas y ventas reales de J8–J10.
+B. VENDER PARA FICHAR (permutas): el bot no compara "vender A para comprar B porque B rinde más" (valor + puntos esperados + subida). Lo más cercano es liberar capital
+   con suplentes que no suben y liberar plazas. Diseñar una puntuación de permuta: rendimiento esperado de B − el de A − comisión (~5%).
+C. Pujas de inversión al precio de salida exacto: para subidas fuertes, +4–5% (ver 21.D).
+D. Comprar para revender ("flip") sin momentum: cláusula ≈1,0× y venta paciente a ≥1,05× ≈ +6% en 4–5 días; hoy `RESALE_SPREAD` lo trata como coste (ver 21.C).
+E. Dinero a inversión (25%), saldo reservado para cláusulas de las 20:53 y financiar golpes al líder vendiendo titulares que ya no suben.
+F. Crédito en parones largos (10% / 20% / apagado; primera vez en el parón del 8/11) y devolución antes de la jornada.
+G. Estrategia por momento de la liga (últimas ~8 jornadas todo a puntos; última jornada, golpes al líder).
+H. Planificador: completa el once con el relleno más barato (media 1,6 por 0,7M en vez de 3,0 por 5M); `_emergency_debt_buy` elige por precio sin mirar tendencia/forma.
+I. Porteros: ¿límite de ratio 1,2× al buscar portero titular si falta?; ¿reserva de más calidad? (hoy ≤3M); revisar la rotación en la práctica.
+J. Rival del partido: revalidar con más jornadas; usarlo al fichar solo si se justifica.
+K. Autoajuste en `shadow`: revisar propuestas y decidir si alguna se aplica.
+L. Bloqueo al líder: 3 porteros (Herrero, Aitor Fdez bloqueado hasta el 18/10, Szczesny ya es nuestro); viable como pronto en la J10 y cabe mal en la plantilla.
+M. Política de cláusulas ("tentadora"/subir): futuro; datos en 21.
+N. Comprobar lo hecho el 10/10: salida al frenarse (Terrats y Johnny), portero de reserva y su rotación, liberación de plaza, primera puja del último minuto, golpes al líder, `kv.errors`.
 
 **Dependen de ti / largo plazo**
 20. Recompensa diaria de 100K (~23M hasta mayo): sin ruta conocida; si la petición lleva firma del anuncio no se puede automatizar.

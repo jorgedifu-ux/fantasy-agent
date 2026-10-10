@@ -719,7 +719,7 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
                 exposed_in=ap.hours_until_exposed(sl, now), squad_full=len(world.my_slots) >= s.max_squad,
                 cost_basis=None if in_siege else paid.get(pid),
                 injured=sl.player.status.lower() in ap.INJURED, clause=sl.clause, reserve_keeper=reserve_keeper,
-                free_slot=free_slot,
+                free_slot=free_slot, trend_d1=trend.d1,
             )
             if decision == "accept" and not done:
                 try:
