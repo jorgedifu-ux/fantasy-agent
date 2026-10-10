@@ -49,8 +49,16 @@ LIQUIDITY_OFFER_MIN = 0.97   # para liberar capital hacia una inversión en subi
 INJURED_OFFER_MIN = 1.0      # un lesionado se vende a ~su valor
 RISING_D3 = 1.0              # sigue subiendo mientras gane >1% en 3 días
 RISING_HOLD_MIN = 1.25       # y mientras tanto solo se vende por una oferta fuera de lo normal
-HOME_FACTOR = 1.05           # jugar en casa suma algo, fuera resta algo
-RIVAL_DIFFICULTY = 0.10      # ±10% según la posición del rival en la tabla de LaLiga
+# Efecto del partido en los puntos (calibrado el 10/10/2026 con 1.661 actuaciones de la J1 a la J8; validado
+# jornada a jornada): casa ×1,06 / fuera ×0,94; contra los 4 primeros de LaLiga ×0,80 (antes ×0,92: los
+# jugadores sacan un 27% menos); resto ±8% según el puesto del rival; los DEFENSAS lo notan 1,5 veces más.
+# Reduce el error de predicción un 4,2% frente a ignorar al rival (el ajuste anterior, un 2,6%); un partido
+# suelto sigue siendo muy ruidoso (desviación 0,71 × la media del jugador). Solo se usa para ELEGIR EL ONCE.
+HOME_FACTOR = 1.06
+RIVAL_DIFFICULTY = 0.08
+TOP_RANK_N = 4
+TOP_RANK_FACTOR = 0.80
+DEFENDER_SENSITIVITY = 1.5
 RIVAL_OFFER_MIN = 1.30       # ofertas de rivales: casi nunca convienen
 AT_RISK_HOURS = 72           # se empieza a intentar vender 3 días antes de que acabe su
 # protección: la liga genera una oferta al día (~20:53), así hay 3 oportunidades
@@ -431,7 +439,7 @@ def offer_decision(
     offer: Offer, player: Player, *, loss: float, cut_loss: bool = False, trend_d7: float = 0.0, trend_d3: float = 0.0,
     breaks_xi: bool = False, hours_to_deadline: float | None = None, exposed_in: float | None = None,
     squad_full: bool = False, cost_basis: int | None = None, no_sell: bool = False, liquidity: bool = False,
-    injured: bool = False, clause: int = 0, pending_match: bool = False,
+    injured: bool = False, clause: int = 0,
 ) -> tuple[str, str]:
     """("accept" | "reject" | "hold", motivo). "hold" = no hacer nada y dejar que caduque.
     `no_sell`: jugador de una operación en curso (bloqueo al líder): no se vende todavía."""
@@ -443,11 +451,6 @@ def offer_decision(
         if ratio >= RIVAL_OFFER_MIN:
             return "accept", f"oferta de {offer.from_manager} excepcional (x{ratio:.2f} el valor)"
         return "reject", f"oferta de {offer.from_manager} (x{ratio:.2f} el valor): las de rivales casi nunca convienen"
-    if pending_match and exposed_in != 0:
-        # Jornada en juego (10/10/2026): sin once legal ya no importa, pero un alineado cuyo partido aún no
-        # se ha jugado perdería sus puntos de esta jornada al irse (se comprobó: al clausularnos a Freeman y
-        # a Yuri el once quedó en 9). Se espera a que juegue; si ya es clausulable, se sigue la regla normal.
-        return "hold", "está en el once y su partido de esta jornada aún no se ha jugado: vendido ahora perdería esos puntos"
     if breaks_xi and (hours_to_deadline is None or hours_to_deadline < 48):
         return "hold", "venderlo ahora te dejaría sin 11 para la jornada"
     key = loss >= KEY_PLAYER_LOSS
@@ -494,14 +497,19 @@ def offer_decision(
     return "hold", f"x{ratio:.2f} el valor, exijo x{need:.2f} ({why})"
 
 
-def fixture_factor(home: bool | None, rival_rank: int | None, n_teams: int = 20) -> float:
-    """Multiplicador de puntos esperados para la próxima jornada: casa/fuera y lo fuerte que
-    es el rival (1º de la tabla → -10%, último → +10%)."""
+def fixture_factor(home: bool | None, rival_rank: int | None, n_teams: int = 20, position: int | None = None) -> float:
+    """Multiplicador de puntos esperados para la próxima jornada: casa/fuera y lo fuerte que es el
+    rival (los 4 primeros de la tabla, ×0,80; del 5.º al último, de ×0,92 a ×1,08). Defensas, 1,5× más sensibles."""
+    k = DEFENDER_SENSITIVITY if position == 2 else 1.0
     factor = 1.0
     if home is not None:
         factor *= HOME_FACTOR if home else 2 - HOME_FACTOR
     if rival_rank and n_teams > 1:
-        factor *= 1 - RIVAL_DIFFICULTY + 2 * RIVAL_DIFFICULTY * (rival_rank - 1) / (n_teams - 1)
+        if rival_rank <= TOP_RANK_N:
+            factor *= 1 - (1 - TOP_RANK_FACTOR) * k
+        else:
+            d = RIVAL_DIFFICULTY * k
+            factor *= 1 - d + 2 * d * (rival_rank - 1) / (n_teams - 1)
     return round(factor, 3)
 
 

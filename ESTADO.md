@@ -248,7 +248,7 @@ líder. La diferencia grande está en el **dinero**: Josinho ~393M de plantilla 
 ## Lección del 10/10: el plazo de la jornada
 La API sigue llamando "actual" a la jornada hasta que cierra (isLive, hasta la madrugada del martes). Todo lo que dependa del plazo (alineación,
 saldo positivo, congelación de cláusulas) debe usar `service.upcoming_week` (primer partido de la jornada SIGUIENTE cuando la actual ya empezó).
-Con la jornada en juego se puede vender sin miedo al once, pero NO a un alineado cuyo partido no se haya jugado (perdería sus puntos).
+Con la jornada en juego se puede vender o que te quiten a cualquiera sin miedo al once ni a perder sus puntos de esa jornada (regla confirmada por el usuario el 10/10).
 
 ## Decisiones y políticas acordadas contigo
 

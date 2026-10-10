@@ -643,22 +643,6 @@ def _delever(store: Store, s, api: FantasyAPI, world) -> list[str]:
     return events
 
 
-def _pending_match_players(api: FantasyAPI, world) -> set[str]:
-    """Jugadores del once guardado cuyo partido de la jornada EN JUEGO aún no se ha jugado (estado 1 =
-    programado, 2 = en juego; 7 = terminado, 10 = suspendido ya con puntos): si se van ahora, pierden esos puntos."""
-    try:
-        wk = api.current_week()
-        if not wk.get("isLive"):
-            return set()
-        current = models.to_int(models.pick(wk, "weekNumber"), default=0)
-        pending_teams = {str(m.get(k)) for m in models.as_list(api.calendar(current), "matches", "elements")
-                         if models.to_int(m.get("matchState")) in (1, 2) for k in ("localId", "visitorId")}
-        in_xi = ap.lineup_ids(api.lineup(world.my_team_id))
-    except Exception:
-        return set()
-    return {sl.player.id for sl in world.my_slots if sl.player_team_id in in_xi and sl.player.team_id in pending_teams}
-
-
 def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
     """Ofertas recibidas por tus jugadores en venta: aceptar, rechazar o dejar caducar según
     `autopilot.offer_decision` (incluida la regla de vender antes de que acabe su protección)."""
@@ -670,7 +654,6 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
     sold = set(json.loads(store.get("sold_ids") or "[]"))
     events: list[str] = []
     paid: dict[str, int] | None = None  # lo que pagué por cada uno: se consulta solo si hay ofertas
-    pending = _pending_match_players(api, world) if any(i.offers_count > 0 for i in listed.values()) else set()
     for sl in world.my_slots:
         it = listed.get(sl.player.id)
         if not it or it.offers_count <= 0:
@@ -701,7 +684,7 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
                 trend_d7=trend.d7, trend_d3=trend.d3, breaks_xi=ap.breaks_eleven(mine, pid), hours_to_deadline=hours,
                 exposed_in=ap.hours_until_exposed(sl, now), squad_full=len(world.my_slots) >= s.max_squad,
                 cost_basis=None if in_siege else paid.get(pid),
-                injured=sl.player.status.lower() in ap.INJURED, clause=sl.clause, pending_match=pid in pending,
+                injured=sl.player.status.lower() in ap.INJURED, clause=sl.clause,
             )
             if decision == "accept" and not done:
                 try:
@@ -805,7 +788,7 @@ def _apply_lineup(store: Store, api: FantasyAPI, world) -> str | None:
         prob = float(probs.get(sl.player.id, {}).get("start_probability", 70)) / 100
         fx = world.fixtures.get(sl.player.team_id)
         factor = ap.fixture_factor(fx.home if fx else None, world.laliga_rank.get(fx.rival_id) if fx else None,
-                                   len(world.laliga_rank) or 20)
+                                   len(world.laliga_rank) or 20, sl.player.position_id)
         cands.append(lineup.Candidate(sl.player, prob, round(ap.xpts(sl.player, world.recent_form) * prob * factor, 2)))
     formation, eleven, total = lineup.best_eleven(cands)
     if not eleven or not formation:

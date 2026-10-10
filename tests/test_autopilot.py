@@ -214,16 +214,6 @@ class OfferDecisionTests(unittest.TestCase):
         self.assertEqual(ap.plan_acquisitions(mine, [plain], 50_000_000), [])  # 30M por un suplente: no compensa
         self.assertEqual(len(ap.plan_acquisitions(mine, [hit], 50_000_000)), 1)
 
-    def test_does_not_sell_a_starter_whose_match_is_still_to_be_played(self):
-        p = player("p", 3)
-        o = self.offer(11_500_000)    # 1,15×: normalmente se aceptaría
-        self.assertEqual(ap.offer_decision(o, p, loss=1.0, pending_match=False)[0], "accept")
-        d, why = ap.offer_decision(o, p, loss=1.0, pending_match=True)
-        self.assertEqual(d, "hold")
-        self.assertIn("aún no se ha jugado", why)
-        # ya clausulable: se sigue la regla normal (se lo van a llevar igualmente)
-        self.assertEqual(ap.offer_decision(o, p, loss=1.0, pending_match=True, exposed_in=0)[0], "accept")
-
     def test_lineup_retry_is_fast_near_the_deadline(self):
         self.assertEqual(ap.lineup_retry_seconds(5), 900)
         self.assertEqual(ap.lineup_retry_seconds(30), 6 * 3600)
@@ -330,6 +320,13 @@ class FixtureFactorTests(unittest.TestCase):
 
     def test_unknown_fixture_is_neutral(self):
         self.assertEqual(ap.fixture_factor(None, None), 1.0)
+
+    def test_top_rival_hits_defenders_hardest(self):
+        mid, dfn = ap.fixture_factor(False, 1, 20, 3), ap.fixture_factor(False, 1, 20, 2)
+        self.assertAlmostEqual(mid, 0.94 * 0.80, places=3)           # fuera contra el 1.º
+        self.assertLess(dfn, mid)                                    # los defensas, peor
+        self.assertGreater(ap.fixture_factor(True, 20, 20, 2), ap.fixture_factor(True, 20, 20, 3))  # y mejor contra los últimos
+        self.assertLess(ap.fixture_factor(True, 4, 20, 3), ap.fixture_factor(True, 5, 20, 3))      # salto al salir del top-4
 
 
 class LineupPayloadTests(unittest.TestCase):
