@@ -250,6 +250,103 @@ La API sigue llamando "actual" a la jornada hasta que cierra (isLive, hasta la m
 saldo positivo, congelación de cláusulas) debe usar `service.upcoming_week` (primer partido de la jornada SIGUIENTE cuando la actual ya empezó).
 Con la jornada en juego se puede vender o que te quiten a cualquiera sin miedo al once ni a perder sus puntos de esa jornada (regla confirmada por el usuario el 10/10).
 
+## Registro del 8–10/10/2026: lo hecho y la evidencia (movido desde PENDIENTES.md)
+
+### Hecho
+**Hecho el 10/10 (noche)**
+1. Puja de 21,8M por Marcos Alonso: cancelada a mano (ruta `DELETE .../bid/{id}/cancel` verificada: la API devuelve `status: canceled`; el mercado tarda unos segundos
+   en reflejarlo). El bot no la quitó solo porque nada revisaba las pujas ya hechas; ahora (a) las pujas de emergencia se cancelan solas cuando la jornada no está a <36 h,
+   (b) el registro deja de contar como comprometida una puja que ya no aparece en el mercado (antes seguía reservando 21,8M y una plaza hasta que caducaba).
+2. Portero de reserva protegido (decisión del usuario): siempre ≥2 porteros disponibles y ≥1 PROTEGIDO (su cláusula sigue bloqueada cuando se congelen las
+   cláusulas de la próxima jornada; una compra bloquea 14 días). Se compra por cláusula abierta (sin límite de ratio, ≤3M) o del mercado, el de más media; se
+   renueva solo antes de que acabe el bloqueo ("rotación"); no se vende mientras haga falta. Si no hay plaza, se quita lo último del plan y se vende el suplente
+   más barato (aunque suba, sin bajar de lo pagado) para hacer hueco. Hoy: Szczesny (1,6M) y Javi Rueda (5,3M); la plantilla de 10 centrocampistas que suben deja pocas plazas.
+
+**Hecho el 10/10 (tarde-noche)**: salida al frenarse una subida: si un jugador que subía (>+5% en 7 días, valor ≥3M) deja de subir (hoy ≤+0,4%), se vende a la primera
+oferta ≥1,00× su valor, sin mirar lo pagado. Datos: esperar 7 días tras frenarse da −6,3% (−11,9% si ya baja el primer día); vender a la 1.ª oferta ≥1,00× da +3,7%. Los
+clave (Soria) y los titulares a <48 h de la jornada quedan fuera.
+
+**Corregido el 10/10 (noche), a raíz de tus dudas**
+- Portero de reserva: se compró a Szczesny por 1,6M (valor 0,94M y bajando) habiendo en el mercado a Rafa Romero por 0,61M. La regla elegía la cláusula inmediata y, entre
+  las opciones, la de más media (0,125 frente a 0,0). Ahora gana el MÁS BARATO (de reserva no importa la calidad) y se espera: hasta 36 h antes de la congelación solo se
+  compra si cuesta ≤0,8M; después, el más barato de ≤3M. Szczesny se queda (venderlo y fichar a otro cuesta lo mismo); ya no hay que comprar otro hasta la rotación (24/10).
+- Prima en cláusulas: Johnny (+19%), Terrats (+14%) y Deossa (+13%) subieron un 13–15% desde el día de compra y quedaron en −4%/−0,2%/+0,2% frente a lo pagado;
+  las de prima 0% dieron +3% a +22%. El error de Johnny fue de COMPRA (la prima), no de venta ni de predicción (subió lo esperado). Ahora solo se paga más de un 10% de prima
+  si la compra suma ≥3 pts/jornada al once. Pendiente: revisar el peso de la subida esperada (`drift_strong_good` 0,25 frente a ~+17% medio a 7 días observado).
+
+- Los puntos de un partido tardan ~2 días en notarse en el valor (10/10, 1.473 partidos): con ≥1,8× su media, el valor pasa de +0,1% (D+1) a +2,6% (D+2) y +3,1% (D+3) diarios; con ≤0,4×,
+  de +0,4% a −0,4%, −0,6%, −0,7%. En jugadores que ya subían (≥5% en 4 días), un partido malo no los frena de golpe, solo desacelera: +13,7% acumulado a 5 días (normal +20%, bueno +26%);
+  tipo Johnny (≤3 pts, media ≤4): +8,4% a 5 días. Por eso mantener a los que suben hasta que se frenen es correcto, y `trend_d1` (la salida al frenarse) reacciona al valor ya movido.
+
+### Hallazgos y notas de la J8 (evidencia)
+#### Exploración del 9/10 (sin cambios de código) — decidir el 20/10
+**Cron**: 16 ejecuciones seguidas OK cada 15 min (última 20:45). Prueba de subir cláusula OK: Mayol 1.112.342 → 1.223.576
+(+111.234) y la API cobró la mitad (55.617). La ruta `PUT /buyout/player` funciona con factor 2.
+
+**A. Hueco real: si nos clausulan a Soria (único portero) no hay recambio automático.** Su cláusula (46,65M = 1,23× su valor) se
+abre el dom 11/10 20:53 y J9 empieza el vie 16/10 21:00 (congelación jue 15/10 21:00). Simulado sin Soria: el bot solo considera a
+Herrero (21M, del líder; con 1,5M de saldo no llega); los porteros baratos se descartan por la regla cláusula ≤1,2× (Galdin 1,87×,
+Szczesny 1,68×, Ryan 1,21×) y en el mercado de LaLiga no hay ningún portero. `_auto_shield` tampoco lo cubre (no es "exposed" por el
+1,2×, y la API no blinda). Sin portero no hay once legal = 0 puntos. **Arreglo propuesto**: con 1 solo portero disponible, permitir
+clausulazo de un portero barato (≤3M) sin límite de ratio (Galdin 1,0M cuesta ~0,5M de "sobrecoste"), y con 0 porteros cualquier
+cláusula pagable (liberando suplentes si hace falta). Valor esperado: ~0,5M frente a p×~18M (p = prob. de quedarnos sin portero en la
+jornada; con p≥3% compensa). Ventana: antes del dom 11/10 20:53 si se quiere cubrir J9.
+
+**B. Pagar más por jugadores caros (130M por uno de 120M)** — simulación con TODOS los jugadores de LaLiga (sin sesgo de elegir por
+valor actual), venta a la 1.ª oferta de la liga ≥1,05× (máx. 14 días): pagando 1,00× +5,9% medio (79% gana); 1,03× +2,6%; 1,05× +0,7%;
+1,083× −2,4% (35% gana). Solo con subida previa ≥10% en 7 días: 1,00× +14,4%; 1,05× +8,6%; 1,083× +5,4%; 1,10× +3,9%; 1,15× −0,8%. Las
+ofertas de la liga no pasan de 1,10× (≥1,05× en el 22% de los días; ≥1,08× en el 10%) y no son mayores en los primeros 3 días tras la
+compra (mediana 0,99 frente a 1,00). Conclusión: la prima solo compensa en jugadores con subida clara y siempre por debajo de ~8%.
+
+**C. Fichar caros a rivales por cláusula y ponerlos a la venta ya (flip)** — con cláusula ≈1,0× el valor, esperar la oferta ≥1,05× da
+~+6% medio en ~4–5 días (79% gana, p10 −6%); con subida previa ≥10%: +14%; con 7d previa <0%: +1,5% (no flipar jugadores que bajan).
+Hoy el bot ya vende así (acepta ≥1,05× y lista todo cada pasada); lo que falta es COMPRAR para flip sin momentum: `RESALE_SPREAD` (5%)
+trata la reventa como coste cuando, con paciencia, es una ganancia. Limitaciones: saldo 1,5M; riesgo de valor sd ~11% a 4 días; las
+ofertas por jugadores ≥30M parecen peores (mediana 0,96, n=15). Pendiente: más ofertas (hoy 77) y decidir si financiarlo con crédito entre
+jornadas (devolver antes del inicio) o vendiendo titulares que ya no suben.
+
+**D. Pujas desde el 5/10**: 3 intentos y 3 perdidas (Luismi Cruz, Aitor Fdez, Ibañez; los ganadores pagaron +3,4% a +4,7% sobre la nuestra
+y hoy los tres valen menos de lo que pagaron: 14,0M vs 12,6M; 1,35M vs 0,92M; 17,0M vs 16,8M, es decir habrían sido pérdidas). No hay más
+pujas desde el 6/10 porque el saldo se fue en 7 cláusulas (94M: Johnny, Terrats, Fofana, Zabiri, Roca, Durán, Deossa), no por los criterios.
+Idea: las pujas de INVERSIÓN se hacen al precio de salida exacto (`invest` → `it.price`), así que pierden contra cualquier puja rival; para
+subidas fuertes tendría sentido +4–5% (sigue dejando +8% de media).
+
+**E. Corrección**: el líder tiene 3 porteros, no 4: Herrero (21M, 37 pts), Aitor Fdez (0,9M, 8 pts) y Szczesny (1M, 1 pt). Sin Herrero
+no se queda sin once; le quitaría ~4 pts por jornada. Aitor Fdez está bloqueado hasta el 18/10, así que el bloqueo total solo sería posible
+desde J10 y necesitaría muchas plazas de plantilla (hay que tomar también los porteros de otros rivales con cláusula abierta).
+
+#### Jornada 8 (10/10): fallo del plazo, Rayo–Athletic, clausulazos y rival — resuelto o decidir el 20/10
+**Fallo corregido (10/10)**: la API llama "jornada actual" a la 8 hasta que cierra (`isLive`; cierra el 13/10 03:00), y el bot calculaba
+el plazo (alineación / saldo / congelación) con el primer partido de ESA jornada, ya pasado: −24,6 h. Con la jornada en juego saltó el
+"fichaje a crédito" de emergencia (sáb 21:02, puja viva de 21,8M por Marcos Alonso: valor cayendo −7% a 7 días, forma 2,0) y se bloqueaban
+ventas "para no quedarte sin 11". Ahora `service.upcoming_week` usa `isLive`/`nextWeek`/`openingWeekDate` (plazo = primer partido de la
+jornada siguiente) y una prueba lo cubre. **Decidir**: ¿cancelar la puja de Marcos Alonso (resuelve dom 11/10 20:53)? Con ella viva, el
+planificador solo puede completar con un suplente barato (J. Berrocal, 0,7M, media 1,6) porque la plantilla llega a 16. Sin ella compraría a
+Javi Rueda (5,3M, +3,3 pts/jornada). La ruta de cancelar puja no está probada.
+**Regla del juego (confirmada por el usuario, 10/10)**: una vez empezada la jornada, vender o que te quiten a un alineado NO le quita sus puntos
+de esa jornada (puntúa igualmente para ti). Con el plazo bien calculado el bot vende con normalidad durante la jornada. (Por un momento añadí un
+bloqueo de ventas de alineados con partido por jugar; estaba mal planteado y se retiró.) Pendiente solo de comprobarlo con datos: Freeman
+(clausulado sáb 21:02, jugó después) debería sumar en la J8 si el usuario tiene razón. Si falla guardar la alineación a <12 h del plazo, reintenta cada 15 min.
+**Solo puntúan los alineados**: el planificador valora el mejor once + 15% de banquillo (`squad_value`), así que lo que no juega solo cuenta por
+su reventa; Johnny (invertido, banquillo) no suma puntos. Mi suma del 10/10 de "15 puntos" era una coincidencia: alineados con partido jugado = Soria 7 +
+Terrats 1 + Yuri 4 = 12 (Yuri provisional, partido suspendido); la clasificación marca 15, diferencia sin explicar (¿puntos provisionales revisados?).
+**Rayo–Athletic**: no se anuló, se SUSPENDIÓ el sáb 10/10 tras 13–25 minutos (0-0, objetos al campo); los minutos restantes sin fecha (Deia apunta al
+mié 5/11, sin confirmar). LaLiga Fantasy no ha publicado nada que hayamos encontrado; Comunio usa puntos provisionales y los rehace si se reanuda después
+del cierre. Hay que mirar la app/noticias antes del 13/10 03:00. Nuestros afectados: Yuri (Athletic, ya no es nuestro).
+**Rival del partido (decidido el 10/10)**: casa/fuera y puesto del rival solo se usan para ELEGIR EL ONCE, y así se queda (no se usan al fichar: el rival de
+una sola jornada pesa poco frente a la inversión a semanas vista). Recalibrado con 1.661 actuaciones (J1–J8, validado jornada a jornada, error −4,2% frente a
+ignorar al rival; el ajuste anterior −2,6%; gana en 6 de 8 jornadas): casa ×1,06/fuera ×0,94; contra los 4 primeros ×0,80 (antes ×0,92); resto ±8%;
+defensas 1,5× más sensibles (`autopilot.fixture_factor`). Un partido suelto es muy ruidoso (desviación 0,71× la media): Terrats (esperado 5,1, sacó 1) es varianza,
+no error. Revisar con más jornadas (la clasificación de LaLiga es ruidosa hasta la J10).
+**Clausulazos (55 jugadores que llegaron a tener la cláusula abierta; 30 clausulados, 11 vendidos a la liga, 14 siguen)**: en subida (≥10% 7d)
+23 de 31 se los llevan (riesgo 0,18 por día abierto, mediana 1,15 días; 8 de 30 en los primeros 12 min); con bajada previa 3 de 16 (0,02/día).
+Cláusulas ≥6% sobre el valor casi no se pagan (1 de 13; riesgo 0,01/día), pero no sirve de mucho porque sin subida casi nadie las paga igual.
+Rivales pagan mediana 1,000× el valor (4 de 30 ≥1,05×). Dueño clausulado: +46% medio sobre lo pagado (93% gana); vendido a la liga +17% (55%).
+Para los que subían ≥10% y acabaron clausulados (n=23): clausulado = 1,22× el valor de hace 3 días (mediana 1,14×) frente a 1,10× vendiendo a la liga
+en los 3 últimos días. Después del clausulazo siguen subiendo (+7,3% mediana a 7 días, el 89% sube): nos los quitan cuando van a subir más.
+Yuri y Freeman se vendieron a su valor (20,0M y 2,8M; pagados 18,7M y 2,0M). Conclusión provisional: dejar que clausulen a los que suben es
+mejor que venderlos antes; subir la cláusula solo compensaría con subidas muy fuertes (cuesta la mitad de lo que sube); no subir a todos.
+
 ## Decisiones y políticas acordadas contigo
 
 - **Autonomía total** (26/09): "no voy a usar el fantasy apenas" — nada pide confirmación.
