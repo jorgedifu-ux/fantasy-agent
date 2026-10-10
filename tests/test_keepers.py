@@ -51,19 +51,33 @@ class BackupMove(unittest.TestCase):
     def move(self, market=(), rivals=(), slots=None, incoming=(), budget=30_000_000, freeze=FREEZE, now=NOW):
         return ap.backup_keeper_move(slots or [self.soria], list(incoming), list(market), list(rivals), now, freeze, budget)
 
-    def test_prefers_an_open_clause_over_the_market(self):
-        galdin = slot(gk("galdin", 0.0, 540_000), clause=1_000_000, owner="pep")     # cláusula 1,87× pero solo 1M
-        mv = self.move(market=[item(gk("mk", 2.0, 600_000), 600_000)], rivals=[galdin])
-        self.assertEqual((mv.kind, mv.player.id, mv.cost), ("clause", "galdin", 1_000_000))   # el ratio no importa
+    def test_cheapest_wins_even_if_it_is_not_a_clause(self):
+        galdin = slot(gk("galdin", 0.0, 540_000), clause=1_000_000, owner="pep")
+        szcz = slot(gk("szcz", 0.1, 940_000), clause=1_600_000, owner="lider")
+        mv = self.move(market=[item(gk("romero", 0.0, 590_000), 610_000)], rivals=[galdin, szcz])
+        self.assertEqual((mv.kind, mv.player.id), ("bid", "romero"))            # el caso real del 10/10
+
+    def test_patient_far_from_the_freeze_only_buys_very_cheap(self):
+        galdin = slot(gk("galdin", 0.0, 540_000), clause=1_000_000, owner="pep")
+        self.assertIsNone(self.move(rivals=[galdin]))                           # 1,0M > 0,8M y quedan 5 días: se espera
+        near = (NOW + timedelta(hours=30), NOW + timedelta(hours=54))
+        self.assertEqual(self.move(rivals=[galdin], freeze=near).player.id, "galdin")   # ya no hay tiempo: el más barato
+        cheap = slot(gk("cheap", 0.0, 400_000), clause=700_000, owner="pep")
+        self.assertEqual(self.move(rivals=[galdin, cheap]).player.id, "cheap")          # ≤0,8M: se compra ya
+
+    def test_no_waiting_when_there_is_no_keeper_at_all(self):
+        galdin = slot(gk("galdin", 0.0, 540_000), clause=1_000_000, owner="pep")
+        hurt = slot(gk("hurt", status="injured"))
+        self.assertEqual(self.move(slots=[hurt], rivals=[galdin]).player.id, "galdin")
 
     def test_uses_the_market_when_no_clause_is_open(self):
         locked = slot(gk("locked"), locked=NOW + timedelta(days=3), owner="pep")
         mv = self.move(market=[item(gk("mk", 2.0, 600_000), 600_000)], rivals=[locked])
         self.assertEqual((mv.kind, mv.player.id), ("bid", "mk"))
 
-    def test_picks_the_best_keeper_within_the_cap(self):
-        rivals = [slot(gk("a", 1.0, 800_000), owner="x"), slot(gk("b", 3.0, 2_500_000), owner="y"), slot(gk("c", 6.0, 20_000_000), owner="z")]
-        self.assertEqual(self.move(rivals=rivals).player.id, "b")        # c pasa de 3M; b juega más que a
+    def test_among_equals_prefers_the_one_who_plays_more(self):
+        rivals = [slot(gk("a", 1.0, 700_000), clause=700_000, owner="x"), slot(gk("b", 3.0, 700_000), clause=700_000, owner="y")]
+        self.assertEqual(self.move(rivals=rivals).player.id, "b")
 
     def test_nothing_when_covered_or_nothing_affordable(self):
         backup = slot(gk("b"), locked=NOW + timedelta(days=14))
@@ -72,12 +86,12 @@ class BackupMove(unittest.TestCase):
 
     def test_no_clause_payments_while_clauses_are_frozen(self):
         frozen = (NOW - timedelta(hours=1), NOW + timedelta(hours=20))
-        self.assertIsNone(self.move(rivals=[slot(gk("a", 1.0, 800_000), owner="x")], freeze=frozen))
+        self.assertIsNone(self.move(rivals=[slot(gk("a", 1.0, 500_000), owner="x")], freeze=frozen))
         self.assertEqual(self.move(market=[item(gk("mk"), 600_000)], rivals=[slot(gk("a"), owner="x")], freeze=frozen).kind, "bid")
 
     def test_rotation_when_the_protected_one_is_about_to_expire(self):
         old_backup = slot(gk("old"), locked=FREEZE[0] - timedelta(hours=2))     # se abre antes de la congelación
-        mv = self.move(slots=[self.soria, old_backup], rivals=[slot(gk("new", 1.0, 700_000), owner="x")])
+        mv = self.move(slots=[self.soria, old_backup], rivals=[slot(gk("new", 1.0, 500_000), clause=600_000, owner="x")])
         self.assertEqual(mv.player.id, "new")
 
     def test_pending_bid_counts_as_protection(self):

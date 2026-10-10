@@ -29,6 +29,14 @@ está lo que **todavía puede mejorar**, con la evidencia que hay y cómo compro
 oferta ≥1,00× su valor, sin mirar lo pagado. Datos: esperar 7 días tras frenarse da −6,3% (−11,9% si ya baja el primer día); vender a la 1.ª oferta ≥1,00× da +3,7%. Los
 clave (Soria) y los titulares a <48 h de la jornada quedan fuera.
 
+**Corregido el 10/10 (noche), a raíz de tus dudas**
+- Portero de reserva: se compró a Szczesny por 1,6M (valor 0,94M y bajando) habiendo en el mercado a Rafa Romero por 0,61M. La regla elegía la cláusula inmediata y, entre
+  las opciones, la de más media (0,125 frente a 0,0). Ahora gana el MÁS BARATO (de reserva no importa la calidad) y se espera: hasta 36 h antes de la congelación solo se
+  compra si cuesta ≤0,8M; después, el más barato de ≤3M. Szczesny se queda (venderlo y fichar a otro cuesta lo mismo); ya no hay que comprar otro hasta la rotación (24/10).
+- Prima en cláusulas: Johnny (+19%), Terrats (+14%) y Deossa (+13%) subieron un 13–15% desde el día de compra y quedaron en −4%/−0,2%/+0,2% frente a lo pagado;
+  las de prima 0% dieron +3% a +22%. El error de Johnny fue de COMPRA (la prima), no de venta ni de predicción (subió lo esperado). Ahora solo se paga más de un 10% de prima
+  si la compra suma ≥3 pts/jornada al once. Pendiente: revisar el peso de la subida esperada (`drift_strong_good` 0,25 frente a ~+17% medio a 7 días observado).
+
 **Vigilar (sin decisión)**
 4. Rayo–Athletic: mirar en la app antes del mar 13/10 03:00 qué hace LaLiga Fantasy con los puntos provisionales.
 5. Primera puja del último minuto (20:50) y primeros golpes al líder antes de la congelación (jue 15/10 21:00): comprobar en `kv.errors` y en Telegram.

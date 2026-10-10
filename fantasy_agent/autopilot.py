@@ -231,8 +231,13 @@ def bid_timing(item: MarketItem, now: datetime) -> str:
 # cláusula del jugador 14 días, así que un portero comprado hace poco no se puede quitar: "protegido" = su
 # cláusula sigue bloqueada (o blindada) cuando se congelen las cláusulas de la próxima jornada. Hace falta
 # tener ≥2 porteros disponibles y ≥1 protegido; al acercarse el fin de su bloqueo se compra otro (rotación).
+# Se elige el MÁS BARATO (no juega: la calidad no importa) y con paciencia: hasta 36 h antes de la congelación solo se compra si
+# cuesta ≤0,8M (el mercado de LaLiga suele sacar algún portero de ~0,5M cada pocos días); a partir de ahí, el más barato de ≤3M.
+# (10/10/2026: se pagaron 1,6M por Szczesny, que vale 0,94M y baja, habiendo un portero de 0,61M en el mercado.)
 MIN_KEEPERS = 2
 BACKUP_GK_MAX = 3_000_000        # coste máximo del portero de reserva (cláusula o puja), sea cual sea su ratio
+CHEAP_KEEPER = 800_000
+KEEPER_PATIENCE_H = 36
 
 
 def keeper_cover(slots: list[SquadSlot], incoming: list[Player], freeze_start: datetime) -> tuple[int, int]:
@@ -258,13 +263,15 @@ def backup_keeper_move(
     now: datetime, freeze: tuple[datetime, datetime] | None, budget: int,
 ) -> Move | None:
     """Fichaje de un portero barato si falta reserva o ninguno está protegido. Primero cláusulas abiertas
-    (seguras e inmediatas; no se pueden pagar con las cláusulas congeladas) y luego el mercado de LaLiga;
-    dentro de cada grupo, el de más media y el más barato."""
+    (inmediatas; no se pueden pagar con las cláusulas congeladas) y el mercado de LaLiga: gana el MÁS BARATO."""
     freeze_start = freeze[0] if freeze else now + timedelta(days=7)
     avail, prot = keeper_cover(slots, incoming, freeze_start)
     if avail >= MIN_KEEPERS and prot >= 1:
         return None
+    hours_left = (freeze_start - now).total_seconds() / 3600
     cap = min(BACKUP_GK_MAX, budget)
+    if avail >= 1 and hours_left > KEEPER_PATIENCE_H:
+        cap = min(cap, CHEAP_KEEPER)          # hay tiempo: se espera a un portero barato (sin ninguno, no se espera)
     owned = {sl.player.id for sl in slots} | {p.id for p in incoming}
     frozen_now = bool(freeze and freeze[0] <= now < freeze[1])
     options: list[tuple[int, float, int, Move]] = []
@@ -272,13 +279,13 @@ def backup_keeper_move(
         for sl in rival_slots:
             p = sl.player
             if p.position_id == 1 and p.available and p.id not in owned and sl.clause_open(now) and 0 < sl.clause <= cap:
-                options.append((1, p.avg_points, -sl.clause, Move("clause", p, sl.clause, slot=sl)))
+                options.append((-sl.clause, p.avg_points, 0, Move("clause", p, sl.clause, slot=sl)))
     for it in market:
         p = it.player
         if it.seller == "LaLiga" and it.market_id and not it.my_bid and p.position_id == 1 and p.available \
                 and p.id not in owned and 0 < it.price <= cap:
             cost = min(bid_amount(it, 0.0), cap)
-            options.append((0, p.avg_points, -cost, Move("bid", p, cost, item=it)))
+            options.append((-cost, p.avg_points, 0, Move("bid", p, cost, item=it)))
     return max(options, key=lambda o: o[:3])[3] if options else None
 
 
@@ -364,6 +371,14 @@ def expected_drift(d3: float, d7: float, form: float | None = None) -> float:
     return DRIFT_DECLINING if d7 < 0 else 0.0
 
 
+# Tope de prima en cláusulas (10/10/2026). La cláusula de un rival es lo que él pagó (o el valor): si pagó de más, pagas de más.
+# Nuestras compras con prima ≥13% (Johnny +19%, Terrats +14%, Deossa +13%) subieron un 13–15% desde el día de compra y aun así
+# quedaron en −4%/0%/0% frente a lo pagado; las de prima 0% dieron +3% a +22%. En ligas simuladas con todos los jugadores, el
+# punto de equilibrio de pagar prima incluso por jugadores en subida está en ~1,14×. Solo se acepta más del 10% si suma ≥3 pts.
+MAX_CLAUSE_PREMIUM = 0.10
+PREMIUM_OVERRIDE_GAIN = 3.0
+
+
 def plan_acquisitions(
     mine: list[Player], moves: list[Move], budget: int, *,
     form: dict[str, float] | None = None, max_squad: int = 16, rivals: RivalPremium | None = None,
@@ -397,6 +412,8 @@ def plan_acquisitions(
             # Así no se paga un 19% de más (Johnny) por +0,6 pts/jornada.
             cost_m, value = cost / 1_000_000, m.player.market_value
             premium = max(0.0, cost / value - 1) if value else 0.0
+            if m.kind == "clause" and premium > MAX_CLAUSE_PREMIUM and gain < PREMIUM_OVERRIDE_GAIN and not m.bonus:
+                continue   # prima alta sin una mejora real del once: se la come la prima (ver MAX_CLAUSE_PREMIUM)
             net_m = (gain * GAIN_HORIZON + m.rival_loss) * POINT_VALUE_M + m.drift * cost_m - (premium + RESALE_SPREAD) * cost_m
             if net_m <= 0:
                 continue

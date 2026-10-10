@@ -64,6 +64,25 @@ class AcquisitionTests(unittest.TestCase):
         plan = ap.plan_acquisitions(eleven(), ap.bid_moves([cheap, star]), 100_000_000, max_squad=12)
         self.assertEqual([m.player.id for m in plan], ["star"])
 
+    def test_clause_with_a_big_premium_needs_a_real_upgrade(self):
+        # Johnny/Terrats: cláusulas un 14–19% por encima del valor que apenas mejoran el once → se las come la prima.
+        def clause_for(p, clause):
+            return ap.clause_moves([rival_slot(p, clause=clause)], datetime(2026, 10, 10, tzinfo=timezone.utc))
+        mid = player("mid", 3, 5.5, 10_000_000)                       # mejora algo, no mucho
+        pricey = clause_for(mid, 11_900_000)                          # +19%
+        for m in pricey:
+            m.drift = 0.25                                            # incluso esperando una gran subida
+        self.assertEqual(ap.plan_acquisitions(eleven(5.0), pricey, 100_000_000), [])
+        fair = clause_for(mid, 10_400_000)                            # +4%: sí
+        for m in fair:
+            m.drift = 0.25
+        self.assertEqual(len(ap.plan_acquisitions(eleven(5.0), fair, 100_000_000)), 1)
+        # una mejora real (completar el once) justifica la prima
+        no_dfn = [pl for pl in eleven(5.0) if pl.position_id != 2][:10]
+        need = player("need", 2, 5.0, 10_000_000)
+        big = clause_for(need, 11_900_000)
+        self.assertEqual(len(ap.plan_acquisitions(no_dfn + [player("x", 3, 1.0)], big, 100_000_000)), 1)
+
     def test_respects_max_squad(self):
         moves = ap.bid_moves([item(player(f"s{i}", 3, 9.0, 1_000_000)) for i in range(6)])
         plan = ap.plan_acquisitions(eleven(), moves, 100_000_000, max_squad=13)
