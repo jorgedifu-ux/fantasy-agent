@@ -15,23 +15,23 @@ está lo que **todavía puede mejorar** y cómo comprobarlo la próxima vez.
 
 ## LISTA DE PENDIENTES (resumen, 10/10/2026)
 
-**Decisiones tuyas, ya (antes del vie 16/10 21:00)**
+**Para la J9 (antes del vie 16/10 21:00)**
 1. Faltan 2 defensas para la J9: Rueda (5,3M) y un segundo (J. Berrocal 0,7M/Carreira 6,5M); el bot lo plantea en cuanto haya plaza. Comprobar el jueves que hay once legal.
 
 **Vigilar (sin decisión)**
-4. Rayo–Athletic: mirar en la app antes del mar 13/10 03:00 qué hace LaLiga Fantasy con los puntos provisionales.
-5. Primera puja del último minuto (20:50) y primeros golpes al líder antes de la congelación (jue 15/10 21:00): comprobar en `kv.errors` y en Telegram.
-6. Disparo extra en cron-job.org a las 20:32 (opcional, como red de seguridad); es un job aparte, no tocar el de 15 min.
-7. Verificar con Freeman que los puntos de un alineado vendido/clausulado tras empezar la jornada siguen siendo nuestros.
-8. Experimento de precio pedido (Mayol, Freeman): termina el 12/10; quitar `ASK_EXPERIMENT`. La hipótesis del precio pedido ya está descartada.
+2. Rayo–Athletic: mirar en la app antes del mar 13/10 03:00 qué hace LaLiga Fantasy con los puntos provisionales.
+3. Primera puja del último minuto (20:50) y primeros golpes al líder antes de la congelación (jue 15/10 21:00): comprobar en `kv.errors` y en Telegram.
+4. Disparo extra en cron-job.org a las 20:32 (opcional, como red de seguridad); es un job aparte, no tocar el de 15 min.
+5. Verificar con Freeman que los puntos de un alineado vendido/clausulado tras empezar la jornada siguen siendo nuestros.
+6. Experimento de precio pedido (Mayol, Freeman): termina el 12/10; quitar `ASK_EXPERIMENT`. La hipótesis del precio pedido ya está descartada.
 
 **Para la revisión del lunes 20/10 (con datos de J8 y J9)**
 A. PESOS Y UMBRALES (hoy son números fijos, no una comparación de rendimientos esperados): umbral de venta 1,05× (el autoajuste propone 1,04×), "clave" 1,25×,
    "subiendo" 1,25×, suplentes 0,97×, rivales 1,30×, salida al frenarse 1,00× (nueva), techo de puja +12%. Calibrarlos con las ofertas y ventas reales de J8–J10.
 B. VENDER PARA FICHAR (permutas): el bot no compara "vender A para comprar B porque B rinde más" (valor + puntos esperados + subida). Lo más cercano es liberar capital
    con suplentes que no suben y liberar plazas. Diseñar una puntuación de permuta: rendimiento esperado de B − el de A − comisión (~5%).
-C. Pujas de inversión al precio de salida exacto: para subidas fuertes, +4–5% (ver 21.D).
-D. Comprar para revender ("flip") sin momentum: cláusula ≈1,0× y venta paciente a ≥1,05× ≈ +6% en 4–5 días; hoy `RESALE_SPREAD` lo trata como coste (ver 21.C).
+C. Pujas de inversión al precio de salida exacto: para subidas fuertes, +4–5% (ver ESTADO, hallazgos, D).
+D. Comprar para revender ("flip") sin momentum: cláusula ≈1,0× y venta paciente a ≥1,05× ≈ +6% en 4–5 días; hoy `RESALE_SPREAD` lo trata como coste (ver ESTADO, hallazgos, C).
 E. Dinero a inversión (25%), saldo reservado para cláusulas de las 20:53 y financiar golpes al líder vendiendo titulares que ya no suben.
 F. Crédito en parones largos (10% / 20% / apagado; primera vez en el parón del 8/11) y devolución antes de la jornada.
 G. Estrategia por momento de la liga (últimas ~8 jornadas todo a puntos; última jornada, golpes al líder).
@@ -40,13 +40,13 @@ I. Porteros: ¿límite de ratio 1,2× al buscar portero titular si falta?; ¿res
 J. Rival del partido: revalidar con más jornadas; usarlo al fichar solo si se justifica.
 K. Autoajuste en `shadow`: revisar propuestas y decidir si alguna se aplica.
 L. Bloqueo al líder: 3 porteros (Herrero, Aitor Fdez bloqueado hasta el 18/10, Szczesny ya es nuestro); viable como pronto en la J10 y cabe mal en la plantilla.
-M. Política de cláusulas ("tentadora"/subir): futuro; datos en 21.
-N2. Usar los puntos del último partido (relativos a su media) para anticipar si una subida se acelera o se desacelera: el efecto tarda ~2 días en notarse en el valor (ver ESTADO).
-N. Comprobar lo hecho el 10/10: salida al frenarse (Terrats y Johnny), portero de reserva y su rotación, liberación de plaza, primera puja del último minuto, golpes al líder, `kv.errors`.
+M. Política de cláusulas ("tentadora"/subir): futuro; datos en ESTADO (clausulazos).
+N. Usar los puntos del último partido (relativos a su media) para anticipar si una subida se acelera o se desacelera: el efecto tarda ~2 días en notarse en el valor (ver ESTADO).
+O. Comprobar lo hecho el 10/10: salida al frenarse (Terrats y Johnny), portero de reserva y su rotación, liberación de plaza, primera puja del último minuto, golpes al líder, `kv.errors`.
 
 **Dependen de ti / largo plazo**
-20. Recompensa diaria de 100K (~23M hasta mayo): sin ruta conocida; si la petición lleva firma del anuncio no se puede automatizar.
-21. Token de cron-job.org caduca el 14/06/2027; datos del bot en una rama pública (`EXPORT_DATA=0` para dejar de publicar).
+7. Recompensa diaria de 100K (~23M hasta mayo): sin ruta conocida; si la petición lleva firma del anuncio no se puede automatizar.
+8. Token de cron-job.org caduca el 14/06/2027; datos del bot en una rama pública (`EXPORT_DATA=0` para dejar de publicar).
 
 ## Cómo retomar (primeros 10 minutos de la próxima sesión)
 
