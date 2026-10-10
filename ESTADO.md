@@ -245,6 +245,11 @@ líder. La diferencia grande está en el **dinero**: Josinho ~393M de plantilla 
 - Cambio hecho: `autopilot.DRIFT_DECLINING` = −5%: un jugador que baja en la semana (sin llegar a "en caída") ya
   no cuenta como revalorización 0 sino como pérdida esperada en el beneficio neto del fichaje.
 
+## Lección del 10/10: el plazo de la jornada
+La API sigue llamando "actual" a la jornada hasta que cierra (isLive, hasta la madrugada del martes). Todo lo que dependa del plazo (alineación,
+saldo positivo, congelación de cláusulas) debe usar `service.upcoming_week` (primer partido de la jornada SIGUIENTE cuando la actual ya empezó).
+Con la jornada en juego se puede vender sin miedo al once, pero NO a un alineado cuyo partido no se haya jugado (perdería sus puntos).
+
 ## Decisiones y políticas acordadas contigo
 
 - **Autonomía total** (26/09): "no voy a usar el fantasy apenas" — nada pide confirmación.

@@ -214,6 +214,22 @@ class OfferDecisionTests(unittest.TestCase):
         self.assertEqual(ap.plan_acquisitions(mine, [plain], 50_000_000), [])  # 30M por un suplente: no compensa
         self.assertEqual(len(ap.plan_acquisitions(mine, [hit], 50_000_000)), 1)
 
+    def test_does_not_sell_a_starter_whose_match_is_still_to_be_played(self):
+        p = player("p", 3)
+        o = self.offer(11_500_000)    # 1,15×: normalmente se aceptaría
+        self.assertEqual(ap.offer_decision(o, p, loss=1.0, pending_match=False)[0], "accept")
+        d, why = ap.offer_decision(o, p, loss=1.0, pending_match=True)
+        self.assertEqual(d, "hold")
+        self.assertIn("aún no se ha jugado", why)
+        # ya clausulable: se sigue la regla normal (se lo van a llevar igualmente)
+        self.assertEqual(ap.offer_decision(o, p, loss=1.0, pending_match=True, exposed_in=0)[0], "accept")
+
+    def test_lineup_retry_is_fast_near_the_deadline(self):
+        self.assertEqual(ap.lineup_retry_seconds(5), 900)
+        self.assertEqual(ap.lineup_retry_seconds(30), 6 * 3600)
+        self.assertEqual(ap.lineup_retry_seconds(None), 6 * 3600)
+        self.assertEqual(ap.lineup_retry_seconds(-3), 6 * 3600)   # jornada ya empezada: no se toca
+
     def test_at_risk_threshold_decreases_as_protection_ends(self):
         self.assertGreater(ap.at_risk_min(72, key=False), ap.at_risk_min(48, key=False))
         self.assertGreater(ap.at_risk_min(48, key=False), ap.at_risk_min(10, key=False))

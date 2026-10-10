@@ -431,7 +431,7 @@ def offer_decision(
     offer: Offer, player: Player, *, loss: float, cut_loss: bool = False, trend_d7: float = 0.0, trend_d3: float = 0.0,
     breaks_xi: bool = False, hours_to_deadline: float | None = None, exposed_in: float | None = None,
     squad_full: bool = False, cost_basis: int | None = None, no_sell: bool = False, liquidity: bool = False,
-    injured: bool = False, clause: int = 0,
+    injured: bool = False, clause: int = 0, pending_match: bool = False,
 ) -> tuple[str, str]:
     """("accept" | "reject" | "hold", motivo). "hold" = no hacer nada y dejar que caduque.
     `no_sell`: jugador de una operación en curso (bloqueo al líder): no se vende todavía."""
@@ -443,6 +443,11 @@ def offer_decision(
         if ratio >= RIVAL_OFFER_MIN:
             return "accept", f"oferta de {offer.from_manager} excepcional (x{ratio:.2f} el valor)"
         return "reject", f"oferta de {offer.from_manager} (x{ratio:.2f} el valor): las de rivales casi nunca convienen"
+    if pending_match and exposed_in != 0:
+        # Jornada en juego (10/10/2026): sin once legal ya no importa, pero un alineado cuyo partido aún no
+        # se ha jugado perdería sus puntos de esta jornada al irse (se comprobó: al clausularnos a Freeman y
+        # a Yuri el once quedó en 9). Se espera a que juegue; si ya es clausulable, se sigue la regla normal.
+        return "hold", "está en el once y su partido de esta jornada aún no se ha jugado: vendido ahora perdería esos puntos"
     if breaks_xi and (hours_to_deadline is None or hours_to_deadline < 48):
         return "hold", "venderlo ahora te dejaría sin 11 para la jornada"
     key = loss >= KEY_PLAYER_LOSS
@@ -528,6 +533,12 @@ def needs_relist(ask: int, value_now: int, mult: float) -> bool:
 
 
 LINEUP_VARIANTS = ("flat_snake", "flat", "nested")  # flat_snake: verificada en vivo el 26/09/2026
+
+
+def lineup_retry_seconds(hours_to_deadline: float | None) -> int:
+    """Cuánto esperar para reintentar guardar la alineación tras un fallo: a menos de 12 h del primer
+    partido hay que insistir en cada pasada (15 min); lejos del plazo, no hace falta (6 h)."""
+    return 900 if hours_to_deadline is not None and 0 < hours_to_deadline <= 12 else 6 * 3600
 
 
 def lineup_payload(formation: tuple[int, int, int], ids_by_pos: dict[int, list[str]], variant: str) -> dict:

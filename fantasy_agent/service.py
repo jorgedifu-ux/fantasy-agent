@@ -85,7 +85,7 @@ def next_fixtures(api: FantasyAPI, team_ids: set[str]) -> dict[str, models.Fixtu
     if not team_ids:
         return {}
     try:
-        current = models.to_int(models.pick(api.current_week(), "weekNumber"), default=0)
+        current = upcoming_week(api.current_week())
     except Exception:
         return {}
     out: dict[str, models.Fixture] = {}
@@ -118,6 +118,20 @@ def recent_form(api: FantasyAPI, window: int = 3) -> dict[str, float]:
     return out
 
 
+def upcoming_week(wk: dict, now: datetime | None = None, first_of_current: datetime | None = None) -> int:
+    """Jornada cuyo primer partido es el PRÓXIMO plazo (alineación, saldo positivo, congelación de
+    cláusulas). Ojo: la API sigue llamando "actual" a la jornada hasta que cierra (`isLive`, hasta la
+    madrugada del martes): durante ese tiempo su plazo ya pasó y el siguiente es el de `nextWeek`.
+    Antes se usaba siempre la "actual" y el bot veía −24 h al plazo: con la jornada en juego saltaban
+    el fichaje a crédito de emergencia y el bloqueo de ventas "para no quedarte sin 11" (10/10/2026)."""
+    now = now or datetime.now(timezone.utc)
+    current = models.to_int(models.pick(wk, "weekNumber"), default=0)
+    nxt = models.to_int(models.pick(wk, "nextWeek"), default=current + 1) or current + 1
+    opening = models.parse_dt(models.pick(wk, "openingWeekDate"))
+    started = bool(wk.get("isLive")) or bool(opening and opening <= now) or bool(first_of_current and first_of_current <= now)
+    return nxt if started else current
+
+
 def calendar_outlook(api: FantasyAPI, weeks_ahead: int = 10) -> Outlook:
     """Dónde estamos en el calendario: si hay parón ahora y cuándo es el siguiente."""
     try:
@@ -134,7 +148,10 @@ def calendar_outlook(api: FantasyAPI, weeks_ahead: int = 10) -> Outlook:
         if dates:
             spans[w] = (dates[0], dates[-1])
     now = datetime.now(timezone.utc)
-    out = Outlook(next_first=spans.get(current, (None,))[0], prev_last=spans.get(current - 1, (None, None))[1])
+    upc = upcoming_week(wk, now, spans.get(current, (None,))[0])
+    out = Outlook(next_first=spans.get(upc, (None,))[0], prev_last=spans.get(upc - 1, (None, None))[1])
+    if out.prev_last and out.next_first and out.prev_last > out.next_first:
+        out.prev_last = out.next_first  # un partido aplazado reubicado más adelante no es el "último" de esa jornada
     gap = (out.next_first - out.prev_last).days if out.next_first and out.prev_last else 0
     out.in_break = bool(out.prev_last and out.next_first and out.prev_last < now < out.next_first and gap >= BREAK_GAP_DAYS)
     weeks = sorted(spans)
@@ -185,8 +202,11 @@ def clause_freeze_window(api: FantasyAPI) -> tuple[datetime, datetime] | None:
     """La liga bloquea TODAS las cláusulas desde 24h antes del primer partido de la jornada
     hasta que arranca ese partido."""
     try:
-        current = models.to_int(models.pick(api.current_week(), "weekNumber"), default=0)
-        fixtures = models.parse_calendar(api.calendar(current))
+        wk = api.current_week()
+        current = models.to_int(models.pick(wk, "weekNumber"), default=0)
+        first_cur = min((f.when for f in models.parse_calendar(api.calendar(current)) if f.when), default=None)
+        upc = upcoming_week(wk, first_of_current=first_cur)
+        fixtures = models.parse_calendar(api.calendar(upc))
     except Exception:
         return None
     dates = [f.when for f in fixtures if f.when]

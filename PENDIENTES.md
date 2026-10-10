@@ -153,6 +153,38 @@ subidas fuertes tendría sentido +4–5% (sigue dejando +8% de media).
 no se queda sin once; le quitaría ~4 pts por jornada. Aitor Fdez está bloqueado hasta el 18/10, así que el bloqueo total solo sería posible
 desde J10 y necesitaría muchas plazas de plantilla (hay que tomar también los porteros de otros rivales con cláusula abierta).
 
+### 21. Jornada 8 (10/10): fallo del plazo, Rayo–Athletic, clausulazos y rival — resuelto o decidir el 20/10
+**Fallo corregido (10/10)**: la API llama "jornada actual" a la 8 hasta que cierra (`isLive`; cierra el 13/10 03:00), y el bot calculaba
+el plazo (alineación / saldo / congelación) con el primer partido de ESA jornada, ya pasado: −24,6 h. Con la jornada en juego saltó el
+"fichaje a crédito" de emergencia (sáb 21:02, puja viva de 21,8M por Marcos Alonso: valor cayendo −7% a 7 días, forma 2,0) y se bloqueaban
+ventas "para no quedarte sin 11". Ahora `service.upcoming_week` usa `isLive`/`nextWeek`/`openingWeekDate` (plazo = primer partido de la
+jornada siguiente) y una prueba lo cubre. **Decidir**: ¿cancelar la puja de Marcos Alonso (resuelve dom 11/10 20:53)? Con ella viva, el
+planificador solo puede completar con un suplente barato (J. Berrocal, 0,7M, media 1,6) porque la plantilla llega a 16. Sin ella compraría a
+Javi Rueda (5,3M, +3,3 pts/jornada). La ruta de cancelar puja no está probada.
+**Efecto colateral cubierto**: sin el bloqueo por plazo, el bot podría vender a un alineado cuyo partido aún no se ha jugado, y perdería sus
+puntos (al clausularnos a Freeman y Yuri el once quedó en 9). Ahora `_pending_match_players` bloquea esas ventas mientras la jornada está en juego
+(salvo que su cláusula ya sea pagable). Y si falla guardar la alineación a <12 h del plazo, reintenta cada 15 min (antes, 6 h).
+**Solo puntúan los alineados**: el planificador valora el mejor once + 15% de banquillo (`squad_value`), así que lo que no juega solo cuenta por
+su reventa; Johnny (invertido, banquillo) no suma puntos. Mi suma del 10/10 de "15 puntos" era una coincidencia: alineados con partido jugado = Soria 7 +
+Terrats 1 + Yuri 4 = 12 (Yuri provisional, partido suspendido); la clasificación marca 15, diferencia sin explicar (¿puntos provisionales revisados?).
+**Rayo–Athletic**: no se anuló, se SUSPENDIÓ el sáb 10/10 tras 13–25 minutos (0-0, objetos al campo); los minutos restantes sin fecha (Deia apunta al
+mié 5/11, sin confirmar). LaLiga Fantasy no ha publicado nada que hayamos encontrado; Comunio usa puntos provisionales y los rehace si se reanuda después
+del cierre. Hay que mirar la app/noticias antes del 13/10 03:00. Nuestros afectados: Yuri (Athletic, ya no es nuestro).
+**Rival del partido**: el bot ya aplica casa/fuera y la posición del rival en LaLiga, pero SOLO para elegir el once, no para fichar. Datos (1.661
+jugador-jornada, J1–J8): casa ×1,06 / fuera ×0,94 (el bot asume 1,05/0,95, bien); contra top-4 ×0,73 (el bot asume ×0,92); contra rivales de
+13.º a 16.º ×1,16; defensas contra top-6 ×0,66 y contra los 6 últimos ×1,23. Pero un partido suelto tiene desviación 0,71× la media (un jugador de 6 pts
+saca 6 ± 4,3): Terrats (esperado 5,1 con el factor ×0,85 de jugar en el Barça; sacó 1) es varianza. Error cuadrático: sin rival 0,4989 → bot hoy
+0,4859 → calibrando por puesto 0,4751 (en muestra); "puntos concedidos por el rival" (fuera de muestra) 0,4936: peor que la clasificación. Mejora
+posible (20/10): calibrar a top-4 ≈0,75 y puesto DEF más sensible, y usar los próximos 2–3 rivales también al fichar (hoy no).
+**Clausulazos (55 jugadores que llegaron a tener la cláusula abierta; 30 clausulados, 11 vendidos a la liga, 14 siguen)**: en subida (≥10% 7d)
+23 de 31 se los llevan (riesgo 0,18 por día abierto, mediana 1,15 días; 8 de 30 en los primeros 12 min); con bajada previa 3 de 16 (0,02/día).
+Cláusulas ≥6% sobre el valor casi no se pagan (1 de 13; riesgo 0,01/día), pero no sirve de mucho porque sin subida casi nadie las paga igual.
+Rivales pagan mediana 1,000× el valor (4 de 30 ≥1,05×). Dueño clausulado: +46% medio sobre lo pagado (93% gana); vendido a la liga +17% (55%).
+Para los que subían ≥10% y acabaron clausulados (n=23): clausulado = 1,22× el valor de hace 3 días (mediana 1,14×) frente a 1,10× vendiendo a la liga
+en los 3 últimos días. Después del clausulazo siguen subiendo (+7,3% mediana a 7 días, el 89% sube): nos los quitan cuando van a subir más.
+Yuri y Freeman se vendieron a su valor (20,0M y 2,8M; pagados 18,7M y 2,0M). Conclusión provisional: dejar que clausulen a los que suben es
+mejor que venderlos antes; subir la cláusula solo compensaría con subidas muy fuertes (cuesta la mitad de lo que sube); no subir a todos.
+
 ### 16. Cláusula "tentadora"
 Idea del usuario: subir nuestras cláusulas hasta donde un rival aún se arriesgue (≈1,10× para jugadores en subida, lo
 máximo que han pagado), para que si la paga nos deje +5% neto (pagamos la mitad de la subida). Solo compensa si la

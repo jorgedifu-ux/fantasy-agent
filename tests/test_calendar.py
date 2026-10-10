@@ -9,11 +9,15 @@ NOW = datetime(2026, 10, 4, 12, 0, tzinfo=timezone.utc)
 
 
 class FakeAPI:
-    def __init__(self, weeks, current):
-        self.weeks, self.current = weeks, current
+    def __init__(self, weeks, current, live=None):
+        self.weeks, self.current, self.live = weeks, current, live
 
     def current_week(self):
-        return {"weekNumber": self.current}
+        wk = {"weekNumber": self.current}
+        if self.live is not None:   # forma real de la API: isLive / nextWeek / openingWeekDate
+            wk.update(isLive=self.live, nextWeek=self.current + 1,
+                      openingWeekDate=self.weeks[self.current][0].isoformat())
+        return wk
 
     def calendar(self, week):
         d = self.weeks.get(week)
@@ -30,16 +34,43 @@ def span(start_day, days=3):
 
 
 class OutlookTests(unittest.TestCase):
-    def run_outlook(self, weeks, current):
+    def run_outlook(self, weeks, current, live=None):
         with patch("fantasy_agent.service.datetime") as dt:
             dt.now.return_value = NOW
             dt.side_effect = lambda *a, **k: datetime(*a, **k)
-            return service.calendar_outlook(FakeAPI(weeks, current), weeks_ahead=6)
+            return service.calendar_outlook(FakeAPI(weeks, current, live), weeks_ahead=6)
+
+    def run_freeze(self, weeks, current, live=None):
+        with patch("fantasy_agent.service.datetime") as dt:
+            dt.now.return_value = NOW
+            dt.side_effect = lambda *a, **k: datetime(*a, **k)
+            return service.clause_freeze_window(FakeAPI(weeks, current, live))
 
     def test_break_in_progress(self):
         out = self.run_outlook({7: span(-18), 8: span(5), 9: span(12)}, current=8)
         self.assertTrue(out.in_break)
         self.assertEqual(out.next_first, span(5)[0])
+
+    def test_jornada_in_progress_looks_at_the_next_deadline(self):
+        # Sábado de la J8: su primer partido (hace 1 día) ya pasó, la API aún la llama "actual" (isLive).
+        weeks = {7: span(-9), 8: span(-1, days=3), 9: span(6, days=3)}
+        for live in (True, None):  # con la forma real de la API y con la antigua (solo weekNumber)
+            out = self.run_outlook(weeks, current=8, live=live)
+            self.assertEqual(out.next_first, weeks[9][0])
+            self.assertGreater((out.next_first - NOW).total_seconds() / 3600, 100)
+            fr = self.run_freeze(weeks, current=8, live=live)
+            self.assertEqual(fr, (weeks[9][0] - timedelta(hours=24), weeks[9][0]))
+
+    def test_deadline_before_the_first_match_is_the_current_week(self):
+        weeks = {7: span(-5), 8: span(0.4, days=3), 9: span(7, days=3)}
+        self.assertEqual(self.run_freeze(weeks, current=8, live=False)[1], weeks[8][0])
+
+    def test_rescheduled_match_does_not_become_the_last_one(self):
+        later = NOW + timedelta(days=30)
+        weeks = {7: (NOW - timedelta(days=9), later), 8: span(6)}   # la J7 tiene un partido aplazado reubicado lejos
+        out = self.run_outlook(weeks, current=7, live=True)
+        self.assertEqual(out.next_first, weeks[8][0])
+        self.assertLessEqual(out.prev_last, out.next_first)
 
     def test_normal_week_is_not_a_break(self):
         out = self.run_outlook({7: span(-2), 8: span(4), 9: span(11)}, current=8)
