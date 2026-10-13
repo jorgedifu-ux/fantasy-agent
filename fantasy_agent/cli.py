@@ -212,8 +212,9 @@ def _sync_plan(store: Store, s, world) -> plan_mod.Plan:
 
 
 def _auto_shield(store: Store, s, api: FantasyAPI, world) -> tuple[str | None, str]:
-    """Blindaje (gratis, 1 por equipo y jornada, solo sobre una cláusula ya abierta) del
-    jugador tuyo más fácil de clausular. Antes se pregunta a `check_shield` (400 = el equipo
+    """Blindaje (gratis, tope observado de 2 por equipo y jornada, solo sobre una cláusula ya abierta) del
+    jugador que más puntos nos quitaría si lo clausulan (`ap.shield_target`; si nadie pasa el
+    mínimo no se gasta, 13/10: se había blindado a Mayol, 1,1M y 0,5 pts). Antes se pregunta a `check_shield` (400 = el equipo
     ya gastó el suyo, no se insiste) y después se verifica releyendo la plantilla: el 26/09
     la API respondió bien sin blindar (en la app pasa por ver un anuncio)."""
     now = datetime.now(timezone.utc)
@@ -222,7 +223,9 @@ def _auto_shield(store: Store, s, api: FantasyAPI, world) -> tuple[str | None, s
     exposed = [sl for sl in world.my_slots if ap.hours_until_exposed(sl, now) == 0]
     if not exposed:
         return None, ""
-    target = min(exposed, key=lambda sl: sl.clause / sl.player.market_value)
+    target = ap.shield_target(exposed, [sl.player for sl in world.my_slots], world.recent_form)
+    if target is None:
+        return None, ""  # nadie que al irse nos quite puntos de verdad: no se gasta el blindaje (máx. 2 por jornada)
     if not store.alert_is_new(f"shield:{target.player.id}", ttl_hours=96):
         return None, ""
     name = notify.esc(target.player.name)

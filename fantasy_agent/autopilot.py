@@ -695,6 +695,26 @@ def breaks_eleven(mine: list[Player], player_id: str) -> bool:
     return _complete(mine) and not _complete([p for p in mine if p.id != player_id])
 
 
+SHIELD_MIN_LOSS = 2.0        # solo se gasta un blindaje (máx. 2 por jornada) en quien al irse nos quita ≥2 pts/jornada
+
+
+def shield_target(exposed: list[SquadSlot], mine: list[Player], form: dict[str, float] | None = None) -> SquadSlot | None:
+    """A quién blindar de entre los que ya se pueden clausular. Que nos clausulen nunca es perder dinero
+    (cobramos la cláusula, que es ≥ el valor): lo que duele es perder puntos. Por eso solo se blinda a quien
+    nos quitaría puntos de verdad (`SHIELD_MIN_LOSS`), y de ellos al que más duele y más barato resulta
+    clausular (pts perdidos / cláusula sobre valor). Si nadie lo merece, no se gasta el blindaje."""
+    best, best_score = None, 0.0
+    for sl in exposed:
+        loss = sale_loss(mine, sl.player.id, form)
+        if loss < SHIELD_MIN_LOSS:
+            continue
+        ratio = sl.clause / sl.player.market_value if sl.player.market_value else 1.0
+        score = loss / max(ratio, 1.0)
+        if score > best_score:
+            best, best_score = sl, score
+    return best
+
+
 def hours_until_exposed(slot: SquadSlot, now: datetime) -> float | None:
     """Horas hasta que un rival pueda clausular a tu jugador (0 = ya puede), o None si su
     cláusula es tan alta que no es un objetivo lógico para nadie."""

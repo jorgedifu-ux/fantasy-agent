@@ -52,7 +52,7 @@ Los límites son **económicos**, no de número de operaciones (quitados los "2 
 | Venta antes de perder la protección | Si la cláusula de un jugador tuyo es atractiva (≤1,2× valor), empieza a intentar venderlo **3 días antes** de que acabe su protección: exige 1,03× a 3 días y baja hasta 0,98× el último día (+7% si es clave) |
 | Ofertas de rivales | Se rechazan, salvo que paguen ≥1,3× el valor |
 | Alineación | El mejor once por puntos esperados × probabilidad de titularidad × **partido** (casa +5% / fuera −5%, rival del 1º al último de LaLiga −10% a +10%, con la tabla real calculada de los resultados); se guarda y se **verifica releyéndola**. No se toca con la jornada en juego |
-| Blindaje | Pregunta antes a `check-shield` (si el equipo ya gastó el de la jornada, no insiste) y verifica después. El 26/09 la API respondió bien sin blindar (en la app pide ver un anuncio): si vuelve a pasar, te avisa para que lo hagas tú |
+| Blindaje | Solo para quien al irse nos quita ≥2 pts/jornada (`ap.shield_target`; antes se blindaba al de cláusula más barata y el 13/10 fue Mayol, 1,1M). Pregunta antes a `check-shield` (si el equipo ya gastó el de la jornada, no insiste) y verifica después. El 26/09 la API respondió bien sin blindar (en la app pide ver un anuncio): si vuelve a pasar, te avisa para que lo hagas tú |
 | Subir tu cláusula (pago) | Tus jugadores de media ≥5 cuya protección acaba en <24h y no se han vendido: cláusula a 1,5× su valor (pagas la mitad de la subida), solo si cabe sin tocar el colchón; se verifica releyendo |
 | Fichaje a crédito | Último recurso a <24h de la jornada con plantilla incompleta (tope 20% del valor) |
 | Te clausulan a alguien | Te avisa (compara la plantilla entre pasadas) |
