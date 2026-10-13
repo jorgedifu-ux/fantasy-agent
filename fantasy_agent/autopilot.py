@@ -537,6 +537,15 @@ def exit_candidate(sig: tuple | None, trend_d7: float, trend_d1: float | None = 
     return bool(sig) and sig[0] in cohorts.BAD_BUCKETS and not sig[1] and trend_d7 <= STALL_D7 and 1 <= sig[2] <= cohorts.MAX_SIGNAL_DAYS
 
 
+def hold_as_reserve(p: Player, keepers: int, loss: float, falling: bool) -> bool:
+    """¿Se queda este portero como reserva necesaria (no se vende)? Sí si no es clave y solo tenemos ≤`MIN_KEEPERS` porteros, SALVO que sea caro
+    (más de `BACKUP_GK_MAX`, p. ej. uno fichado en un golpe al líder) y esté frenándose o cayendo: solo puede jugar uno y ese dinero no puede estar
+    parado en un portero que pierde valor; al soltarlo, la regla de reserva comprará uno barato si hace falta (13/10/2026)."""
+    if p.position_id != 1 or not p.available or loss >= KEY_PLAYER_LOSS or keepers > MIN_KEEPERS:
+        return False
+    return not (p.market_value > BACKUP_GK_MAX and falling)
+
+
 EXIT_WINDOW_H = 72
 EXIT_LATE_MIN = 0.97
 

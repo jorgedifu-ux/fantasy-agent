@@ -110,6 +110,25 @@ class DepthDefender(unittest.TestCase):
         self.assertIsNone(self.move(incoming=[dfn("coming")]))       # una puja viva ya cuenta
 
 
+class SurplusKeeper(unittest.TestCase):
+    """Solo puede jugar un portero: uno caro de banquillo que se frena o cae se suelta; uno barato o que sube se queda como reserva."""
+    def test_who_is_kept_as_a_needed_reserve(self):
+        herrero = gk("herrero", 5.4, 21_000_000)
+        cheap = gk("cheap", 1.0, 600_000)
+        self.assertTrue(ap.hold_as_reserve(herrero, 2, 0.5, falling=False))        # sube: se queda
+        self.assertFalse(ap.hold_as_reserve(herrero, 2, 0.5, falling=True))        # caro y cayendo: se suelta
+        self.assertTrue(ap.hold_as_reserve(cheap, 2, 0.1, falling=True))           # barato: se queda aunque baje
+        self.assertFalse(ap.hold_as_reserve(herrero, 3, 0.5, falling=False))       # con 3 porteros sobra uno
+        self.assertFalse(ap.hold_as_reserve(herrero, 2, 5.0, falling=False))       # el titular lo decide la regla de "clave"
+
+    def test_a_falling_expensive_keeper_is_sold_at_value(self):
+        herrero = gk("herrero", 5.4, 21_000_000)
+        o = Offer(id="o", money=21_000_000, from_manager="LaLiga", is_system=True)
+        d, _ = ap.offer_decision(o, herrero, loss=0.5, trend_d7=8.0, trend_d3=0.5, trend_d1=0.0, hours_to_deadline=100,
+                                 reserve_keeper=ap.hold_as_reserve(herrero, 2, 0.5, True), cost_basis=21_190_000)
+        self.assertEqual(d, "accept")                                              # salida al frenarse: a su valor, sin mirar lo pagado
+
+
 class MakingRoom(unittest.TestCase):
     def mv(self, pid):
         return ap.Move("bid", gk(pid), 1)

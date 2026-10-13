@@ -327,6 +327,10 @@ clave (Soria) y los titulares a <48 h de la jornada quedan fuera.
   Con dos porteros no se compra, aunque el segundo esté a punto de poder clausularse. Es general (por posición y tiempos, no por nombres). Techo 1,5M (antes 3M; lo normal 0,5–0,6M), con paciencia: hasta 24 h antes del momento
   crítico (congelación o fin de la protección) solo ≤0,8M. Cuarto defensa: ≤1M, o ≤1,5M cerca de la congelación.
 
+- **Porteros sobrantes** (13/10 noche): solo juega un portero; uno CARO (>1,5M) de banquillo que se frena o cae (salida al frenarse, salida de 3 días o caída ≥4%) se suelta aunque sea la "reserva" (`autopilot.hold_as_reserve`); la
+  regla de reserva comprará uno barato si hace falta. Uno barato o que sube se queda. Con 3 porteros sobra uno. Prioridad al comprar: primero un titular (el planificador); si no, la reserva barata.
+  Corregido de paso: la salida de 3 días no estaba pasando el dato de "su valor sigue subiendo hoy" (la llamada no lo incluía): con Herrero subiendo no habría salido por otro motivo, pero la protección no actuaba.
+
 ### Hallazgos y notas de la J8 (evidencia)
 #### Exploración del 9/10 (sin cambios de código) — decidir el 20/10
 **Cron**: 16 ejecuciones seguidas OK cada 15 min (última 20:45). Prueba de subir cláusula OK: Mayol 1.112.342 → 1.223.576

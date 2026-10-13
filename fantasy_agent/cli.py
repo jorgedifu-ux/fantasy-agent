@@ -823,17 +823,18 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
         released = in_siege and hours is not None and hours <= 0  # jornada ya empezada: se puede vender
         loss_now = ap.sale_loss(mine, pid, world.recent_form)
         free_slot = pid in slot_victims
-        reserve_keeper = (sl.player.position_id == 1 and sl.player.available and loss_now < ap.KEY_PLAYER_LOSS
-                          and sum(1 for x in world.my_slots if x.player.position_id == 1 and x.player.available) <= ap.MIN_KEEPERS)
-        reserve_keeper = reserve_keeper or (sl.player.position_id == 2 and sl.player.available and loss_now < ap.KEY_PLAYER_LOSS
-                                            and sum(1 for x in world.my_slots if x.player.position_id == 2 and x.player.available) <= ap.MIN_DEF_DEPTH
-                                            and sl.player.market_value <= ap.BACKUP_GK_MAX)     # solo el recambio BARATO; un titular lo decide su propia regla
         sig = ap.MATCH_SIGNAL_FN(pid) if ap.MATCH_SIGNAL_FN else None
-        exit_flag = ap.exit_candidate(sig, trend.d7)
+        exit_flag = ap.exit_candidate(sig, trend.d7, trend.d1)
         if exit_flag:
             exit_since.setdefault(pid, time.time())
         else:
             exit_since.pop(pid, None)
+        falling_now = exit_flag or pid in cut or ap.is_stalled(trend.d1, trend.d7, sl.player.market_value)
+        reserve_keeper = ap.hold_as_reserve(sl.player, sum(1 for x in world.my_slots if x.player.position_id == 1 and x.player.available),
+                                            loss_now, falling_now)
+        reserve_keeper = reserve_keeper or (sl.player.position_id == 2 and sl.player.available and loss_now < ap.KEY_PLAYER_LOSS
+                                            and sum(1 for x in world.my_slots if x.player.position_id == 2 and x.player.available) <= ap.MIN_DEF_DEPTH
+                                            and sl.player.market_value <= ap.BACKUP_GK_MAX)     # solo el recambio BARATO; un titular lo decide su propia regla
         exit_late = exit_flag and time.time() - exit_since[pid] > ap.EXIT_WINDOW_H * 3600
         for o in sorted(offers, key=lambda o: -o.money):
             decision, why = ap.offer_decision(
