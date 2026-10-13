@@ -37,6 +37,16 @@ F2. Titulares caros "clave" por tener un banquillo flojo (Terrats 19M y Deossa 1
    las ofertas no pasan de 1,10×), así que ese umbral se queda.
 G. Autoajuste `shadow`; bloqueo al líder (viable como pronto en la J10).
 H. Política de cláusulas ("tentadora"): futuro, a petición del usuario.
+N. **Efecto suplente** (idea del usuario, 13/10): cuando un titular habitual está fuera (lesión, sanción, rotación), su suplente puntúa y puede subir de valor. Datos J4–J8 (33 casos, `data/analysis/subs.py`): el mercado NO lo anticipa (el valor del
+   suplente no sube antes del partido), pero solo compensa con suplentes baratos: <4M → +14,7% de media a 5 días (mediana +6,7%, sube el 62%; sin los 3 mejores casos +3,3%); ≥4M → −8,6% aunque puntúen (Rüdiger 9 pts: +1%). Si el suplente NO juega, −13% a 5 días.
+   Con el suplente "más probable" solo juega 30 de 61 veces: sin saber la alineación es cara o cruz (+5,9% de media, −8% de mediana en <4M). Hace falta confirmación (alineación probable de futbolfantasy ≥75%) y, aun así, el dinero es pequeño
+   (~4 casos baratos por jornada × ~0,4M). Decidir el 20/10: registrar en sombra, cada jornada, los suplentes <4M con titular fuera (probabilidad de futbolfantasy, quién lo tiene, qué pasó) antes de programar nada. Caso Vinicius→Diomande:
+   Diomande es de José (solo cláusula, y congelada de jueves 21:00 a viernes 21:00), y un jugador caro rinde mal en esta estadística.
+O. **Lesiones y sanciones por tipo** (consulta 13/10): la API solo da `playerStatus` (ok, injured, doubtful, suspended); no hay tipo ni duración y nuestro historial de estados solo tiene 3 semanas (9 cambios), así que "corta/larga" no se puede
+   leer. Hoy: lesionado/sancionado = 0 pts y no se ficha, dudoso ×0,55, y al nuestro lesionado se le vende a ≥1,0×. Mejoras posibles: clasificar por días en estado no-ok (cuando haya historial); no vender a un sancionado de una sola jornada;
+   subir la probabilidad de titular del compañero de posición cuando falta un titular (ver N); probar si futbolfantasy da tipo/duración (la consulta de prueba del 13/10 no devolvió ninguno de los lesionados: repetir con las páginas de la J9).
+P. **Capital y jugadores caros** (consulta 13/10): con más patrimonio hay que pasar a jugadores más caros (solo 16 plazas; hoy ~14M de media por plantilla, a 700M serían ~44M). Vigilar con datos: las ofertas de ≥30M parecen peores (mediana 0,96×, n=15) y los
+   suplentes caros no suben (ver N). Patrimonio: 253,9M el 5/10 → 274,5M el 13/10 (+2,6M/día, +1,0%/día; últimos 4 días +3,4M/día). Llegar a 700M: ~72 días al 1,3%/día compuesto, ~94 al 1,0%, ~125 al ritmo lineal de 3,4M/día, ~190 al 0,5%.
 
 **Más adelante**
 I. Crédito en parones largos: HECHO el 13/10 (hasta el 20% en pujas; primera vez en el parón del 8 al 22/11): vigilar que se devuelva a tiempo (aviso 🔴 si no).
