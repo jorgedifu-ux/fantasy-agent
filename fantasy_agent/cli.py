@@ -9,7 +9,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import analysis, auth, autopilot as ap, confirm, digest, export, learn, lineup, models, notify, plan as plan_mod, service, siege
+from . import analysis, auth, autopilot as ap, cohorts, confirm, digest, export, learn, lineup, models, notify, plan as plan_mod, service, siege
 from .api import FantasyAPI
 from .attendance import estimate_start_probability, estimate_titularidad
 from .config import load_settings
@@ -425,7 +425,7 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
         tr = trends.get(m.player.id, analysis.Trend(0, 0, 0))
         if m.player.position_id not in short and ap.is_falling(tr.d3, tr.d7):
             continue
-        m.drift = ap.expected_drift(tr.d3, tr.d7, world.recent_form.get(m.player.id))
+        m.drift = ap.expected_drift(tr.d3, tr.d7, world.recent_form.get(m.player.id), m.player.id)
         if m.bonus:
             m.rival_loss = ap.leader_loss(leader_players, m.player.id, world.recent_form)
         kept.append(m)
@@ -550,7 +550,7 @@ def _swap_notices(store: Store, world, moves, candidates, trends, free_cash: int
     for m in wanted:                      # drift para los que aún no lo tienen
         tr = trends.get(m.player.id)
         if tr is not None and not m.drift:
-            m.drift = ap.expected_drift(tr.d3, tr.d7, world.recent_form.get(m.player.id))
+            m.drift = ap.expected_drift(tr.d3, tr.d7, world.recent_form.get(m.player.id), m.player.id)
     protected = frozenset(sl.player.id for sl in world.my_slots if sl.player.position_id == 1) | frozenset(_siege_ids(store))
     swaps = ap.swap_candidates(world.my_slots, wanted, {pid: tr for pid, tr in trends.items()}, world.recent_form,
                                max(0, free_cash), protected_ids=protected)
@@ -712,6 +712,7 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
     sold = set(json.loads(store.get("sold_ids") or "[]"))
     events: list[str] = []
     paid: dict[str, int] | None = None  # lo que pagué por cada uno: se consulta solo si hay ofertas
+    exit_since: dict[str, float] = json.loads(store.get("exit_since") or "{}")
     need_slots = json.loads(store.get("slots_needed") or "{}")
     n_slots = int(need_slots.get("n", 0)) if time.time() - need_slots.get("at", 0) < 6 * 3600 else 0
     # Plazas que faltan para fichajes necesarios: los suplentes más baratos (que no puntúan) se ofrecen a la venta.
@@ -746,6 +747,13 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
         free_slot = pid in slot_victims
         reserve_keeper = (sl.player.position_id == 1 and sl.player.available and loss_now < ap.KEY_PLAYER_LOSS
                           and sum(1 for x in world.my_slots if x.player.position_id == 1 and x.player.available) <= ap.MIN_KEEPERS)
+        sig = ap.MATCH_SIGNAL_FN(pid) if ap.MATCH_SIGNAL_FN else None
+        exit_flag = ap.exit_candidate(sig, trend.d7)
+        if exit_flag:
+            exit_since.setdefault(pid, time.time())
+        else:
+            exit_since.pop(pid, None)
+        exit_late = exit_flag and time.time() - exit_since[pid] > ap.EXIT_WINDOW_H * 3600
         for o in sorted(offers, key=lambda o: -o.money):
             decision, why = ap.offer_decision(
                 o, sl.player, loss=loss_now, cut_loss=(pid in cut) or released,
@@ -754,7 +762,7 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
                 exposed_in=ap.hours_until_exposed(sl, now), squad_full=len(world.my_slots) >= s.max_squad,
                 cost_basis=None if in_siege else paid.get(pid),
                 injured=sl.player.status.lower() in ap.INJURED, clause=sl.clause, reserve_keeper=reserve_keeper,
-                free_slot=free_slot, trend_d1=trend.d1,
+                free_slot=free_slot, trend_d1=trend.d1, exit_mode=exit_flag, exit_late=exit_late,
             )
             if decision == "accept" and not done:
                 try:
@@ -779,6 +787,7 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
                     except Exception as exc:
                         events.append(f"❌ No he podido rechazar una oferta por <b>{name}</b>: {notify.esc(str(exc))}")
     store.set("sold_ids", json.dumps(sorted(sold)))
+    store.set("exit_since", json.dumps(exit_since))
     return events
 
 
@@ -1328,36 +1337,90 @@ def cmd_rivals(args, s) -> None:
     print(re.sub(r"</?b>", "", rivals.report(activity, hist, managers, names, date.today(), since)))
 
 
+def _cohort_inputs(api: FantasyAPI) -> dict:
+    """Puntos por jornada y valores diarios de todos los jugadores (~4 min por el ritmo moderado de la API) + días de los partidos."""
+    players = {}
+    for p in api.players():
+        if p.get("positionId") == "5" or float(p.get("marketValue") or 0) < 1_000_000:
+            continue
+        try:
+            players[p["id"]] = {"w": {int(x["weekNumber"]): x["points"] for x in (p.get("weekPoints") or []) if x.get("points") is not None},
+                                "team": p["teamId"], "name": p["nickname"], "pos": p["positionId"],
+                                "v": {d.date().isoformat(): v for d, v in models.parse_value_history(api.market_value_history(p["id"]))}}
+        except Exception:
+            pass
+    cal = {}
+    current = models.to_int(models.pick(api.current_week(), "weekNumber"), default=0)
+    for wk in range(1, current + 1):
+        for m in models.as_list(api.calendar(wk), "matches", "elements"):
+            if models.to_int(m.get("matchState")) in (7, 10):
+                day = models.parse_dt(m["matchDate"]).date().isoformat()
+                cal[f"{wk}:{m['localId']}"] = day
+                cal[f"{wk}:{m['visitorId']}"] = day
+    return {"players": players, "cal": cal}
+
+
 def cmd_cohorts(args, s) -> None:
     """Qué le pasa al valor tras un partido según los puntos y si el jugador subía (ver cohorts.py). Cachea los históricos en data/analysis."""
     from pathlib import Path
-    from . import cohorts
     path = Path("data/analysis/hdated.json")
     if args.refresh or not path.exists() or time.time() - path.stat().st_mtime > 12 * 3600:
-        api = FantasyAPI(s)
         print("Leyendo el histórico de valores de todos los jugadores (~4 min)…", file=sys.stderr)
-        players = {}
-        for p in api.players():
-            if p.get("positionId") == "5" or float(p.get("marketValue") or 0) < 1_000_000:
-                continue
-            try:
-                players[p["id"]] = {"w": {int(x["weekNumber"]): x["points"] for x in (p.get("weekPoints") or []) if x.get("points") is not None},
-                                    "team": p["teamId"], "name": p["nickname"], "pos": p["positionId"],
-                                    "v": {d.date().isoformat(): v for d, v in models.parse_value_history(api.market_value_history(p["id"]))}}
-            except Exception:
-                pass
-        cal = {}
-        current = models.to_int(models.pick(api.current_week(), "weekNumber"), default=0)
-        for wk in range(1, current + 1):
-            for m in models.as_list(api.calendar(wk), "matches", "elements"):
-                if models.to_int(m.get("matchState")) in (7, 10):
-                    day = models.parse_dt(m["matchDate"]).date().isoformat()
-                    cal[f"{wk}:{m['localId']}"] = day
-                    cal[f"{wk}:{m['visitorId']}"] = day
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"players": players, "cal": cal}))
+        path.write_text(json.dumps(_cohort_inputs(FantasyAPI(s))))
     data = json.loads(path.read_text())
     print(cohorts.report(cohorts.observations(data["players"], data["cal"])))
+
+
+def _setup_match_context(store: Store, api: FantasyAPI, world) -> None:
+    """Instala en el piloto cómo leer el ÚLTIMO PARTIDO de un jugador (puntos relativos a su media, si subía antes, días desde el partido) y
+    la tabla viva de cohortes (la recalcula `_refresh_cohorts` cada jornada; mientras no haya, la de partida de cohorts.PRIOR)."""
+    stored = json.loads(store.get("cohort_table") or "null")
+    table = {**cohorts.PRIOR, **(stored or {}).get("cells", {})}
+    try:
+        current = models.to_int(models.pick(api.current_week(), "weekNumber"), default=0)
+        calendars = {wk: models.as_list(api.calendar(wk), "matches", "elements") for wk in range(max(1, current - 2), current + 1)}
+    except Exception:
+        calendars = {}
+    dates = cohorts.match_dates(calendars)
+    raws = {str(p["id"]): p for p in api.players()}
+    today = datetime.now().date()
+    cache: dict[str, tuple | None] = {}
+
+    def signal_fn(pid: str):
+        if pid not in cache:
+            sig = None
+            if pid in raws:
+                try:
+                    values = {d.date(): v for d, v in models.parse_value_history(api.market_value_history(pid))}
+                    sig = cohorts.signal(raws[pid], dates, values, today)
+                except Exception:
+                    sig = None
+            cache[pid] = sig
+        return cache[pid]
+
+    ap.set_match_context(signal_fn, table)
+
+
+def _refresh_cohorts(store: Store, s, api: FantasyAPI, world) -> list[str]:
+    """Recalcula la tabla de cohortes con todos los datos hasta hoy: una vez por jornada (cuando cambia) y de madrugada (01–08 h) para no
+    cruzarse con las pujas de las 20:50 ni con los golpes de la congelación. Es lo que hace que las cifras se ajusten solas con cada jornada."""
+    if not 1 <= datetime.now().hour < 8:
+        return []
+    current = models.to_int(models.pick(api.current_week(), "weekNumber"), default=0)
+    stored = json.loads(store.get("cohort_table") or "null")
+    if stored and stored.get("week") == current and time.time() - stored.get("at", 0) < 8 * 86400:
+        return []
+    inputs = _cohort_inputs(api)
+    obs = cohorts.observations(inputs["players"], inputs["cal"])
+    if len(obs) < 300:
+        return []        # datos insuficientes: se queda la tabla anterior
+    cells = cohorts.merge_tables(cohorts.table_from_obs(obs))
+    store.set("cohort_table", json.dumps({"at": time.time(), "week": current, "n_obs": len(obs), "cells": cells}))
+    _setup_match_context(store, api, world)
+    zero = cohorts.lookup(cells, "0", False, 2)
+    return [f"📊 Tabla de cohortes recalculada con {len(obs)} partidos (jornada {current}): un jugador que no subía y no puntúa pierde de media "
+            f"{zero[0]:+.1%} en los 5 días siguientes." if zero else f"📊 Tabla de cohortes recalculada con {len(obs)} partidos."]
 
 
 def cmd_offers(args, s) -> None:
@@ -1417,6 +1480,7 @@ def _watch_once(store: Store, s) -> str:
     st("telegram", confirm.poll_and_execute, s, store, api)  # botones antiguos: responde que ya no aplican
 
     world = _world(api, s, trends=True)  # sin datos no se puede hacer nada: si falla, falla la pasada
+    st("cohortes", _setup_match_context, store, api, world)
     st("historial", _record_status_history, store, world)
     team_plan = st("plan", _sync_plan, store, s, world, default=plan_mod.Plan())
     st("patrimonio", _record_wealth, store, world)
@@ -1484,6 +1548,7 @@ def _watch_once(store: Store, s) -> str:
         )
 
     events += st("resumen semanal", _weekly_review, store, s, api, world, default=[])
+    events += st("recalcular cohortes", _refresh_cohorts, store, s, api, world, default=[])
     events += st("publicar datos", _publish_state, store, s, default=[])
     if errs and store.alert_is_new("step_errors:" + ",".join(sorted(e.split(":")[0] for e in errs)), ttl_hours=6):
         events.append("⚠️ Pasos con error en esta pasada (el resto se hizo): " + notify.esc("; ".join(errs))[:600])

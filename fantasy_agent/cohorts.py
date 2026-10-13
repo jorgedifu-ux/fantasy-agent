@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import statistics
 from datetime import date, timedelta
+from typing import Any
 
 Z_BUCKETS = ("0", "<=0.4", "0.4-1", "1-1.8", ">=1.8")
 Z_LABELS = {"0": "0 puntos (sin jugar)", "<=0.4": "≤0,4× su media", "0.4-1": "0,4–1,0×", "1-1.8": "1,0–1,8×", ">=1.8": "≥1,8×"}
@@ -70,3 +71,128 @@ def report(obs: list[dict]) -> str:
             lines.append(f"  {Z_LABELS[zb]:22} n={len(xs):4d}  media {statistics.mean(xs):+6.1%}  mediana {statistics.median(xs):+6.1%}  bajan {sum(x < 0 for x in xs) / len(xs):.0%}")
         lines.append("")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------------------------
+# Tabla viva: el bot la RECALCULA solo cada semana con todos los datos (cli._refresh_cohorts). Esta es solo la de partida
+# (J1–J8, 13/10/2026), que se usa mientras no haya una recalculada y para rellenar las celdas con pocos casos.
+# Clave "tramo|subía|días tras el partido" → [cambio medio del valor en los 5 días siguientes, nº de casos].
+# ---------------------------------------------------------------------------------------------
+PRIOR: dict[str, list] = {
+    "0.4-1|0|1": [-0.0353, 388],
+    "0.4-1|0|2": [-0.0334, 388],
+    "0.4-1|0|3": [-0.0307, 388],
+    "0.4-1|0|4": [-0.027, 388],
+    "0.4-1|1|1": [0.1596, 121],
+    "0.4-1|1|2": [0.1446, 121],
+    "0.4-1|1|3": [0.1316, 121],
+    "0.4-1|1|4": [0.1252, 121],
+    "0|0|1": [-0.0834, 250],
+    "0|0|2": [-0.082, 250],
+    "0|0|3": [-0.0788, 250],
+    "0|0|4": [-0.0743, 250],
+    "0|1|1": [0.0503, 62],
+    "0|1|2": [0.0369, 62],
+    "0|1|3": [0.027, 62],
+    "0|1|4": [0.0224, 62],
+    "1-1.8|0|1": [0.0292, 272],
+    "1-1.8|0|2": [0.0296, 272],
+    "1-1.8|0|3": [0.0263, 272],
+    "1-1.8|0|4": [0.0237, 272],
+    "1-1.8|1|1": [0.2259, 97],
+    "1-1.8|1|2": [0.2092, 97],
+    "1-1.8|1|3": [0.1882, 97],
+    "1-1.8|1|4": [0.1698, 97],
+    "<=0.4|0|1": [-0.0767, 235],
+    "<=0.4|0|2": [-0.0732, 235],
+    "<=0.4|0|3": [-0.0673, 235],
+    "<=0.4|0|4": [-0.06, 235],
+    "<=0.4|1|1": [0.0799, 95],
+    "<=0.4|1|2": [0.0675, 95],
+    "<=0.4|1|3": [0.0584, 95],
+    "<=0.4|1|4": [0.0525, 95],
+    ">=1.8|0|1": [0.1169, 223],
+    ">=1.8|0|2": [0.1143, 223],
+    ">=1.8|0|3": [0.105, 223],
+    ">=1.8|0|4": [0.0939, 223],
+    ">=1.8|1|1": [0.3435, 51],
+    ">=1.8|1|2": [0.3172, 51],
+    ">=1.8|1|3": [0.2861, 51],
+    ">=1.8|1|4": [0.2618, 51]
+}
+MIN_N = 20             # casos mínimos para fiarse de una celda
+HORIZON_DAYS = 5
+MAX_SIGNAL_DAYS = 6    # más de 6 días tras el partido, el partido ya no cuenta como señal
+
+
+def cell_key(zb: str, rising: bool, k: int) -> str:
+    return f"{zb}|{int(rising)}|{k}"
+
+
+def table_from_obs(obs: list[dict]) -> dict[str, list]:
+    out: dict[str, list] = {}
+    for zb in Z_BUCKETS:
+        for rising in (False, True):
+            for k in (1, 2, 3, 4):
+                c = cohort(obs, zb, rising, k, HORIZON_DAYS)
+                if c:
+                    out[cell_key(zb, rising, k)] = [round(c["mean"], 4), c["n"]]
+    return out
+
+
+def merge_tables(new: dict[str, list], prior: dict[str, list] | None = None, shrink_n: int = 30) -> dict[str, list]:
+    """Tabla nueva sobre la de partida: las celdas con muchos casos mandan; las de pocos casos se mezclan con la de partida."""
+    prior = PRIOR if prior is None else prior
+    out = dict(prior)
+    for key, (mean, n) in new.items():
+        if key in prior and n < shrink_n:
+            pm, pn = prior[key]
+            w = n / (n + shrink_n)
+            out[key] = [round(w * mean + (1 - w) * pm, 4), n]
+        else:
+            out[key] = [mean, n]
+    return out
+
+
+def lookup(table: dict[str, list], zb: str, rising: bool, k: int) -> tuple[float, int] | None:
+    cell = table.get(cell_key(zb, rising, k))
+    if not cell or cell[1] < MIN_N or not 1 <= k <= 4:
+        return None
+    return cell[0], cell[1]
+
+
+def match_dates(calendars: dict[int, list[dict]]) -> dict[tuple[int, str], date]:
+    """(jornada, id de equipo) → día del partido, solo de los terminados (matchState 7)."""
+    out: dict[tuple[int, str], date] = {}
+    for wk, matches in calendars.items():
+        for m in matches:
+            if int(m.get("matchState") or 0) != 7 or not m.get("matchDate"):
+                continue
+            d = date.fromisoformat(str(m["matchDate"])[:10])
+            out[(wk, str(m["localId"]))] = d
+            out[(wk, str(m["visitorId"]))] = d
+    return out
+
+
+def signal(raw: dict[str, Any], dates: dict[tuple[int, str], date], values: dict[date, int], today: date) -> tuple[str, bool, int] | None:
+    """Señal del ÚLTIMO partido de un jugador: (tramo de puntos, si subía antes, días desde el partido) o None si no hay una fiable
+    (poca historia, media <2, partido hace más de `MAX_SIGNAL_DAYS` días o sin valores)."""
+    w = {int(x["weekNumber"]): x["points"] for x in (raw.get("weekPoints") or []) if x.get("points") is not None}
+    played = [(dates[(wk, str(raw.get("teamId")))], wk) for wk in w if (wk, str(raw.get("teamId"))) in dates
+              and dates[(wk, str(raw.get("teamId")))] < today]
+    if not played:
+        return None
+    d, wk = max(played)
+    k = (today - d).days
+    others = [x for j, x in w.items() if j != wk and x != 0]
+    if k < 1 or k > MAX_SIGNAL_DAYS or len(others) < 3:
+        return None
+    norm = statistics.mean(others)
+    if norm < 2.0:
+        return None
+    a, b = values.get(d - timedelta(days=1)), values.get(d - timedelta(days=4))
+    if not a or not b:
+        return None
+    pts = w[wk]
+    z = 0.0 if pts == 0 else pts / norm
+    return z_bucket(z, pts), a / b - 1 >= RISING, k

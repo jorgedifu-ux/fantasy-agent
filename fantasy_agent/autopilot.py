@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from . import lineup
+from . import cohorts
 from .models import MarketItem, Offer, Player, SquadSlot
 
 FIELD_POSITIONS = (1, 2, 3, 4)
@@ -247,12 +248,14 @@ def keeper_cover(slots: list[SquadSlot], incoming: list[Player], freeze_start: d
     """(porteros disponibles, de ellos protegidos de un clausulazo hasta la congelación). Los que están
     en una puja viva cuentan como disponibles y protegidos (si se ganan, se bloquean 14 días)."""
     avail = prot = 0
-    for sl in slots:
-        if sl.player.position_id != 1 or not sl.player.available:
-            continue
+    keepers = [sl for sl in slots if sl.player.position_id == 1 and sl.player.available]
+    best_avg = max((sl.player.avg_points for sl in keepers), default=0.0)
+    for sl in keepers:
         avail += 1
         until = max((d for d in (sl.clause_locked_until, sl.shielded_until) if d), default=None)
-        if until and until >= freeze_start:
+        # Protege solo un portero BARATO (de reserva) o el titular: uno caro de banquillo (Herrero, 21M) está ahí por un golpe al líder y
+        # puede salir a la venta, así que no cuenta como la reserva: antes de soltarlo se compra una barata.
+        if until and until >= freeze_start and (sl.player.market_value <= BACKUP_GK_MAX or sl.player.avg_points >= best_avg):
             prot += 1
     for p in incoming:
         if p.position_id == 1 and p.available:
@@ -329,7 +332,7 @@ def swap_candidates(
             roster = [x for x in mine if x.id != a.id] + [m.player]
             gain = squad_value(roster, form) - base                      # cambio TOTAL del once (incluye perder a `a`)
             tr = trends.get(a.id)
-            drift_a = expected_drift(tr.d3, tr.d7, (form or {}).get(a.id)) if tr else 0.0
+            drift_a = expected_drift(tr.d3, tr.d7, (form or {}).get(a.id), a.id) if tr else 0.0
             keep_m = drift_a * a.market_value / 1e6 + SWAP_SELL_SPREAD * a.market_value / 1e6
             buy_net = net_value_m(gain, m.cost, m.player.market_value, m.drift, m.rival_loss)
             edge = buy_net - keep_m
@@ -411,7 +414,41 @@ def drift_tier(d3: float, d7: float, form: float | None) -> str | None:
 DRIFT_DECLINING = -0.05
 
 
-def expected_drift(d3: float, d7: float, form: float | None = None) -> float:
+# Subida esperada según el ÚLTIMO PARTIDO (13/10/2026): el valor reacciona a los puntos con ~2 días de retraso y, sobre todo, depende de si
+# el jugador YA subía (un 0 en un jugador en plena subida aún suma +4%; en uno que no subía, −8%). La tabla (`cohorts.py`) la recalcula el bot
+# solo cada semana; el cli instala aquí cómo obtenerla (`set_match_context`). Sin señal fiable se usa la subida por tendencia (abajo).
+MATCH_SIGNAL_FN = None        # pid -> (tramo, subía, días) | None
+MATCH_TABLE: dict = {}        # tabla viva (formato de cohorts.PRIOR)
+MATCH_DRIFT_CAP = 0.35
+MATCH_DRIFT_FLOOR = -0.12
+
+
+def set_match_context(signal_fn, table: dict | None = None) -> None:
+    global MATCH_SIGNAL_FN, MATCH_TABLE
+    MATCH_SIGNAL_FN, MATCH_TABLE = signal_fn, (table if table is not None else cohorts.PRIOR)
+
+
+def match_drift(player_id: str | None) -> float | None:
+    if not player_id or MATCH_SIGNAL_FN is None:
+        return None
+    sig = MATCH_SIGNAL_FN(player_id)
+    if sig is None:
+        return None
+    cell = cohorts.lookup(MATCH_TABLE, *sig)
+    return None if cell is None else max(MATCH_DRIFT_FLOOR, min(MATCH_DRIFT_CAP, cell[0]))
+
+
+def exit_candidate(sig: tuple | None, trend_d7: float) -> bool:
+    """Jugador que NO subía y sacó un partido mediocre o malo hace 1–6 días: el valor tiende a bajar (−3% a −8% a 5 días); se vende a la
+    primera oferta ≥1,00× (3 días de plazo) en vez de esperar. No aplica a los que suben ni a los clave (eso lo decide `offer_decision`)."""
+    return bool(sig) and sig[0] in ("0", "<=0.4", "0.4-1") and not sig[1] and trend_d7 <= STALL_D7 and 1 <= sig[2] <= cohorts.MAX_SIGNAL_DAYS
+
+
+EXIT_WINDOW_H = 72
+EXIT_LATE_MIN = 0.97
+
+
+def expected_drift(d3: float, d7: float, form: float | None = None, player_id: str | None = None) -> float:
     """Revalorización esperada a ~7 días (valores de fábrica de la prueba histórica del 4/10/2026,
     300 jugadores y 4 jornadas; el bot los recalibra cada semana, ver learn.calibrate_drift):
     - subida fuerte (≥4%/3d y ≥6%/7d) con buena forma: +30% (gana el 95%); sin forma: +16%; con
@@ -420,6 +457,9 @@ def expected_drift(d3: float, d7: float, form: float | None = None) -> float:
       partidos buenos y el precio aún no ha saltado" (con precio plano y sin subida, solo +3%).
     - subida suave sin forma que la respalde: nada.
     - bajando en la semana (sin llegar a caída): `DRIFT_DECLINING` (−5%), coste para el fichaje."""
+    by_match = match_drift(player_id)
+    if by_match is not None:
+        return by_match
     tier = drift_tier(d3, d7, form)
     if tier:
         return PARAMS[f"drift_{tier}"]
@@ -593,7 +633,7 @@ def offer_decision(
     breaks_xi: bool = False, hours_to_deadline: float | None = None, exposed_in: float | None = None,
     squad_full: bool = False, cost_basis: int | None = None, no_sell: bool = False, liquidity: bool = False,
     injured: bool = False, clause: int = 0, reserve_keeper: bool = False, free_slot: bool = False,
-    trend_d1: float | None = None,
+    trend_d1: float | None = None, exit_mode: bool = False, exit_late: bool = False,
 ) -> tuple[str, str]:
     """("accept" | "reject" | "hold", motivo). "hold" = no hacer nada y dejar que caduque.
     `no_sell`: jugador de una operación en curso (bloqueo al líder): no se vende todavía."""
@@ -611,6 +651,7 @@ def offer_decision(
         return "hold", "venderlo ahora te dejaría sin 11 para la jornada"
     key = loss >= KEY_PLAYER_LOSS
     stalled = is_stalled(trend_d1, trend_d7, value) and not key and not no_sell
+    leaving = exit_mode and not key and not no_sell and not stalled
     at_risk = exposed_in is not None and exposed_in <= AT_RISK_HOURS
     if at_risk:
         need = max(at_risk_min(exposed_in, key), clause / value if clause and value else 0.0)
@@ -627,6 +668,10 @@ def offer_decision(
         need, why = KEY_PLAYER_OFFER_MIN, "titular y la jornada empieza en <48h, sin tiempo de reponerlo"
     elif stalled:
         need, why = STALL_EXIT_MIN, f"se ha frenado tras subir (+{trend_d7:.0f}% en 7 días, hoy {trend_d1:+.1f}%): tiende a caer, salgo"
+    elif leaving:
+        need = EXIT_LATE_MIN if exit_late else STALL_EXIT_MIN
+        why = ("no subía y su último partido fue flojo: el valor tiende a bajar, salgo " +
+               ("(pasados 3 días, a ≥0,97× el valor)" if exit_late else "(plazo de 3 días, a ≥1,00× el valor)"))
     elif cut_loss:
         need, why = CUT_LOSS_OFFER_MIN, "en caída/lesionado, conviene salir"
     elif liquidity and loss < BENCH_LOSS and trend_d7 <= 5:
@@ -642,14 +687,14 @@ def offer_decision(
         need, why = BENCH_OFFER_MIN, "suplente con la plantilla llena: libera sitio para un fichaje mejor"
     else:
         need, why = PARAMS["league_offer_min"], "oferta por encima de su valor"
-    if trend_d3 > RISING_D3 and trend_d7 > 5 and not injured and not stalled and not (free_slot and loss < BENCH_LOSS):
+    if trend_d3 > RISING_D3 and trend_d7 > 5 and not injured and not stalled and not leaving and not (free_slot and loss < BENCH_LOSS):
         # También cerca de que se abra su cláusula (8/10/2026): si un rival lo clausula, cobras su
         # cláusula, que sube con su valor; venderlo antes regala la subida que queda.
         # La técnica (Josinho con Yamal): esperar a que suba. Prueba histórica (4/10/2026): comprar
         # una subida y mantener hasta que se frena rinde +72% de media (mediana +21%, ~19 días);
         # vender a los 7 días, solo +17%. Mientras sigue subiendo no se vende (las ofertas no pasan de ~1,13×).
         need, why = max(need, RISING_HOLD_MIN), f"sigue subiendo ({trend_d3:+.1f}% en 3 días): espero a que se frene"
-    if cost_basis and value and not cut_loss and not stalled:
+    if cost_basis and value and not cut_loss and not stalled and not leaving:
         # Nunca por debajo de lo que costó, tampoco por riesgo de cláusula (decisión del
         # usuario, 4/10/2026: mejor que te paguen la cláusula que vender con pérdida). Solo
         # se sale con pérdida si está lesionado o cayendo (`cut_loss`).
@@ -767,7 +812,7 @@ def invest_moves(market: list[MarketItem], trends: dict, skip_player_ids: frozen
             continue
         if it.price > p.market_value * INVEST_MAX_PRICE_RATIO:
             continue
-        drift = expected_drift(tr.d3, tr.d7, (form or {}).get(p.id))
+        drift = expected_drift(tr.d3, tr.d7, (form or {}).get(p.id), p.id)
         net = drift - max(0.0, it.price / p.market_value - 1) - RESALE_SPREAD
         if drift >= 0.08 and net >= 0.03:
             out.append(Move("invest", p, it.price, item=it, drift=drift, score=round(net * 100 + (tr.d3 + tr.d7) / 10, 1)))
@@ -788,7 +833,7 @@ def clause_invest_moves(
         p, tr = m.player, trends.get(m.player.id)
         if tr is None or p.id in skip_player_ids or m.cost > p.market_value * CLAUSE_INVEST_MAX_RATIO:
             continue
-        drift = expected_drift(tr.d3, tr.d7, (form or {}).get(p.id))
+        drift = expected_drift(tr.d3, tr.d7, (form or {}).get(p.id), p.id)
         net = drift - max(0.0, m.cost / p.market_value - 1) - RESALE_SPREAD
         if drift >= 0.08 and net >= 0.03:
             m.kind, m.drift = "invest_clause", drift

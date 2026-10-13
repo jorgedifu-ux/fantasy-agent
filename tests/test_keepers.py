@@ -44,6 +44,17 @@ class KeeperCover(unittest.TestCase):
         self.assertEqual(ap.keeper_cover([hurt], [gk("bid")], FREEZE[0]), (1, 1))
 
 
+class ExpensiveBenchKeeper(unittest.TestCase):
+    def test_an_expensive_bench_keeper_is_not_the_protected_reserve(self):
+        soria = slot(gk("soria", 7.5, 38_000_000), locked=NOW + timedelta(days=1))
+        herrero = slot(gk("herrero", 5.4, 21_000_000), locked=NOW + timedelta(days=14))      # bloqueado pero caro y de banquillo
+        cheap = slot(gk("cheap", 1.0, 700_000), locked=NOW + timedelta(days=14))
+        self.assertEqual(ap.keeper_cover([soria, herrero], [], FREEZE[0]), (2, 0))             # no cuenta → se compra una barata
+        self.assertEqual(ap.keeper_cover([soria, herrero, cheap], [], FREEZE[0]), (3, 1))      # con la barata, ya hay reserva (y 3 porteros: Herrero puede salir)
+        mv = ap.backup_keeper_move([soria, herrero], [], [item(gk("mk", 0.0, 590_000), 610_000)], [], NOW, FREEZE, 30_000_000)
+        self.assertEqual(mv.player.id, "mk")
+
+
 class BackupMove(unittest.TestCase):
     def setUp(self):
         self.soria = slot(gk("soria", 7.5, 38_000_000), locked=NOW + timedelta(days=1))

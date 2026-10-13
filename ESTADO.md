@@ -295,6 +295,18 @@ clave (Soria) y los titulares a <48 h de la jornada quedan fuera.
 - `python3 -m fantasy_agent cohorts` (nuevo) repite la tabla de cohortes (cohorts.py). Con 0 puntos (sin jugar) el valor baja ~1% diario desde D+2 (−5,8% de D+2 a D+7; el 83% baja); si el jugador YA subía, sigue subiendo
   (+3,7%). Para los que subían, aguantar y vender al frenarse ≥1,00× (lo que hace el bot) da +9,4% a ≤6 días incluso tras un mal partido; para los que NO subían, aguantar da −6% y vender a la 1.ª oferta ≥1,00× da +3,4%.
 
+### Cambios del 13/10/2026 (R1 y R2, decididos con el usuario)
+- **R1 — subida esperada según el último partido, con tabla que se recalcula sola**: `expected_drift(..., player_id)` usa la tabla de cohortes (`cohorts.py`) cuando hay señal fiable del último partido
+  (puntos relativos a su media en las demás jornadas, si subía ≥5% en los 3 días previos, días desde el partido 1–4); si no, la subida por tendencia de siempre. La tabla NO es fija:
+  `cli._refresh_cohorts` la recalcula con todos los datos (463 jugadores, ~4 min) una vez por jornada, de madrugada (01–08 h), y la guarda en `kv.cohort_table` (se exporta); las celdas con pocos
+  casos se mezclan con la de partida (J1–J8). Efecto hoy: Terrats +25% → +5,8%, Deossa +25% → +6,8%, H. González +25% → +3,7%, Hancko/Herrero/Soria negativos (−3%).
+- **R2 — salida de 3 días**: un jugador que NO subía y sacó un partido mediocre o malo hace 1–6 días (<1,0× su media) se vende a la primera oferta ≥1,00× su valor (sin mirar lo pagado);
+  pasadas 72 h, a ≥0,97×. No aplica a los clave (Hancko, Soria), a los que suben ni a quien rompe el once a <48 h de la jornada. (`autopilot.exit_candidate`, `offer_decision(exit_mode=…)`, `kv.exit_since`.)
+  Simulado: aceptar la primera oferta que llegue al precio de cuando se empieza a vender da +0,8% de media y se consigue en el 70% de los casos (p10 −9%); mantener da −6,5%. Las ofertas siguen al
+  valor del día, no al valor con el que se lista (β=0,01 con 114 ofertas; sin casos de jugadores cayendo en la muestra, así que lo del "precio al listar" queda como ~70% de las veces, no "siempre").
+- Un portero de reserva CARO y de banquillo (Herrero, 21M) no cuenta como reserva protegida: se compra una barata antes de poder soltarlo.
+- **R3 (rentabilidad mínima por fichaje) NO se aplica**: los golpes al líder valen por los puntos que le quitan (`rival_loss`) y, si el jugador sube mucho, por su subida esperada.
+
 ### Hallazgos y notas de la J8 (evidencia)
 #### Exploración del 9/10 (sin cambios de código) — decidir el 20/10
 **Cron**: 16 ejecuciones seguidas OK cada 15 min (última 20:45). Prueba de subir cláusula OK: Mayol 1.112.342 → 1.223.576
