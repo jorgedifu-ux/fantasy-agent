@@ -438,6 +438,10 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
     keeper = ap.backup_keeper_move(world.my_slots, incoming + planned_gks, world.market, world.rival_slots, now,
                                    world.clause_freeze, budget - sum(m.cost for m in plan))
     plan, missing = ap.add_reserve_keeper(plan, keeper, len(mine), s.max_squad)
+    depth = ap.depth_defender_move(world.my_slots, incoming + [m.player for m in plan if m.player.position_id == 2], world.market,
+                                   world.rival_slots, now, world.clause_freeze, budget - sum(m.cost for m in plan))
+    plan, missing_depth = ap.add_reserve_keeper(plan, depth, len(mine), s.max_squad)
+    missing += missing_depth
     store.set("slots_needed", json.dumps({"n": missing, "at": time.time()}))
     events: list[str] = []
     spent = sum(m.cost for m in plan)
@@ -512,8 +516,12 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
                 paid = _pay_clause(api, world.league_id, mv.slot, mv.cost)
                 store.record_auto_op("clause", mv.player.id, paid)
                 reserve = mv.player.position_id == 1 and not mv.gain
-                store.log_purchase(mv.player.id, "reserva" if reserve else "puntos", paid)
+                depth = mv.player.position_id == 2 and not mv.gain
+                store.log_purchase(mv.player.id, "reserva" if (reserve or depth) else "puntos", paid)
                 events.append(
+                    f"🛡️ <b>Cuarto defensa</b>: {name} (de {notify.esc(mv.slot.owner_name)}) por {service.m(paid)} · recambio barato: así, si un titular "
+                    f"(Giménez) se frena, se puede soltar sin dejar el once cojo"
+                    if depth else
                     f"🧤 <b>Portero de reserva</b>: {name} (de {notify.esc(mv.slot.owner_name)}) por {service.m(paid)} · su cláusula "
                     f"queda bloqueada 14 días: nadie puede quitártelo, siempre tendrás portero para el once"
                     if reserve else
@@ -527,7 +535,9 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
                 reserve = mv.player.position_id == 1 and not mv.gain
                 store.log_purchase(mv.player.id, "reserva" if reserve else "puntos", mv.cost)
                 cierre = mv.item.expires.astimezone().strftime("%H:%M") if mv.item.expires else "?"
-                motivo = "portero de reserva (protegido 14 días si se gana)" if reserve else f"+{mv.gain} pts/jornada"
+                motivo = ("portero de reserva (protegido 14 días si se gana)" if reserve else
+                          "cuarto defensa (recambio para poder soltar a un titular que se frena)" if mv.player.position_id == 2 and not mv.gain
+                          else f"+{mv.gain} pts/jornada")
                 events.append(
                     f"🛒 <b>Puja</b>: {name} ({pos}) {service.m(mv.cost)} (salida {service.m(mv.item.price)}) "
                     f"· {motivo} · se resuelve a las {cierre}"
@@ -815,6 +825,9 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
         free_slot = pid in slot_victims
         reserve_keeper = (sl.player.position_id == 1 and sl.player.available and loss_now < ap.KEY_PLAYER_LOSS
                           and sum(1 for x in world.my_slots if x.player.position_id == 1 and x.player.available) <= ap.MIN_KEEPERS)
+        reserve_keeper = reserve_keeper or (sl.player.position_id == 2 and sl.player.available and loss_now < ap.KEY_PLAYER_LOSS
+                                            and sum(1 for x in world.my_slots if x.player.position_id == 2 and x.player.available) <= ap.MIN_DEF_DEPTH
+                                            and sl.player.market_value <= ap.BACKUP_GK_MAX)     # solo el recambio BARATO; un titular lo decide su propia regla
         sig = ap.MATCH_SIGNAL_FN(pid) if ap.MATCH_SIGNAL_FN else None
         exit_flag = ap.exit_candidate(sig, trend.d7)
         if exit_flag:

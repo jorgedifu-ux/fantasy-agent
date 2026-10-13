@@ -380,6 +380,42 @@ def swap_is_safe(sw: Swap, mine: list[Player], cash: int, offer_money: int, hour
     return True, "ok"
 
 
+# Cuarto defensa (13/10/2026). Con solo 3 defensas, vender a cualquiera deja el puesto vacío: `sale_loss` sale igual a sus puntos esperados (Giménez, con
+# media 3,0, daba 3,0 = "clave") y el bot no lo soltaría ni aunque se frene o caiga. Con un recambio barato, la pérdida baja (3,0 → 0,5) y la salida al
+# frenarse sí funciona. Se compra el más barato (≤1M mientras haya tiempo, ≤3M cerca de la congelación) con media ≥1,5, y no se vende mientras sea el cuarto.
+MIN_DEF_DEPTH = 4
+DEPTH_MIN_AVG = 1.5
+
+
+def depth_defender_move(
+    slots: list[SquadSlot], incoming: list[Player], market: list[MarketItem], rival_slots: list[SquadSlot],
+    now: datetime, freeze: tuple[datetime, datetime] | None, budget: int,
+) -> Move | None:
+    have = sum(1 for sl in slots if sl.player.position_id == 2 and sl.player.available) + \
+        sum(1 for p in incoming if p.position_id == 2 and p.available)
+    if have >= MIN_DEF_DEPTH or have < 1:
+        return None                     # sin ningún defensa, el planificador normal ya tapa el hueco (con prioridad)
+    freeze_start = freeze[0] if freeze else now + timedelta(days=7)
+    cap = min(BACKUP_GK_MAX, budget)
+    if (freeze_start - now).total_seconds() / 3600 > KEEPER_PATIENCE_H:
+        cap = min(cap, 1_000_000)
+    owned = {sl.player.id for sl in slots} | {p.id for p in incoming}
+    frozen_now = bool(freeze and freeze[0] <= now < freeze[1])
+    options: list[tuple[int, float, int, Move]] = []
+    if not frozen_now:
+        for sl in rival_slots:
+            p = sl.player
+            if p.position_id == 2 and p.available and p.id not in owned and p.avg_points >= DEPTH_MIN_AVG and sl.clause_open(now) and 0 < sl.clause <= cap:
+                options.append((-sl.clause, p.avg_points, 0, Move("clause", p, sl.clause, slot=sl)))
+    for it in market:
+        p = it.player
+        if it.seller == "LaLiga" and it.market_id and not it.my_bid and p.position_id == 2 and p.available \
+                and p.id not in owned and p.avg_points >= DEPTH_MIN_AVG and 0 < bid_floor(it) <= cap:
+            cost = min(bid_amount(it, 0.0), cap)
+            options.append((-cost, p.avg_points, 0, Move("bid", p, cost, item=it)))
+    return max(options, key=lambda o: o[:3])[3] if options else None
+
+
 def add_reserve_keeper(plan: list[Move], keeper: Move | None, n_mine: int, max_squad: int) -> tuple[list[Move], int]:
     """Pone el portero de reserva el PRIMERO del plan. Si no hay plaza, quita los últimos fichajes del plan (los
     menos eficientes; se volverán a plantear cuando haya hueco). Devuelve (plan, plazas que faltan): con eso
@@ -683,7 +719,7 @@ def offer_decision(
             return "accept", f"oferta de {offer.from_manager} excepcional (x{ratio:.2f} el valor)"
         return "reject", f"oferta de {offer.from_manager} (x{ratio:.2f} el valor): las de rivales casi nunca convienen"
     if reserve_keeper:
-        return "hold", "portero de reserva: hace falta para tener siempre un once legal (y rotarlo antes de que se pueda clausular)"
+        return "hold", "recambio necesario (portero de reserva o cuarto defensa): sin él no hay once legal ni se puede soltar a un titular que se frena"
     if breaks_xi and (hours_to_deadline is None or hours_to_deadline < 48):
         return "hold", "venderlo ahora te dejaría sin 11 para la jornada"
     key = loss >= KEY_PLAYER_LOSS

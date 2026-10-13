@@ -318,6 +318,10 @@ clave (Soria) y los titulares a <48 h de la jornada quedan fuera.
   jugador a vender de ≥1,00× su valor, el once queda legal, faltan ≥30 h para la jornada, no hay otras compras ni pujas en esa pasada y no se ha hecho otra en 24 h (`autopilot.swap_is_safe`, `cli._execute_swap`).
   El motivo de la comprobación en el momento: la propuesta Hancko → Fer Niño (+7,3M) dejó de valer 14 minutos después, cuando otra regla vendió al tercer defensa de relleno y vender a Hancko dejaba el once ilegal.
 
+- **Cuarto defensa** (13/10, noche): con 3 defensas y sin recambio, `sale_loss` de cada uno es igual a sus puntos esperados (Giménez, media 3,0 → 3,0 = "clave") y ninguna regla de salida (frenarse, caída) lo soltaba:
+  con "clave" el bot mantiene aunque el valor baje. Con un recambio la pérdida baja (3,0 → 0,5) y la salida al frenarse sí funciona. `autopilot.depth_defender_move`: se compra el defensa más barato (media ≥1,5;
+  ≤1M mientras haya tiempo, ≤3M cerca de la congelación) y no se vende mientras sea el cuarto. Giménez: valor +2,5%, +2,4%, +2,5%, +2,0%, +2,0%, +1,2%, +0,6% al día (se frena); 'subía y sacó 0': +2% a +3% en los 3 días siguientes pero baja el 40–52%.
+
 ### Hallazgos y notas de la J8 (evidencia)
 #### Exploración del 9/10 (sin cambios de código) — decidir el 20/10
 **Cron**: 16 ejecuciones seguidas OK cada 15 min (última 20:45). Prueba de subir cláusula OK: Mayol 1.112.342 → 1.223.576

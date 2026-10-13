@@ -109,6 +109,36 @@ class BackupMove(unittest.TestCase):
         self.assertIsNone(self.move(incoming=[gk("coming")], rivals=[slot(gk("a"), owner="x")]))
 
 
+def dfn(pid, avg=3.0, value=800_000, status="ok"):
+    return Player(id=pid, name=pid, position_id=2, team="T", team_id="t", market_value=value, points=int(avg * 7), avg_points=avg, status=status)
+
+
+class DepthDefender(unittest.TestCase):
+    def setUp(self):
+        self.slots = [slot(dfn(f"d{i}", 6.0, 15_000_000)) for i in range(3)]
+
+    def move(self, market=(), rivals=(), slots=None, incoming=(), budget=30_000_000, freeze=FREEZE):
+        return ap.depth_defender_move(slots or self.slots, list(incoming), list(market), list(rivals), NOW, freeze, budget)
+
+    def test_buys_the_cheapest_fourth_defender(self):
+        cheap = MarketItem(player=dfn("luiz", 2.0, 880_000), price=880_000, expires=NOW + timedelta(hours=20), seller="LaLiga", bids=0, market_id="m1")
+        pricey = MarketItem(player=dfn("big", 6.0, 19_000_000), price=19_000_000, expires=NOW + timedelta(hours=20), seller="LaLiga", bids=0, market_id="m2")
+        self.assertEqual(self.move(market=[cheap, pricey]).player.id, "luiz")
+
+    def test_patient_far_from_the_freeze_and_needs_some_level(self):
+        mid = MarketItem(player=dfn("mid", 3.0, 2_000_000), price=2_000_000, expires=NOW + timedelta(hours=20), seller="LaLiga", bids=0, market_id="m1")
+        junk = MarketItem(player=dfn("junk", 0.2, 500_000), price=500_000, expires=NOW + timedelta(hours=20), seller="LaLiga", bids=0, market_id="m2")
+        self.assertIsNone(self.move(market=[mid, junk]))                                                         # 2M > 1M y quedan 5 días; el otro no juega
+        near = (NOW + timedelta(hours=30), NOW + timedelta(hours=54))
+        self.assertEqual(self.move(market=[mid, junk], freeze=near).player.id, "mid")
+
+    def test_not_needed_with_four_or_with_none(self):
+        four = self.slots + [slot(dfn("d4"))]
+        self.assertIsNone(self.move(slots=four))
+        self.assertIsNone(self.move(slots=[]))                       # sin defensas manda el planificador normal
+        self.assertIsNone(self.move(incoming=[dfn("coming")]))       # una puja viva ya cuenta
+
+
 class MakingRoom(unittest.TestCase):
     def mv(self, pid):
         return ap.Move("bid", gk(pid), 1)
