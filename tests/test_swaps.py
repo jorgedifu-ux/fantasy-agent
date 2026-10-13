@@ -100,8 +100,8 @@ class CreditOnlyForBids(unittest.TestCase):
                 from fantasy_agent.models import MarketItem
                 it = MarketItem(player=pl(pid, 3, 5.0, cost), price=cost, expires=None, seller="LaLiga", bids=0, market_id="m" + pid)
             return ap.Move(kind, pl(pid, 3, 5.0, cost), cost, item=it, score=score)
-        self.clause = mv("invest_clause", "c", 20_000_000, 9)
-        self.bid = mv("invest", "b", 20_000_000, 5)
+        self.clause = mv("invest_clause", "c", 15_000_000, 9)
+        self.bid = mv("invest", "b", 15_000_000, 5)
 
     def test_credit_never_pays_a_clause(self):
         plan = ap.plan_investments_with_credit([self.clause, self.bid], cash_budget=0, credit=50_000_000, slots=3)
