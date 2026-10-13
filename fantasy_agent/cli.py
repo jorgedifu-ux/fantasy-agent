@@ -137,7 +137,7 @@ def _emergency_debt_buy(store: Store, s, api: FantasyAPI, world, team_plan: plan
     pick = only_with_debt[0]
     name = notify.esc(pick.item.player.name)
     try:
-        api.bid(world.league_id, pick.item.market_id, pick.item.price)
+        _bid_robust(api, world.league_id, pick.item, ap.bid_floor(pick.item))
     except Exception as exc:
         return f"❌ Fichaje a crédito fallido para <b>{name}</b>: {notify.esc(str(exc))}"
     store.record_auto_op("emergency_debt_buy", pick.item.player.id, pick.item.price)
@@ -469,7 +469,7 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
             continue  # se puja en el último minuto (ver autopilot.bid_timing y `_timed_actions`)
         if mv.kind == "invest":
             try:
-                api.bid(world.league_id, mv.item.market_id, mv.cost)
+                mv.cost = _bid_robust(api, world.league_id, mv.item, mv.cost)
                 expires = mv.item.expires.timestamp() if mv.item.expires else None
                 store.add_market_bid(mv.player.id, mv.player.name, mv.cost, expires, ask=mv.item.price)
                 store.log_purchase(mv.player.id, "inversion", mv.cost)
@@ -521,7 +521,7 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
                     f"{service.m(paid)} · +{mv.gain} pts/jornada al once"
                 )
             else:
-                api.bid(world.league_id, mv.item.market_id, mv.cost)
+                mv.cost = _bid_robust(api, world.league_id, mv.item, mv.cost)
                 expires = mv.item.expires.timestamp() if mv.item.expires else None
                 store.add_market_bid(mv.player.id, mv.player.name, mv.cost, expires, ask=mv.item.price)
                 reserve = mv.player.position_id == 1 and not mv.gain
@@ -536,15 +536,15 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
             events.append(f"❌ {'Clausulazo' if mv.kind == 'clause' else 'Puja'} fallido por <b>{name}</b>: {notify.esc(str(exc))}")
     late = [mv for mv in plan if mv.kind in ("bid", "invest") and ap.bid_timing(mv.item, now) == "late"]
     try:
-        events += _swap_notices(store, world, moves, candidates, trends, budget - sum(m.cost for m in plan), plan)
+        events += _swap_notices(store, s, api, world, moves, candidates, trends, budget - sum(m.cost for m in plan), plan, incoming)
     except Exception as exc:  # solo informa: nunca debe romper las compras
         store.log_error("permutas", repr(exc))
     return events, [mv for mv in plan if not mv.executable_now] + late
 
 
-def _swap_notices(store: Store, world, moves, candidates, trends, free_cash: int, plan) -> list[str]:
-    """Permutas posibles (vender A para fichar B), SOLO AVISO: se guardan en `kv.swap_log` (se exporta) y se avisa una vez al día
-    por pareja. No se ejecutan: primero hay que ver si lo que propone es razonable (ver autopilot.swap_candidates)."""
+def _swap_notices(store: Store, s, api: FantasyAPI, world, moves, candidates, trends, free_cash: int, plan, incoming) -> list[str]:
+    """Permutas (vender A para fichar B): se registran en `kv.swap_log` y se avisa una vez al día por pareja; y la mejor se EJECUTA si pasa todas las
+    comprobaciones de `autopilot.swap_is_safe` hechas con la plantilla de este instante (ver autopilot.swap_candidates)."""
     planned = {m.player.id for m in plan}
     wanted = [m for m in (list(moves) + list(candidates)) if m.player.id not in planned and m.executable_now]
     for m in wanted:                      # drift para los que aún no lo tienen
@@ -562,11 +562,79 @@ def _swap_notices(store: Store, world, moves, candidates, trends, free_cash: int
             continue
         log.append({"at": time.time(), "sell": sw.sell.name, "sell_value": sw.sell.market_value, "buy": sw.buy.player.name,
                     "buy_cost": sw.buy.cost, "edge_m": sw.edge_m, "keep_m": sw.keep_m, "buy_net_m": sw.buy_net_m})
-        out.append(f"🔁 <b>Permuta posible</b> (solo aviso, no ejecuto): vender <b>{notify.esc(sw.sell.name)}</b> "
+        out.append(f"🔁 <b>Permuta posible</b>: vender <b>{notify.esc(sw.sell.name)}</b> "
                    f"({service.m(sw.sell.market_value)}) para fichar a <b>{notify.esc(sw.buy.player.name)}</b> ({service.m(sw.buy.cost)}): "
                    f"ventaja esperada +{sw.edge_m:.1f}M (fichaje +{sw.buy_net_m:.1f}M frente a conservar {sw.keep_m:.1f}M)")
     store.set("swap_log", json.dumps(log[-40:]))
+    if swaps and not plan and not incoming and time.time() - float(store.get("swap_last") or 0) > 24 * 3600:
+        out += _execute_swap(store, s, api, world, swaps[0])
     return out
+
+
+def _execute_swap(store: Store, s, api: FantasyAPI, world, sw: ap.Swap) -> list[str]:
+    """Vende A aceptando una oferta que ya exista y ficha a B (cláusula abierta o puja). Todo se vuelve a comprobar aquí con la plantilla de ahora."""
+    mine = [sl.player for sl in world.my_slots]
+    slot = next((sl for sl in world.my_slots if sl.player.id == sw.sell.id), None)
+    it = next((i for i in world.market if i.player.id == sw.sell.id and i.seller_team_id == world.my_team_id), None)
+    if slot is None or it is None:
+        return []
+    try:
+        offers = [o for o in models.parse_player_offers(api.player_team_offers(world.league_id, slot.player_team_id)) if o.is_system]
+    except Exception:
+        return []
+    best = max(offers, key=lambda o: o.money, default=None)
+    if best is None:
+        return []
+    ok, why = ap.swap_is_safe(sw, mine, world.my_cash or 0, best.money, _hours_to_deadline(world))
+    if not ok:
+        return []
+    b = sw.buy
+    name_a, name_b = notify.esc(sw.sell.name), notify.esc(b.player.name)
+    try:
+        api.accept_offer(world.league_id, it.market_id, best.id, best.money)
+    except Exception as exc:
+        return [f"❌ Permuta: no he podido vender a <b>{name_a}</b>: {notify.esc(str(exc))}"]
+    store.set("swap_last", str(time.time()))
+    sold = set(json.loads(store.get("sold_ids") or "[]")) | {sw.sell.id}
+    store.set("sold_ids", json.dumps(sorted(sold)))
+    msg = f"🔁 <b>PERMUTA</b>: vendido <b>{name_a}</b> por {service.m(best.money)} (ventaja esperada +{sw.edge_m:.1f}M). "
+    try:
+        if b.kind in ("clause", "invest_clause"):
+            paid = _pay_clause(api, world.league_id, b.slot, b.cost)
+            store.record_auto_op("clause", b.player.id, paid)
+            store.log_purchase(b.player.id, "inversion" if b.kind == "invest_clause" else "puntos", paid)
+        else:
+            amount = _bid_robust(api, world.league_id, b.item, round(ap.bid_floor(b.item) * 1.03))
+            paid = amount
+            expires = b.item.expires.timestamp() if b.item.expires else None
+            store.add_market_bid(b.player.id, b.player.name, amount, expires, ask=b.item.price)
+            store.log_purchase(b.player.id, "inversion" if b.kind == "invest" else "puntos", amount)
+        msg += f"Fichado/pujado <b>{name_b}</b> por {service.m(paid)}."
+    except Exception as exc:
+        msg += f"❌ No he podido fichar a <b>{name_b}</b> ({notify.esc(str(exc))[:150]}): el dinero queda disponible para otra compra."
+    return [msg]
+
+
+def _bid_robust(api: FantasyAPI, league_id: str, it, amount: int) -> int:
+    """Puja `amount` por el anuncio `it`; si la API la rechaza por importe ("not a valid money quantity", HTTP 400: por debajo del valor actual o de
+    la mejor puja), reintenta con un 1–5% más hasta el techo de +12% sobre el valor. Devuelve lo que se pujó de verdad."""
+    from .http import HttpError
+    floor = ap.bid_floor(it)
+    cap = round((it.player.market_value or it.price) * (1 + ap.MAX_OVERBID))
+    amount = max(amount, round(floor * 1.005))
+    tries = [amount] + [round(amount * f) for f in (1.01, 1.02, 1.035, 1.05)]
+    last: Exception | None = None
+    for a in tries:
+        if a > max(cap, amount):
+            break
+        try:
+            api.bid(league_id, it.market_id, a)
+            return a
+        except HttpError as exc:
+            last = exc
+            if exc.status != 400 or "valid money quantity" not in exc.body:
+                raise
+    raise last if last else RuntimeError("no se pudo pujar")
 
 
 def _late_bid(store: Store, api: FantasyAPI, world, mv: ap.Move) -> str | None:
@@ -579,7 +647,7 @@ def _late_bid(store: Store, api: FantasyAPI, world, mv: ap.Move) -> str | None:
         return None
     if it.player.status.lower() in ap.INJURED:
         return f"🚫 No pujo por <b>{name}</b>: ahora está {notify.esc(it.player.status)}."
-    api.bid(world.league_id, it.market_id, mv.cost)
+    mv.cost = _bid_robust(api, world.league_id, it, mv.cost)
     expires = it.expires.timestamp() if it.expires else None
     store.add_market_bid(mv.player.id, mv.player.name, mv.cost, expires, ask=it.price)
     store.log_purchase(mv.player.id, "inversion" if mv.kind == "invest" else "puntos", mv.cost)

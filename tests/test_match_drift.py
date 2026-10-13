@@ -40,10 +40,10 @@ class SignalTests(unittest.TestCase):
 
 class TableTests(unittest.TestCase):
     def test_new_cells_with_many_cases_replace_the_prior_and_small_ones_are_blended(self):
-        prior = {"0|0|2": [-0.08, 250], "1-1.8|1|2": [0.20, 100]}
-        merged = cohorts.merge_tables({"0|0|2": [-0.03, 300], "1-1.8|1|2": [0.40, 10]}, prior)
+        prior = {"0|0|2": [-0.08, 250], "1.4-1.8|1|2": [0.20, 100]}
+        merged = cohorts.merge_tables({"0|0|2": [-0.03, 300], "1.4-1.8|1|2": [0.40, 10]}, prior)
         self.assertEqual(merged["0|0|2"], [-0.03, 300])
-        self.assertAlmostEqual(merged["1-1.8|1|2"][0], 0.25 * 0.40 + 0.75 * 0.20, places=3)    # 10 casos pesan 10/40
+        self.assertAlmostEqual(merged["1.4-1.8|1|2"][0], 0.25 * 0.40 + 0.75 * 0.20, places=3)    # 10 casos pesan 10/40
 
     def test_lookup_needs_enough_cases_and_a_valid_day(self):
         table = {"0|0|2": [-0.08, 250], "0|0|3": [-0.05, 5]}
@@ -69,10 +69,11 @@ class DriftOverride(unittest.TestCase):
 
 class ExitMode(unittest.TestCase):
     def test_who_is_a_candidate(self):
-        self.assertTrue(ap.exit_candidate(("0.4-1", False, 3), 1.0))
+        self.assertTrue(ap.exit_candidate(("0.7-0.9", False, 3), 1.0))
         self.assertTrue(ap.exit_candidate(("0", False, 6), -2.0))
         self.assertFalse(ap.exit_candidate(("0", True, 3), 1.0))                 # subía antes: se aguanta
-        self.assertFalse(ap.exit_candidate(("1-1.8", False, 3), 1.0))            # jugó bien
+        self.assertFalse(ap.exit_candidate(("1.4-1.8", False, 3), 1.0))          # jugó bien
+        self.assertFalse(ap.exit_candidate(("0.9-1.1", False, 4), 1.0))          # partido neutro (Herrero: 6 pts con media 6,2)
         self.assertFalse(ap.exit_candidate(("0", False, 3), 12.0))               # sube ahora con fuerza
         self.assertFalse(ap.exit_candidate(None, 0.0))
 

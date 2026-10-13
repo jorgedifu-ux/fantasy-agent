@@ -60,5 +60,31 @@ class ShortRatio(unittest.TestCase):
         self.assertEqual(ap.clause_moves([way_over], NOW, short_positions=frozenset({1})), [])
 
 
+class SwapSafety(unittest.TestCase):
+    def setUp(self):
+        self.slots = [slot_of(p) for p in squad()]
+        self.mine = [sl.player for sl in self.slots]
+        self.star = pl("star", 3, 9.0, 20_000_000)
+        self.sw = ap.Swap(sell=self.mine[-2], buy=ap.Move("clause", self.star, 20_000_000, drift=0.15), edge_m=3.0, keep_m=0.4, buy_net_m=3.4)
+
+    def test_ok_when_everything_holds(self):
+        self.assertEqual(ap.swap_is_safe(self.sw, self.mine, 9_000_000, 12_000_000, 80.0), (True, "ok"))
+
+    def test_each_condition_blocks(self):
+        small = ap.Swap(self.sw.sell, self.sw.buy, 1.0, 0.4, 1.4)
+        self.assertFalse(ap.swap_is_safe(small, self.mine, 9_000_000, 12_000_000, 80.0)[0])             # ventaja baja
+        self.assertFalse(ap.swap_is_safe(self.sw, self.mine, 9_000_000, 12_000_000, 20.0)[0])           # jornada cerca
+        self.assertFalse(ap.swap_is_safe(self.sw, self.mine, 9_000_000, 11_000_000, 80.0)[0])           # oferta <1,00×
+        self.assertFalse(ap.swap_is_safe(self.sw, self.mine, 1_000_000, 12_000_000, 80.0)[0])           # no alcanza el dinero
+
+    def test_the_hancko_case_a_swap_that_leaves_no_legal_eleven_is_refused(self):
+        # solo 3 defensas: vender uno por un delantero deja el once sin completar (lo que pasó a las 21:16 con la propuesta de Hancko)
+        mine = [p for p in self.mine if p.position_id != 2] + [pl(f"d{i}", 2, 5) for i in range(3)]
+        sw = ap.Swap(sell=mine[-1], buy=self.sw.buy, edge_m=5.0, keep_m=0.4, buy_net_m=5.4)
+        ok, why = ap.swap_is_safe(sw, mine, 30_000_000, 12_000_000, 80.0)
+        self.assertFalse(ok)
+        self.assertIn("once legal", why)
+
+
 if __name__ == "__main__":
     unittest.main()

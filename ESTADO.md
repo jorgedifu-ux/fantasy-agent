@@ -307,6 +307,17 @@ clave (Soria) y los titulares a <48 h de la jornada quedan fuera.
 - Un portero de reserva CARO y de banquillo (Herrero, 21M) no cuenta como reserva protegida: se compra una barata antes de poder soltarlo.
 - **R3 (rentabilidad mínima por fichaje) NO se aplica**: los golpes al líder valen por los puntos que le quitan (`rival_loss`) y, si el jugador sube mucho, por su subida esperada.
 
+### Cambios del 13/10/2026 (noche): pujas, Herrero, permutas
+- **Pujas**: la puja mínima válida es el MAYOR entre el precio de salida y el valor ACTUAL (`autopilot.bid_floor`). El anuncio conserva el valor de las 20:53 del día anterior y el valor se actualiza a las 00:00:
+  Gulácsi subió un 3,6% (8,60M → 8,91M) y nuestra puja de +3% (8,86M) quedó por debajo del valor → HTTP 400 `is not a valid money quantity` (dos avisos: el trabajo de las 20:30 y el de las 20:45). Ahora
+  las pujas parten del suelo y `cli._bid_robust` reintenta con +1–5% (techo +12% sobre el valor) si la API las rechaza por importe. Las pujas de INVERSIÓN iban al precio de salida exacto: con jugadores que suben
+  (los que se buscan) siempre quedaban por debajo del valor → por eso no se ha cerrado ninguna puja de inversión. Ahora van un 1% por encima del suelo.
+- **Herrero (no debía venderse)**: sube y sacó 6 con media 6,2. Dos fallos míos: (1) los tramos de puntos eran demasiado gruesos (0,4–1,0× metía un 0,97× como "partido flojo"; ahora 8 tramos, flojo = <0,9×); (2) no se miraba
+  si el valor sigue subiendo hoy (si sube hoy, después no cae: +4,7% a 5 días, 84 casos; plano o bajando: −7%). La salida de 3 días exige ambas cosas. Los puntos absolutos predicen igual que los relativos (3–4 pts: −3%; 5–6: +2%).
+- **Permutas ejecutables** (antes solo aviso): se ejecuta la mejor si, con la plantilla de ESE instante: ventaja esperada ≥2M y ≥4% del coste del fichaje (ya neta de prima, 5% de ida y vuelta del fichaje y 3% de venta), existe una oferta por el
+  jugador a vender de ≥1,00× su valor, el once queda legal, faltan ≥30 h para la jornada, no hay otras compras ni pujas en esa pasada y no se ha hecho otra en 24 h (`autopilot.swap_is_safe`, `cli._execute_swap`).
+  El motivo de la comprobación en el momento: la propuesta Hancko → Fer Niño (+7,3M) dejó de valer 14 minutos después, cuando otra regla vendió al tercer defensa de relleno y vender a Hancko dejaba el once ilegal.
+
 ### Hallazgos y notas de la J8 (evidencia)
 #### Exploración del 9/10 (sin cambios de código) — decidir el 20/10
 **Cron**: 16 ejecuciones seguidas OK cada 15 min (última 20:45). Prueba de subir cláusula OK: Mayol 1.112.342 → 1.223.576

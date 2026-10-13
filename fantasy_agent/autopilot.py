@@ -194,6 +194,13 @@ def clause_moves(
     return out
 
 
+def bid_floor(item: MarketItem) -> int:
+    """Puja mínima válida: el MAYOR entre el precio de salida y el valor de mercado ACTUAL. El anuncio conserva el valor del día en que se
+    publicó (20:53), pero el valor se actualiza a las 00:00: un jugador que sube un 3,6% en un día ya vale más que su precio de salida y la
+    API rechaza pujar por debajo del valor (13/10/2026: Gulácsi, `"8857212" is not a valid money quantity for this player`)."""
+    return max(item.price, item.player.market_value or 0)
+
+
 def bid_moves(market: list[MarketItem], skip_player_ids: frozenset[str] = frozenset()) -> list[Move]:
     """Anuncios de LaLiga pujables (los de otros mánagers no son pujables entre nosotros)."""
     out = []
@@ -203,7 +210,7 @@ def bid_moves(market: list[MarketItem], skip_player_ids: frozenset[str] = frozen
             continue
         if p.position_id not in FIELD_POSITIONS or p.status.lower() in INJURED or p.id in skip_player_ids:
             continue
-        out.append(Move("bid", p, it.price, item=it))
+        out.append(Move("bid", p, bid_floor(it), item=it))
     return out
 
 
@@ -347,6 +354,32 @@ def swap_candidates(
     return picked[:limit]
 
 
+# Ejecución de permutas (13/10/2026). Una propuesta del día 13 (vender Hancko para fichar a Fer Niño, +7,3M) dejó de valer 14 minutos después,
+# cuando otra regla vendió al tercer defensa de relleno y el once quedaba ilegal: por eso se COMPRUEBA OTRA VEZ en el momento de actuar, con
+# la plantilla de ese instante, y solo se hace una permuta cada 24 h.
+SWAP_EXEC_MIN_EDGE_M = 2.0
+SWAP_EXEC_MIN_PCT = 0.04           # ventaja ≥4% del coste del fichaje
+SWAP_EXEC_MIN_HOURS = 30           # no cerca de la jornada: si la compra fallara, aún hay tiempo de arreglar el once
+SWAP_SELL_MIN_RATIO = 1.00         # la venta se hace con una oferta ya existente ≥ su valor
+
+
+def swap_is_safe(sw: Swap, mine: list[Player], cash: int, offer_money: int, hours_to_deadline: float | None,
+                 reserve: int = 0) -> tuple[bool, str]:
+    """¿Se puede ejecutar ahora esta permuta? (devuelve el motivo si no)."""
+    if sw.edge_m < SWAP_EXEC_MIN_EDGE_M or sw.edge_m < SWAP_EXEC_MIN_PCT * sw.buy.cost / 1e6:
+        return False, "la ventaja no llega al mínimo (2M y 4% del fichaje)"
+    if hours_to_deadline is not None and hours_to_deadline < SWAP_EXEC_MIN_HOURS:
+        return False, "la jornada está demasiado cerca"
+    if not sw.sell.market_value or offer_money < sw.sell.market_value * SWAP_SELL_MIN_RATIO:
+        return False, "no hay una oferta por el jugador a vender de ≥1,00× su valor"
+    if cash + offer_money - reserve < sw.buy.cost * 1.04:
+        return False, "con lo que se cobra no alcanza para el fichaje"
+    after = [p for p in mine if p.id != sw.sell.id] + [sw.buy.player]
+    if not complete_eleven(after):
+        return False, "tras la permuta no habría once legal"
+    return True, "ok"
+
+
 def add_reserve_keeper(plan: list[Move], keeper: Move | None, n_mine: int, max_squad: int) -> tuple[list[Move], int]:
     """Pone el portero de reserva el PRIMERO del plan. Si no hay plaza, quita los últimos fichajes del plan (los
     menos eficientes; se volverán a plantear cuando haya hueco). Devuelve (plan, plazas que faltan): con eso
@@ -383,7 +416,7 @@ def bid_amount(item: MarketItem, gain: float, rivals: RivalPremium | None = None
         overbid += 0.05
         if rivals and gain >= 1.5:
             overbid = max(overbid, rivals.median - 1)
-    return round(item.price * (1 + min(overbid, MAX_OVERBID)))
+    return round(bid_floor(item) * (1 + min(overbid, MAX_OVERBID)))
 
 
 def is_falling(d3: float, d7: float) -> bool:
@@ -438,10 +471,14 @@ def match_drift(player_id: str | None) -> float | None:
     return None if cell is None else max(MATCH_DRIFT_FLOOR, min(MATCH_DRIFT_CAP, cell[0]))
 
 
-def exit_candidate(sig: tuple | None, trend_d7: float) -> bool:
-    """Jugador que NO subía y sacó un partido mediocre o malo hace 1–6 días: el valor tiende a bajar (−3% a −8% a 5 días); se vende a la
-    primera oferta ≥1,00× (3 días de plazo) en vez de esperar. No aplica a los que suben ni a los clave (eso lo decide `offer_decision`)."""
-    return bool(sig) and sig[0] in ("0", "<=0.4", "0.4-1") and not sig[1] and trend_d7 <= STALL_D7 and 1 <= sig[2] <= cohorts.MAX_SIGNAL_DAYS
+def exit_candidate(sig: tuple | None, trend_d7: float, trend_d1: float | None = None) -> bool:
+    """Jugador que NO subía y sacó un partido FLOJO (<0,9× su media) hace 1–6 días y cuyo valor YA NO SUBE hoy: tiende a bajar (−7% a 5 días);
+    se vende a la primera oferta ≥1,00× (3 días de plazo) en vez de esperar. No cuenta: un partido neutro (0,9–1,1× su media, como el 6 de Herrero con
+    media 6,2) ni un valor que sigue subiendo hoy (+0,4% o más en un día: después no cae, +4,7% a 5 días en 84 casos). Los que suben y los clave
+    los decide `offer_decision`."""
+    if trend_d1 is not None and trend_d1 > STALL_D1:
+        return False
+    return bool(sig) and sig[0] in cohorts.BAD_BUCKETS and not sig[1] and trend_d7 <= STALL_D7 and 1 <= sig[2] <= cohorts.MAX_SIGNAL_DAYS
 
 
 EXIT_WINDOW_H = 72
@@ -798,6 +835,9 @@ INVEST_FRACTION_BREAK = 0.60     # en un parón no hay once que puntuar: más a 
 INVEST_MAX_SHARE = 0.40          # máximo por jugador, sobre el presupuesto de inversión
 
 
+INVEST_BID_MARGIN = 1.01      # las pujas de inversión van un 1% por encima del suelo (pujar justo el suelo no gana a nadie)
+
+
 def invest_moves(market: list[MarketItem], trends: dict, skip_player_ids: frozenset[str] = frozenset(),
                  form: dict[str, float] | None = None) -> list[Move]:
     """Anuncios de LaLiga de jugadores en subida (`trends`: id -> Trend; `form`: id -> pts de media
@@ -815,7 +855,7 @@ def invest_moves(market: list[MarketItem], trends: dict, skip_player_ids: frozen
         drift = expected_drift(tr.d3, tr.d7, (form or {}).get(p.id), p.id)
         net = drift - max(0.0, it.price / p.market_value - 1) - RESALE_SPREAD
         if drift >= 0.08 and net >= 0.03:
-            out.append(Move("invest", p, it.price, item=it, drift=drift, score=round(net * 100 + (tr.d3 + tr.d7) / 10, 1)))
+            out.append(Move("invest", p, round(bid_floor(it) * INVEST_BID_MARGIN), item=it, drift=drift, score=round(net * 100 + (tr.d3 + tr.d7) / 10, 1)))
     return sorted(out, key=lambda m: -m.score)
 
 

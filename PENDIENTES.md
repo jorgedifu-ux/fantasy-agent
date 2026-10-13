@@ -29,7 +29,7 @@ está lo que **todavía puede mejorar** y cómo comprobarlo la próxima vez.
 1. CALIBRAR PESOS Y UMBRALES (umbral de venta 1,05×, "clave" 1,25×, "subiendo" 1,25×, suplentes 0,97×, rivales 1,30×, salida al frenarse 1,00×, techo de puja +12%, peso de subida
    esperada 0,25): hacen falta ~150 ofertas (hoy 77) y las primeras operaciones de inversión cerradas (se cumplen 14 días: Yoel Lago 17/10, Terrats y Fofana 19/10, Zabiri y Roca 20/10, Deossa 21/10).
    El autoajuste lo recalcula cada semana en `shadow`.
-2. ACTIVAR LAS PERMUTAS (vender A para fichar B): ya calcula y avisa; falta leer `kv.swap_log` unos días y ver si lo que propone es razonable.
+2. PERMUTAS (vender A para fichar B): ya se ejecutan con salvaguardas (ver ESTADO); revisar en `kv.swap_log` las que se ejecuten y si salieron rentables.
 3. Pujas de inversión con +4–5% de prima: necesita la tasa de victoria según la prima (hoy 3 pujas; hacen falta ~15).
 4. Comprar para revender ("flip") sin momentum: necesita ofertas por jugadores ≥30M (15 hoy, mediana 0,96×, ¿peores?) y no tenemos saldo libre para probarlo.
 5. Cuánto dinero a inversión (25%) y saldo reservado para las cláusulas de las 20:53: depende del resultado real de las inversiones (punto 1).
