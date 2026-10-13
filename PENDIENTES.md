@@ -27,7 +27,7 @@ está lo que **todavía puede mejorar** y cómo comprobarlo la próxima vez.
 
 **Para la revisión del martes 20/10**
 A. Calibrar pesos y umbrales con J8–J10 (umbral de venta 1,05×, "clave" 1,25×, "subiendo" 1,25×, suplentes 0,97×, rivales 1,30×, salida al frenarse 1,00×, techo de puja +12%, subida esperada de las tablas).
-B. Permutas: ¿salieron rentables? afinar umbrales (2M y 4%).
+B. Permutas: ¿salieron rentables? afinar umbrales (2M y 4%). Idea del usuario (13/10): usar deuda (hasta el 20% del valor de la plantilla, solo en pujas de mercado, nunca en cláusulas) para comprar PRIMERO y vender después; diseño y límites por acordar.
 C. Fichar pensando en la probabilidad de ser titular y en que un 0 puede ser "no jugó" (caso Giménez).
 D. Pujas de inversión con prima y tasa de victoria (hacen falta ~15 pujas); comprar para revender ("flip"); cuánto dinero a inversión (25%) y saldo reservado para las 20:53.
 E. Efecto del rival al fichar (solo se usa para elegir el once); usar los puntos absolutos y relativos.

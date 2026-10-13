@@ -331,6 +331,12 @@ clave (Soria) y los titulares a <48 h de la jornada quedan fuera.
   regla de reserva comprará uno barato si hace falta. Uno barato o que sube se queda. Con 3 porteros sobra uno. Prioridad al comprar: primero un titular (el planificador); si no, la reserva barata.
   Corregido de paso: la salida de 3 días no estaba pasando el dato de "su valor sigue subiendo hoy" (la llamada no lo incluía): con Herrero subiendo no habría salido por otro motivo, pero la protección no actuaba.
 
+### Reglas de la deuda (comprobadas el 13/10/2026 con la ayuda oficial de LaLiga Fantasy y una guía de Comuniate)
+- Límite: **20% del valor de la plantilla** (no del patrimonio con saldo; hoy 269,6M → 53,9M; con saldo serían 56,9M). Puja máxima = saldo + ese 20% (hoy 68,7M).
+- **No se puede endeudar para pagar una cláusula ni para subir la propia**: las cláusulas se pagan solo con saldo (el bot ya trabaja así). Las pujas de mercado sí pueden usar deuda.
+- Con saldo negativo (o sin 11) al registrarse la alineación, esa jornada no suma puntos. Una puja por encima del saldo se acepta al hacerla (comprobado el 10/10 con la de Marcos Alonso); falta ver cómo se resuelve con saldo negativo.
+- Hoy el bot usa deuda solo en parones largos (`LEVERAGE_PCT` 10%) y en el fichaje de emergencia (hasta el 20%). Idea en estudio: permutas comprando PRIMERO con deuda (puja de mercado) y vendiendo la otra pierna después (evita el riesgo de vender y perder la puja).
+
 ### Hallazgos y notas de la J8 (evidencia)
 #### Exploración del 9/10 (sin cambios de código) — decidir el 20/10
 **Cron**: 16 ejecuciones seguidas OK cada 15 min (última 20:45). Prueba de subir cláusula OK: Mayol 1.112.342 → 1.223.576
