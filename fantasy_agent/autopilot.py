@@ -947,6 +947,17 @@ def clause_invest_moves(
     return sorted(out, key=lambda m: -m.score)
 
 
+def plan_investments_with_credit(moves: list[Move], cash_budget: int, credit: int, slots: int) -> list[Move]:
+    """Inversiones con el saldo (pujas y cláusulas) y, además, con CRÉDITO solo para pujas de mercado: el juego no deja endeudarse para pagar una
+    cláusula ni para subirla (comprobado el 13/10/2026), así que un fichaje por cláusula nunca puede salir del crédito."""
+    plan = plan_investments(moves, cash_budget, slots) if cash_budget > 0 and slots > 0 else []
+    if credit > 0 and slots - len(plan) > 0:
+        chosen = {m.player.id for m in plan}
+        bids_only = [m for m in moves if m.kind == "invest" and m.player.id not in chosen]
+        plan += plan_investments(bids_only, credit, slots - len(plan))
+    return plan
+
+
 def plan_investments(moves: list[Move], budget: int, slots: int) -> list[Move]:
     """Las de más momentum primero, sin pasar de INVEST_MAX_SHARE del presupuesto por jugador
     ni de las plazas libres de la plantilla."""

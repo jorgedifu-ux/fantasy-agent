@@ -446,15 +446,15 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
     events: list[str] = []
     spent = sum(m.cost for m in plan)
     invest_budget = int((budget - spent) * ap.PARAMS["invest_mult"] * (
-        ap.INVEST_FRACTION_BREAK if world.outlook.in_break else ap.INVEST_FRACTION_NORMAL)) + credit
+        ap.INVEST_FRACTION_BREAK if world.outlook.in_break else ap.INVEST_FRACTION_NORMAL))
     slots_left = s.max_squad - len(mine) - len(plan)
     taken = frozenset(pl.id for pl in mine) | {m.player.id for m in plan}
     candidates = (ap.invest_moves(world.market, trends, skip_player_ids=taken, form=world.recent_form)
                   + ap.clause_invest_moves(world.rival_slots, trends, now, freeze=world.clause_freeze, avoid_team_ids=avoid,
                                            skip_player_ids=taken, form=world.recent_form,
                                            leader_team_id=world.leader_team_id or "")) if trends else []
-    if invest_budget > 0 and slots_left > 0 and candidates:
-        plan += ap.plan_investments(candidates, invest_budget, slots_left)
+    if (invest_budget > 0 or credit > 0) and slots_left > 0 and candidates:
+        plan += ap.plan_investments_with_credit(candidates, invest_budget, credit, slots_left)
     # Rotación de capital: si hay inversiones buenas que no se han podido pagar (o no caben en la
     # plantilla), se anota para que `_resolve_offers` venda antes algún suplente que no suba.
     funded = {m.player.id for m in plan}

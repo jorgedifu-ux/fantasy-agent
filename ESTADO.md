@@ -337,6 +337,10 @@ clave (Soria) y los titulares a <48 h de la jornada quedan fuera.
 - Con saldo negativo (o sin 11) al registrarse la alineación, esa jornada no suma puntos. Una puja por encima del saldo se acepta al hacerla (comprobado el 10/10 con la de Marcos Alonso); falta ver cómo se resuelve con saldo negativo.
 - Hoy el bot usa deuda solo en parones largos (`LEVERAGE_PCT` 10%) y en el fichaje de emergencia (hasta el 20%). Idea en estudio: permutas comprando PRIMERO con deuda (puja de mercado) y vendiendo la otra pierna después (evita el riesgo de vender y perder la puja).
 
+- **Deuda en parones: hasta el 20% (decidido el 13/10 con el usuario)**: en los parones largos (≥7 días hasta el primer partido; suelen ser de 2 semanas, con tiempo de sobra para revertirlo) el crédito de inversión sube del 10% al 20% del valor de la plantilla
+  (`LEVERAGE_PCT` 0,20 = el tope del juego). Solo para PUJAS de mercado: el juego no deja endeudarse para pagar una cláusula (`autopilot.plan_investments_with_credit`; antes el crédito podía asignarse a una cláusula y habría fallado). Se deja de abrir
+  crédito a 7 días de la jornada y desde las 72 h `_delever` vende hasta volver a positivo (con aviso 🔴 si no llega): con saldo negativo al empezar, esa jornada no puntúa.
+
 ### Hallazgos y notas de la J8 (evidencia)
 #### Exploración del 9/10 (sin cambios de código) — decidir el 20/10
 **Cron**: 16 ejecuciones seguidas OK cada 15 min (última 20:45). Prueba de subir cláusula OK: Mayol 1.112.342 → 1.223.576

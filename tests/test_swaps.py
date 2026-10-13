@@ -92,5 +92,25 @@ class SwapSafety(unittest.TestCase):
         self.assertIn("once legal", why)
 
 
+class CreditOnlyForBids(unittest.TestCase):
+    def setUp(self):
+        def mv(kind, pid, cost, score):
+            it = None
+            if kind == "invest":
+                from fantasy_agent.models import MarketItem
+                it = MarketItem(player=pl(pid, 3, 5.0, cost), price=cost, expires=None, seller="LaLiga", bids=0, market_id="m" + pid)
+            return ap.Move(kind, pl(pid, 3, 5.0, cost), cost, item=it, score=score)
+        self.clause = mv("invest_clause", "c", 20_000_000, 9)
+        self.bid = mv("invest", "b", 20_000_000, 5)
+
+    def test_credit_never_pays_a_clause(self):
+        plan = ap.plan_investments_with_credit([self.clause, self.bid], cash_budget=0, credit=50_000_000, slots=3)
+        self.assertEqual([m.kind for m in plan], ["invest"])              # con solo crédito: únicamente la puja
+
+    def test_cash_can_pay_both_and_credit_adds_only_bids(self):
+        plan = ap.plan_investments_with_credit([self.clause, self.bid], cash_budget=100_000_000, credit=50_000_000, slots=3)
+        self.assertEqual(sorted(m.kind for m in plan), ["invest", "invest_clause"])
+
+
 if __name__ == "__main__":
     unittest.main()

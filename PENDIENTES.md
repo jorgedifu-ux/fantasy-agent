@@ -36,7 +36,7 @@ G. Autoajuste `shadow`; bloqueo al líder (viable como pronto en la J10).
 H. Política de cláusulas ("tentadora"): futuro, a petición del usuario.
 
 **Más adelante**
-I. Crédito en parones largos (decidir antes del 8/11).
+I. Crédito en parones largos: HECHO el 13/10 (hasta el 20% en pujas; primera vez en el parón del 8 al 22/11): vigilar que se devuelva a tiempo (aviso 🔴 si no).
 I2. **Permutas con deuda** (idea del usuario, 13/10; no urgente, queda para pendientes): comprar PRIMERO con una puja de mercado financiada con deuda y vender después la otra pierna (caso Camello/Hancko). Diseño acordado: deuda máxima del 10% del valor de la plantilla
    (el límite del juego es el 20% y no vale para cláusulas); solo con más de 48 h hasta el primer partido; vender la otra pierna debe dejar el saldo en positivo y el once legal; una sola operación a la vez; el saldo tiene que estar en positivo justo antes
    de empezar la jornada (si no, no se puntúa), así que no se hace si queda un único ciclo de ofertas para vender; estreno con margen de varios días.
