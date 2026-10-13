@@ -236,33 +236,32 @@ def bid_timing(item: MarketItem, now: datetime) -> str:
     return "now" if left <= BID_FALLBACK_S else "wait"
 
 
-# Portero de reserva PROTEGIDO (10/10/2026). Sin portero no hay once legal y la jornada puntúa 0; hay gente
-# que quita hasta tres porteros para dejar a un rival sin jugar (decisión del usuario: tener siempre uno de
-# reserva aunque sea barato y no juegue, y renovarlo antes de que se pueda clausular). Una compra bloquea la
-# cláusula del jugador 14 días, así que un portero comprado hace poco no se puede quitar: "protegido" = su
-# cláusula sigue bloqueada (o blindada) cuando se congelen las cláusulas de la próxima jornada. Hace falta
-# tener ≥2 porteros disponibles y ≥1 protegido; al acercarse el fin de su bloqueo se compra otro (rotación).
-# Se elige el MÁS BARATO (no juega: la calidad no importa) y con paciencia: hasta 36 h antes de la congelación solo se compra si
-# cuesta ≤0,8M (el mercado de LaLiga suele sacar algún portero de ~0,5M cada pocos días); a partir de ahí, el más barato de ≤3M.
-# (10/10/2026: se pagaron 1,6M por Szczesny, que vale 0,94M y baja, habiendo un portero de 0,61M en el mercado.)
+# Portero de reserva PROTEGIDO (10/10/2026, regla afinada el 13/10 con el usuario). Sin portero no hay once legal y la jornada puntúa 0; hay gente
+# que quita hasta tres porteros para dejar a un rival sin jugar. Una compra bloquea la cláusula del jugador 14 días, así que un portero comprado
+# hace poco no se puede quitar: "protegido" = su cláusula sigue bloqueada (o blindada) cuando se congelen las cláusulas de la próxima jornada.
+# Cualquier portero protegido vale (también uno caro como Herrero, 21M, que se compró en un golpe al líder). Una reserva barata (lo normal,
+# 0,5–0,6M; nunca más de 1,5M) se compra SOLO cuando se dan las DOS cosas: (1) nos quedamos con un único portero (p. ej. nos quitan a Soria; antes el
+# planificador busca un titular y, si no, la reserva) Y (2) la protección de ese único portero está a punto de acabarse (`RESERVE_LEAD_H`; unas horas antes de
+# que se pueda clausular) o no hay ninguno protegido. Con dos porteros no se compra, aunque Herrero esté a punto de caer (decisión del usuario: 1 y 2, no 1 o 2).
+# Se elige el MÁS BARATO (de reserva no juega) y con paciencia: hasta `KEEPER_PATIENCE_H` horas antes del momento crítico solo se compra si cuesta ≤0,8M;
+# en esas últimas horas, el más barato de ≤1,5M. (10/10/2026: se pagaron 1,6M por Szczesny, que vale 0,94M y baja, habiendo un portero de 0,61M.)
 MIN_KEEPERS = 2
-BACKUP_GK_MAX = 3_000_000        # coste máximo del portero de reserva (cláusula o puja), sea cual sea su ratio
+BACKUP_GK_MAX = 1_500_000        # techo absoluto de la reserva (cláusula o puja), sea cual sea su ratio
 CHEAP_KEEPER = 800_000
-KEEPER_PATIENCE_H = 36
+KEEPER_PATIENCE_H = 24           # horas antes del momento crítico en que se deja de esperar un portero de ≤0,8M
+RESERVE_LEAD_H = 48              # se empieza a buscar reserva cuando la protección del último portero protegido dura menos que esto
 
 
 def keeper_cover(slots: list[SquadSlot], incoming: list[Player], freeze_start: datetime) -> tuple[int, int]:
     """(porteros disponibles, de ellos protegidos de un clausulazo hasta la congelación). Los que están
     en una puja viva cuentan como disponibles y protegidos (si se ganan, se bloquean 14 días)."""
     avail = prot = 0
-    keepers = [sl for sl in slots if sl.player.position_id == 1 and sl.player.available]
-    best_avg = max((sl.player.avg_points for sl in keepers), default=0.0)
-    for sl in keepers:
+    for sl in slots:
+        if sl.player.position_id != 1 or not sl.player.available:
+            continue
         avail += 1
         until = max((d for d in (sl.clause_locked_until, sl.shielded_until) if d), default=None)
-        # Protege solo un portero BARATO (de reserva) o el titular: uno caro de banquillo (Herrero, 21M) está ahí por un golpe al líder y
-        # puede salir a la venta, así que no cuenta como la reserva: antes de soltarlo se compra una barata.
-        if until and until >= freeze_start and (sl.player.market_value <= BACKUP_GK_MAX or sl.player.avg_points >= best_avg):
+        if until and until >= freeze_start:
             prot += 1
     for p in incoming:
         if p.position_id == 1 and p.available:
@@ -271,19 +270,37 @@ def keeper_cover(slots: list[SquadSlot], incoming: list[Player], freeze_start: d
     return avail, prot
 
 
+def protection_hours_left(slots: list[SquadSlot], incoming: list[Player], now: datetime) -> float:
+    """Horas que aún durará la protección del portero mejor protegido (una puja viva, si se gana: 14 días)."""
+    best = 0.0
+    for sl in slots:
+        if sl.player.position_id == 1 and sl.player.available:
+            until = max((d for d in (sl.clause_locked_until, sl.shielded_until) if d), default=None)
+            if until:
+                best = max(best, (until - now).total_seconds() / 3600)
+    if any(p.position_id == 1 and p.available for p in incoming):
+        best = max(best, 14 * 24.0)
+    return best
+
+
 def backup_keeper_move(
     slots: list[SquadSlot], incoming: list[Player], market: list[MarketItem], rival_slots: list[SquadSlot],
     now: datetime, freeze: tuple[datetime, datetime] | None, budget: int,
 ) -> Move | None:
-    """Fichaje de un portero barato si falta reserva o ninguno está protegido. Primero cláusulas abiertas
+    """Fichaje de un portero de reserva barato SOLO cuando hace falta (ver arriba). Primero cláusulas abiertas
     (inmediatas; no se pueden pagar con las cláusulas congeladas) y el mercado de LaLiga: gana el MÁS BARATO."""
     freeze_start = freeze[0] if freeze else now + timedelta(days=7)
     avail, prot = keeper_cover(slots, incoming, freeze_start)
-    if avail >= MIN_KEEPERS and prot >= 1:
+    left = protection_hours_left(slots, incoming, now)
+    # Regla del usuario (13/10): reserva solo si (1) ya no tenemos al segundo portero (nos han quitado a Soria) Y (2) la protección del que queda
+    # está a punto de acabarse (o no hay ninguno protegido). Mientras tengamos dos porteros, o el que queda esté protegido por mucho tiempo, no se ficha.
+    if avail >= MIN_KEEPERS or (prot >= 1 and left > RESERVE_LEAD_H):
         return None
-    hours_left = (freeze_start - now).total_seconds() / 3600
+    # horas que faltan para el momento crítico: la congelación si no hay portero protegido (o falta el segundo), o el fin de la protección
+    to_freeze = (freeze_start - now).total_seconds() / 3600
+    critical = min(to_freeze, left) if left > 0 else to_freeze        # lo que ocurra antes: la congelación o el fin de la protección
     cap = min(BACKUP_GK_MAX, budget)
-    if avail >= 1 and hours_left > KEEPER_PATIENCE_H:
+    if avail >= 1 and critical > KEEPER_PATIENCE_H:
         cap = min(cap, CHEAP_KEEPER)          # hay tiempo: se espera a un portero barato (sin ninguno, no se espera)
     owned = {sl.player.id for sl in slots} | {p.id for p in incoming}
     frozen_now = bool(freeze and freeze[0] <= now < freeze[1])
@@ -296,7 +313,7 @@ def backup_keeper_move(
     for it in market:
         p = it.player
         if it.seller == "LaLiga" and it.market_id and not it.my_bid and p.position_id == 1 and p.available \
-                and p.id not in owned and 0 < it.price <= cap:
+                and p.id not in owned and 0 < bid_floor(it) <= cap:
             cost = min(bid_amount(it, 0.0), cap)
             options.append((-cost, p.avg_points, 0, Move("bid", p, cost, item=it)))
     return max(options, key=lambda o: o[:3])[3] if options else None
@@ -382,7 +399,7 @@ def swap_is_safe(sw: Swap, mine: list[Player], cash: int, offer_money: int, hour
 
 # Cuarto defensa (13/10/2026). Con solo 3 defensas, vender a cualquiera deja el puesto vacío: `sale_loss` sale igual a sus puntos esperados (Giménez, con
 # media 3,0, daba 3,0 = "clave") y el bot no lo soltaría ni aunque se frene o caiga. Con un recambio barato, la pérdida baja (3,0 → 0,5) y la salida al
-# frenarse sí funciona. Se compra el más barato (≤1M mientras haya tiempo, ≤3M cerca de la congelación) con media ≥1,5, y no se vende mientras sea el cuarto.
+# frenarse sí funciona. Se compra el más barato (≤1M mientras haya tiempo, ≤1,5M cerca de la congelación) con media ≥1,5, y no se vende mientras sea el cuarto.
 MIN_DEF_DEPTH = 4
 DEPTH_MIN_AVG = 1.5
 
@@ -397,7 +414,7 @@ def depth_defender_move(
         return None                     # sin ningún defensa, el planificador normal ya tapa el hueco (con prioridad)
     freeze_start = freeze[0] if freeze else now + timedelta(days=7)
     cap = min(BACKUP_GK_MAX, budget)
-    if (freeze_start - now).total_seconds() / 3600 > KEEPER_PATIENCE_H:
+    if (freeze_start - now).total_seconds() / 3600 > 36:
         cap = min(cap, 1_000_000)
     owned = {sl.player.id for sl in slots} | {p.id for p in incoming}
     frozen_now = bool(freeze and freeze[0] <= now < freeze[1])

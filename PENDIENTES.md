@@ -7,7 +7,7 @@ está lo que **todavía puede mejorar** y cómo comprobarlo la próxima vez.
 
 ## Calendario hasta la revisión (martes 20/10) — lo que el bot hace solo
 - **Esta noche 01–08 h**: primera recalculación de la tabla de cohortes (avisa por Telegram).
-- **Mié 14/10 09:00**: la reserva de portero deja de esperar un portero de ≤0,8M y acepta el más barato de ≤3M; debe estar comprada (barata y protegida 14 días) antes del jue 15/10 21:00.
+- **Reserva de portero**: no se compra nada mientras tengamos dos porteros; Herrero está protegido hasta el 27/10 (su cláusula se abre el 27/10 por la mañana). Solo si nos quitan a Soria Y le queda poco a Herrero se fichará una barata (≤0,8M; ≤1,5M en las últimas 24 h).
 - **Mié 14/10 21:00**: desde aquí no se vende a nadie que deje el once ilegal hasta que empiece la jornada.
 - **Jue 15/10 20:57 / 21:00**: golpes al líder antes de la congelación de cláusulas (si son viables); 21:00 empieza la congelación.
 - **Vie 16/10 21:00**: empieza la J9 (primer partido); se reabren las cláusulas.
@@ -21,7 +21,7 @@ está lo que **todavía puede mejorar** y cómo comprobarlo la próxima vez.
 1. Puja con el suelo del valor actual y reintento (mañana ~20:50: primera puja del último minuto con el código nuevo).
 2. Primera permuta ejecutada (si llega alguna) y cómo sale; `kv.swap_log`.
 3. Recalculación de cohortes (esta noche) y salidas de 3 días.
-4. Reserva de portero barata y cuarto defensa (Salinas ya comprado).
+4. Cuarto defensa (Salinas, 1M, ya comprado); la reserva de portero NO se compra mientras tengamos dos porteros.
 5. Golpes al líder del jueves; `kv.errors`.
 6. Mirar si LaLiga Fantasy rehace puntos cuando se juegue el resto del Rayo–Athletic (sin fecha).
 

@@ -322,6 +322,11 @@ clave (Soria) y los titulares a <48 h de la jornada quedan fuera.
   con "clave" el bot mantiene aunque el valor baje. Con un recambio la pérdida baja (3,0 → 0,5) y la salida al frenarse sí funciona. `autopilot.depth_defender_move`: se compra el defensa más barato (media ≥1,5;
   ≤1M mientras haya tiempo, ≤3M cerca de la congelación) y no se vende mientras sea el cuarto. Giménez: valor +2,5%, +2,4%, +2,5%, +2,0%, +2,0%, +1,2%, +0,6% al día (se frena); 'subía y sacó 0': +2% a +3% en los 3 días siguientes pero baja el 40–52%.
 
+- **Portero de reserva, regla afinada (13/10 noche, con el usuario)**: cualquier portero protegido (bloqueado por una compra reciente) cuenta, también uno caro (Herrero, 21M, golpe al líder). La reserva barata se compra SOLO cuando se dan
+  las dos cosas: (1) nos quedamos con un único portero (p. ej. nos quitan a Soria; antes el planificador busca un titular) Y (2) la protección de ese portero está a punto de acabarse (<48 h) o no hay ninguno protegido en la congelación.
+  Con dos porteros no se compra, aunque el segundo esté a punto de poder clausularse. Es general (por posición y tiempos, no por nombres). Techo 1,5M (antes 3M; lo normal 0,5–0,6M), con paciencia: hasta 24 h antes del momento
+  crítico (congelación o fin de la protección) solo ≤0,8M. Cuarto defensa: ≤1M, o ≤1,5M cerca de la congelación.
+
 ### Hallazgos y notas de la J8 (evidencia)
 #### Exploración del 9/10 (sin cambios de código) — decidir el 20/10
 **Cron**: 16 ejecuciones seguidas OK cada 15 min (última 20:45). Prueba de subir cláusula OK: Mayol 1.112.342 → 1.223.576

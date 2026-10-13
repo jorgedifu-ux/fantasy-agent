@@ -44,69 +44,40 @@ class KeeperCover(unittest.TestCase):
         self.assertEqual(ap.keeper_cover([hurt], [gk("bid")], FREEZE[0]), (1, 1))
 
 
-class ExpensiveBenchKeeper(unittest.TestCase):
-    def test_an_expensive_bench_keeper_is_not_the_protected_reserve(self):
-        soria = slot(gk("soria", 7.5, 38_000_000), locked=NOW + timedelta(days=1))
-        herrero = slot(gk("herrero", 5.4, 21_000_000), locked=NOW + timedelta(days=14))      # bloqueado pero caro y de banquillo
-        cheap = slot(gk("cheap", 1.0, 700_000), locked=NOW + timedelta(days=14))
-        self.assertEqual(ap.keeper_cover([soria, herrero], [], FREEZE[0]), (2, 0))             # no cuenta → se compra una barata
-        self.assertEqual(ap.keeper_cover([soria, herrero, cheap], [], FREEZE[0]), (3, 1))      # con la barata, ya hay reserva (y 3 porteros: Herrero puede salir)
-        mv = ap.backup_keeper_move([soria, herrero], [], [item(gk("mk", 0.0, 590_000), 610_000)], [], NOW, FREEZE, 30_000_000)
-        self.assertEqual(mv.player.id, "mk")
-
-
-class BackupMove(unittest.TestCase):
+class ExpensiveProtectedKeeper(unittest.TestCase):
+    """Herrero (21M, golpe al líder) cuenta como portero protegido. Reserva barata SOLO si (1) nos quedamos con un único portero Y (2) su protección
+    está a punto de acabar (o no hay ninguno protegido). Con dos porteros no se compra (decisión del usuario: 1 y 2, no 1 o 2)."""
     def setUp(self):
-        self.soria = slot(gk("soria", 7.5, 38_000_000), locked=NOW + timedelta(days=1))
+        self.soria = slot(gk("soria", 7.5, 38_000_000), locked=NOW - timedelta(days=2))             # ya clausulable
+        self.market = [item(gk("mk", 0.0, 590_000), 610_000)]
 
-    def move(self, market=(), rivals=(), slots=None, incoming=(), budget=30_000_000, freeze=FREEZE, now=NOW):
-        return ap.backup_keeper_move(slots or [self.soria], list(incoming), list(market), list(rivals), now, freeze, budget)
+    def herrero(self, locked_h):
+        return slot(gk("herrero", 5.4, 21_000_000), locked=NOW + timedelta(hours=locked_h))
 
-    def test_cheapest_wins_even_if_it_is_not_a_clause(self):
-        galdin = slot(gk("galdin", 0.0, 540_000), clause=1_000_000, owner="pep")
-        szcz = slot(gk("szcz", 0.1, 940_000), clause=1_600_000, owner="lider")
-        mv = self.move(market=[item(gk("romero", 0.0, 590_000), 610_000)], rivals=[galdin, szcz])
-        self.assertEqual((mv.kind, mv.player.id), ("bid", "romero"))            # el caso real del 10/10
+    def move(self, slots, market=None, incoming=(), freeze=FREEZE, budget=30_000_000):
+        return ap.backup_keeper_move(slots, list(incoming), self.market if market is None else market, [], NOW, freeze, budget)
 
-    def test_patient_far_from_the_freeze_only_buys_very_cheap(self):
-        galdin = slot(gk("galdin", 0.0, 540_000), clause=1_000_000, owner="pep")
-        self.assertIsNone(self.move(rivals=[galdin]))                           # 1,0M > 0,8M y quedan 5 días: se espera
-        near = (NOW + timedelta(hours=30), NOW + timedelta(hours=54))
-        self.assertEqual(self.move(rivals=[galdin], freeze=near).player.id, "galdin")   # ya no hay tiempo: el más barato
-        cheap = slot(gk("cheap", 0.0, 400_000), clause=700_000, owner="pep")
-        self.assertEqual(self.move(rivals=[galdin, cheap]).player.id, "cheap")          # ≤0,8M: se compra ya
+    def test_with_soria_and_herrero_nothing_is_bought_even_if_herrero_is_about_to_fall(self):
+        for hours in (14 * 24, 60, 40, 5):
+            self.assertIsNone(self.move([self.soria, self.herrero(hours)]), hours)
 
-    def test_no_waiting_when_there_is_no_keeper_at_all(self):
-        galdin = slot(gk("galdin", 0.0, 540_000), clause=1_000_000, owner="pep")
-        hurt = slot(gk("hurt", status="injured"))
-        self.assertEqual(self.move(slots=[hurt], rivals=[galdin]).player.id, "galdin")
+    def test_soria_gone_and_herrero_protected_for_long_nothing_is_bought(self):
+        self.assertIsNone(self.move([self.herrero(14 * 24)]))
+        soon = (NOW + timedelta(hours=30), NOW + timedelta(hours=54))
+        self.assertIsNone(self.move([self.herrero(60)], freeze=soon))       # protegido en la congelación y a 60 h (>48) de que acabe
 
-    def test_uses_the_market_when_no_clause_is_open(self):
-        locked = slot(gk("locked"), locked=NOW + timedelta(days=3), owner="pep")
-        mv = self.move(market=[item(gk("mk", 2.0, 600_000), 600_000)], rivals=[locked])
-        self.assertEqual((mv.kind, mv.player.id), ("bid", "mk"))
+    def test_soria_gone_and_herrero_about_to_fall_buys_the_cheap_reserve(self):
+        self.assertEqual(self.move([self.herrero(40)]).player.id, "mk")      # a 40 h (<48): busca un portero de ≤0,8M
+        pricey = [item(gk("pricey", 3.0, 1_200_000), 1_200_000)]
+        self.assertIsNone(self.move([self.herrero(40)], market=pricey))      # 1,2M: aún se espera
+        self.assertEqual(self.move([self.herrero(20)], market=pricey).player.id, "pricey")   # en las últimas 24 h, hasta 1,5M
+        self.assertIsNone(self.move([self.herrero(20)], market=[item(gk("big", 4.0, 3_000_000), 3_000_000)]))   # nunca 3M
 
-    def test_among_equals_prefers_the_one_who_plays_more(self):
-        rivals = [slot(gk("a", 1.0, 700_000), clause=700_000, owner="x"), slot(gk("b", 3.0, 700_000), clause=700_000, owner="y")]
-        self.assertEqual(self.move(rivals=rivals).player.id, "b")
+    def test_if_the_planner_is_already_buying_a_starter_keeper_no_reserve(self):
+        self.assertIsNone(self.move([self.herrero(20)], incoming=[gk("starter", 8.0, 40_000_000)]))
 
-    def test_nothing_when_covered_or_nothing_affordable(self):
-        backup = slot(gk("b"), locked=NOW + timedelta(days=14))
-        self.assertIsNone(self.move(slots=[self.soria, backup], rivals=[slot(gk("a"), owner="x")]))
-        self.assertIsNone(self.move(rivals=[slot(gk("a", 1.0, 800_000), owner="x")], budget=500_000))
-
-    def test_no_clause_payments_while_clauses_are_frozen(self):
-        frozen = (NOW - timedelta(hours=1), NOW + timedelta(hours=20))
-        self.assertIsNone(self.move(rivals=[slot(gk("a", 1.0, 500_000), owner="x")], freeze=frozen))
-        self.assertEqual(self.move(market=[item(gk("mk"), 600_000)], rivals=[slot(gk("a"), owner="x")], freeze=frozen).kind, "bid")
-
-    def test_rotation_when_the_protected_one_is_about_to_expire(self):
-        old_backup = slot(gk("old"), locked=FREEZE[0] - timedelta(hours=2))     # se abre antes de la congelación
-        mv = self.move(slots=[self.soria, old_backup], rivals=[slot(gk("new", 1.0, 500_000), clause=600_000, owner="x")])
-        self.assertEqual(mv.player.id, "new")
-
-    def test_pending_bid_counts_as_protection(self):
-        self.assertIsNone(self.move(incoming=[gk("coming")], rivals=[slot(gk("a"), owner="x")]))
+    def test_cover_counts_any_protected_keeper(self):
+        self.assertEqual(ap.keeper_cover([self.soria, self.herrero(14 * 24)], [], FREEZE[0]), (2, 1))
 
 
 def dfn(pid, avg=3.0, value=800_000, status="ok"):
@@ -126,9 +97,9 @@ class DepthDefender(unittest.TestCase):
         self.assertEqual(self.move(market=[cheap, pricey]).player.id, "luiz")
 
     def test_patient_far_from_the_freeze_and_needs_some_level(self):
-        mid = MarketItem(player=dfn("mid", 3.0, 2_000_000), price=2_000_000, expires=NOW + timedelta(hours=20), seller="LaLiga", bids=0, market_id="m1")
+        mid = MarketItem(player=dfn("mid", 3.0, 1_200_000), price=1_200_000, expires=NOW + timedelta(hours=20), seller="LaLiga", bids=0, market_id="m1")
         junk = MarketItem(player=dfn("junk", 0.2, 500_000), price=500_000, expires=NOW + timedelta(hours=20), seller="LaLiga", bids=0, market_id="m2")
-        self.assertIsNone(self.move(market=[mid, junk]))                                                         # 2M > 1M y quedan 5 días; el otro no juega
+        self.assertIsNone(self.move(market=[mid, junk]))                                                         # 1,2M > 1M y quedan 5 días; el otro no juega
         near = (NOW + timedelta(hours=30), NOW + timedelta(hours=54))
         self.assertEqual(self.move(market=[mid, junk], freeze=near).player.id, "mid")
 
