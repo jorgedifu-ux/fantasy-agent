@@ -5,52 +5,44 @@
 Actualizado el **10/10/2026** (lo hecho, en `ESTADO.md`). Complementa a `ESTADO.md` (qué hace el bot y qué está verificado). Aquí
 está lo que **todavía puede mejorar** y cómo comprobarlo la próxima vez.
 
-## Próximas revisiones (fechas)
-- **Revisión principal acordada con el usuario: lunes 20/10.** Si antes llega un 🔴 o muchos ❌ por Telegram, antes.
-- **Lunes 13/10** (tras la J8 y el fin del experimento de precio): puntos reales de la J8 vs esperados; ¿se pujó en
-  el último minuto y se ganó con menos prima? (`market_bids`); resultado de `clause_raise_test`; quitar `ASK_EXPERIMENT`.
-- **Lunes 20/10** (tras la J9; primeras compras del bot con 14 días: Yoel Lago 17/10, Terrats y Fofana 19/10): decidir
-  % a inversión, saldo reservado para cláusulas de las 20:53, política de "cláusula tentadora" y si vender para
-  financiar jugadores del líder (punto 15).
+## Calendario hasta la revisión (martes 20/10) — lo que el bot hace solo
+- **Esta noche 01–08 h**: primera recalculación de la tabla de cohortes (avisa por Telegram).
+- **Mié 14/10 09:00**: la reserva de portero deja de esperar un portero de ≤0,8M y acepta el más barato de ≤3M; debe estar comprada (barata y protegida 14 días) antes del jue 15/10 21:00.
+- **Mié 14/10 21:00**: desde aquí no se vende a nadie que deje el once ilegal hasta que empiece la jornada.
+- **Jue 15/10 20:57 / 21:00**: golpes al líder antes de la congelación de cláusulas (si son viables); 21:00 empieza la congelación.
+- **Vie 16/10 21:00**: empieza la J9 (primer partido); se reabren las cláusulas.
+- **Dom 19/10**: el autoajuste (modo `shadow`) deja sus propuestas semanales.
+- **Lun 19/10 21:00 → mar 20/10 03:00**: termina la J9 y cierra la semana; poco después, la tabla de cohortes se recalcula con los datos de la J9.
+- **Mar 20/10**: revisión conjunta.
 
-## LISTA DE PENDIENTES (resumen, 10/10/2026)
+## LISTA DE PENDIENTES (resumen, 13/10/2026)
 
-**Para la J9 (antes del vie 16/10 21:00)**
-1. Faltan 2 defensas para la J9: Rueda (5,3M) y un segundo (J. Berrocal 0,7M/Carreira 6,5M); el bot lo plantea en cuanto haya plaza. Comprobar el jueves que hay once legal.
+**Vigilar (primeras ejecuciones reales de lo nuevo; cada paso está aislado y avisa por Telegram si falla)**
+1. Puja con el suelo del valor actual y reintento (mañana ~20:50: primera puja del último minuto con el código nuevo).
+2. Primera permuta ejecutada (si llega alguna) y cómo sale; `kv.swap_log`.
+3. Recalculación de cohortes (esta noche) y salidas de 3 días.
+4. Reserva de portero barata y cuarto defensa (Salinas ya comprado).
+5. Golpes al líder del jueves; `kv.errors`.
+6. Mirar si LaLiga Fantasy rehace puntos cuando se juegue el resto del Rayo–Athletic (sin fecha).
 
-**Vigilar (sin decisión)**
-2. Rayo–Athletic: mirar en la app antes del mar 13/10 03:00 qué hace LaLiga Fantasy con los puntos provisionales.
-3. Primera puja del último minuto (20:50) y primeros golpes al líder antes de la congelación (jue 15/10 21:00): comprobar en `kv.errors` y en Telegram.
-4. Disparo extra en cron-job.org a las 20:32 (opcional, como red de seguridad); es un job aparte, no tocar el de 15 min.
-5. Verificar con Freeman que los puntos de un alineado vendido/clausulado tras empezar la jornada siguen siendo nuestros.
-6. Experimento de precio pedido (Mayol, Freeman): termina el 12/10; quitar `ASK_EXPERIMENT`. La hipótesis del precio pedido ya está descartada.
+**Para la revisión del martes 20/10**
+A. Calibrar pesos y umbrales con J8–J10 (umbral de venta 1,05×, "clave" 1,25×, "subiendo" 1,25×, suplentes 0,97×, rivales 1,30×, salida al frenarse 1,00×, techo de puja +12%, subida esperada de las tablas).
+B. Permutas: ¿salieron rentables? afinar umbrales (2M y 4%).
+C. Fichar pensando en la probabilidad de ser titular y en que un 0 puede ser "no jugó" (caso Giménez).
+D. Pujas de inversión con prima y tasa de victoria (hacen falta ~15 pujas); comprar para revender ("flip"); cuánto dinero a inversión (25%) y saldo reservado para las 20:53.
+E. Efecto del rival al fichar (solo se usa para elegir el once); usar los puntos absolutos y relativos.
+F. Planificador: relleno barato del once; fichaje de emergencia ya sin caídas.
+G. Autoajuste `shadow`; bloqueo al líder (viable como pronto en la J10).
+H. Política de cláusulas ("tentadora"): futuro, a petición del usuario.
 
-**Pendiente, y por qué espera (necesita datos que aún no existen)**
-1. CALIBRAR PESOS Y UMBRALES (umbral de venta 1,05×, "clave" 1,25×, "subiendo" 1,25×, suplentes 0,97×, rivales 1,30×, salida al frenarse 1,00×, techo de puja +12%, peso de subida
-   esperada 0,25): hacen falta ~150 ofertas (hoy 77) y las primeras operaciones de inversión cerradas (se cumplen 14 días: Yoel Lago 17/10, Terrats y Fofana 19/10, Zabiri y Roca 20/10, Deossa 21/10).
-   El autoajuste lo recalcula cada semana en `shadow`.
-2. PERMUTAS (vender A para fichar B): ya se ejecutan con salvaguardas (ver ESTADO); revisar en `kv.swap_log` las que se ejecuten y si salieron rentables.
-3. Pujas de inversión con +4–5% de prima: necesita la tasa de victoria según la prima (hoy 3 pujas; hacen falta ~15).
-4. Comprar para revender ("flip") sin momentum: necesita ofertas por jugadores ≥30M (15 hoy, mediana 0,96×, ¿peores?) y no tenemos saldo libre para probarlo.
-5. Cuánto dinero a inversión (25%) y saldo reservado para las cláusulas de las 20:53: depende del resultado real de las inversiones (punto 1).
-6. Efecto del rival: revalidar con J9–J10; usarlo al fichar solo si se justifica.
-7. Anticipar subidas con los puntos del último partido (tardan ~2 días en notarse en el valor): el análisis ya está; falta calibrarlo con varias jornadas.
-8. Planificador: relleno barato para completar el once (media 1,6 por 0,7M en vez de 3,0 por 5M): mirar el once real de la J9 antes de tocarlo.
-9. Porteros: ¿reserva de más calidad? (hoy el más barato); revisar la rotación en la práctica (24/10).
-10. Autoajuste en `shadow`: revisar propuestas semanales (solo propone 1,045× en el umbral de venta, casi igual que 1,05×).
-11. Bloqueo al líder: se evalúa solo cada jornada (3 porteros: Herrero, Aitor Fdez bloqueado hasta el 18/10, Szczesny ya es nuestro); viable como pronto en la J10.
+**Más adelante**
+I. Crédito en parones largos (decidir antes del 8/11).
+J. Estrategia de las últimas ~8 jornadas.
 
-**Pendiente, sin datos de por medio (decisión o fecha)**
-12. Crédito en parones largos (10% / 20% / apagado): decidir antes del 8/11 (primera vez en el parón del 8 al 22/11).
-13. Estrategia de las últimas ~8 jornadas (todo a puntos) y de la última (golpes al líder): hace falta a partir de la J30; diseñar con tiempo.
-14. Política de cláusulas ("tentadora"/subir): futuro, a petición del usuario; datos en ESTADO (clausulazos).
-
-**Comprobar que lo hecho funciona**
-15. Salida al frenarse (Terrats; Johnny se vendió a 6,10M), portero de reserva y su rotación, liberación de plaza, primera puja del último minuto, golpes al líder, `kv.errors`, `kv.swap_log`.
-
-**Dependen de ti / largo plazo**
-17. Recompensa diaria de 100K (~23M hasta mayo): sin ruta conocida; si la petición lleva firma del anuncio no se puede automatizar.
-18. Token de cron-job.org caduca el 14/06/2027; datos del bot en una rama pública (`EXPORT_DATA=0` para dejar de publicar).
+**Dependen de ti**
+K. Disparo extra de las 20:32 en cron-job.org (opcional; es un job aparte).
+L. Recompensa diaria de 100K (sin ruta conocida).
+M. Token de cron-job.org caduca el 14/06/2027; los datos del bot están en una rama pública (`EXPORT_DATA=0` para dejar de publicar).
 
 ## Cómo retomar (primeros 10 minutos de la próxima sesión)
 
