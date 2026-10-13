@@ -383,6 +383,9 @@ SWAP_SELL_MIN_RATIO = 1.00         # la venta se hace con una oferta ya existent
 def swap_is_safe(sw: Swap, mine: list[Player], cash: int, offer_money: int, hours_to_deadline: float | None,
                  reserve: int = 0) -> tuple[bool, str]:
     """¿Se puede ejecutar ahora esta permuta? (devuelve el motivo si no)."""
+    if sw.buy.kind not in ("clause", "invest_clause"):
+        # Una puja de mercado se puede perder (nuestro registro: 3 de 3 perdidas en octubre): habríamos vendido al titular y nos quedaríamos sin él y sin el fichaje.
+        return False, "la compra es una puja de mercado (puede perderse): solo se ejecutan las permutas con cláusula abierta"
     if sw.edge_m < SWAP_EXEC_MIN_EDGE_M or sw.edge_m < SWAP_EXEC_MIN_PCT * sw.buy.cost / 1e6:
         return False, "la ventaja no llega al mínimo (2M y 4% del fichaje)"
     if hours_to_deadline is not None and hours_to_deadline < SWAP_EXEC_MIN_HOURS:

@@ -70,6 +70,12 @@ class SwapSafety(unittest.TestCase):
     def test_ok_when_everything_holds(self):
         self.assertEqual(ap.swap_is_safe(self.sw, self.mine, 9_000_000, 12_000_000, 80.0), (True, "ok"))
 
+    def test_a_market_bid_is_never_executed_as_a_swap(self):
+        bid = ap.Swap(sell=self.sw.sell, buy=ap.Move("bid", self.star, 20_000_000, drift=0.15), edge_m=6.0, keep_m=0.4, buy_net_m=6.4)
+        ok, why = ap.swap_is_safe(bid, self.mine, 9_000_000, 12_000_000, 80.0)
+        self.assertFalse(ok)
+        self.assertIn("puja de mercado", why)
+
     def test_each_condition_blocks(self):
         small = ap.Swap(self.sw.sell, self.sw.buy, 1.0, 0.4, 1.4)
         self.assertFalse(ap.swap_is_safe(small, self.mine, 9_000_000, 12_000_000, 80.0)[0])             # ventaja baja

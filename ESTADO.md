@@ -314,7 +314,7 @@ clave (Soria) y los titulares a <48 h de la jornada quedan fuera.
   (los que se buscan) siempre quedaban por debajo del valor → por eso no se ha cerrado ninguna puja de inversión. Ahora van un 1% por encima del suelo.
 - **Herrero (no debía venderse)**: sube y sacó 6 con media 6,2. Dos fallos míos: (1) los tramos de puntos eran demasiado gruesos (0,4–1,0× metía un 0,97× como "partido flojo"; ahora 8 tramos, flojo = <0,9×); (2) no se miraba
   si el valor sigue subiendo hoy (si sube hoy, después no cae: +4,7% a 5 días, 84 casos; plano o bajando: −7%). La salida de 3 días exige ambas cosas. Los puntos absolutos predicen igual que los relativos (3–4 pts: −3%; 5–6: +2%).
-- **Permutas ejecutables** (antes solo aviso): se ejecuta la mejor si, con la plantilla de ESE instante: ventaja esperada ≥2M y ≥4% del coste del fichaje (ya neta de prima, 5% de ida y vuelta del fichaje y 3% de venta), existe una oferta por el
+- **Permutas ejecutables** (antes solo aviso; solo con la compra por CLÁUSULA abierta: una puja de mercado puede perderse y nos quedaríamos sin el titular vendido y sin el fichaje): se ejecuta la mejor si, con la plantilla de ESE instante: ventaja esperada ≥2M y ≥4% del coste del fichaje (ya neta de prima, 5% de ida y vuelta del fichaje y 3% de venta), existe una oferta por el
   jugador a vender de ≥1,00× su valor, el once queda legal, faltan ≥30 h para la jornada, no hay otras compras ni pujas en esa pasada y no se ha hecho otra en 24 h (`autopilot.swap_is_safe`, `cli._execute_swap`).
   El motivo de la comprobación en el momento: la propuesta Hancko → Fer Niño (+7,3M) dejó de valer 14 minutos después, cuando otra regla vendió al tercer defensa de relleno y vender a Hancko dejaba el once ilegal.
 
