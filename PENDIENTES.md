@@ -32,6 +32,9 @@ C. Fichar pensando en la probabilidad de ser titular y en que un 0 puede ser "no
 D. Pujas de inversión con prima y tasa de victoria (hacen falta ~15 pujas); comprar para revender ("flip"); cuánto dinero a inversión (25%) y saldo reservado para las 20:53.
 E. Efecto del rival al fichar (solo se usa para elegir el once); usar los puntos absolutos y relativos.
 F. Planificador: relleno barato del once; fichaje de emergencia ya sin caídas.
+F2. Titulares caros "clave" por tener un banquillo flojo (Terrats 19M y Deossa 14M: su recambio, Mayol, rinde 2,8 y la pérdida sale ≥3): la salida al frenarse no los suelta aunque se frenen. Mantenerlos es coherente con los puntos que dan
+   (3,9 pts por jornada ≈ 3,5M a 3 jornadas frente a −1,3M de caída), pero para poder soltarlos hace falta un recambio de calidad o una permuta por cláusula. Revisado el 13/10: bajar el umbral de venta de los que suben de 1,25× a 1,06–1,10× no mejora (±1%;
+   las ofertas no pasan de 1,10×), así que ese umbral se queda.
 G. Autoajuste `shadow`; bloqueo al líder (viable como pronto en la J10).
 H. Política de cláusulas ("tentadora"): futuro, a petición del usuario.
 
