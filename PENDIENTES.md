@@ -15,6 +15,11 @@ está lo que **todavía puede mejorar** y cómo comprobarlo la próxima vez.
 
 ## LISTA DE PENDIENTES (resumen, 10/10/2026)
 
+**DECISIÓN pendiente del usuario (revisión de la J8, 13/10)** — reglas que los datos apuntan a cambiar (ver ESTADO, "Revisión de la J8"):
+ R1. El planificador estima la subida esperada solo con la tendencia del valor; debería usar también los puntos del último partido (relativos a su media) y si el jugador subía: sin subir y con partido <1,0× → −3%/5 días; subiendo y con partido malo → +4–7%; con buen partido → +20–30%.
+ R2. Salida para los que NO subían y tuvieron un partido mediocre (<1,0× su media): vender a la 1.ª oferta ≥1,00× (+3,4% frente a −6,0% por mantener). Hoy solo hay salida al frenarse una subida y por caída ≥4% en 3 días.
+ R3. Rentabilidad mínima por capital: un fichaje de 47M (Hancko) sale con +1,4M esperados (3%); exigir un mínimo (p. ej. ≥5% del coste) salvo golpes al líder o necesidad del once.
+
 **Para la J9 (antes del vie 16/10 21:00)**
 1. Faltan 2 defensas para la J9: Rueda (5,3M) y un segundo (J. Berrocal 0,7M/Carreira 6,5M); el bot lo plantea en cuanto haya plaza. Comprobar el jueves que hay once legal.
 
@@ -46,8 +51,7 @@ está lo que **todavía puede mejorar** y cómo comprobarlo la próxima vez.
 14. Política de cláusulas ("tentadora"/subir): futuro, a petición del usuario; datos en ESTADO (clausulazos).
 
 **Comprobar que lo hecho funciona**
-15. Salida al frenarse (Terrats, Johnny), portero de reserva y su rotación, liberación de plaza, primera puja del último minuto, golpes al líder, `kv.errors`, `kv.swap_log`.
-16. Que los puntos de un alineado vendido/clausulado tras empezar la jornada siguen siendo nuestros (Freeman).
+15. Salida al frenarse (Terrats; Johnny se vendió a 6,10M), portero de reserva y su rotación, liberación de plaza, primera puja del último minuto, golpes al líder, `kv.errors`, `kv.swap_log`.
 
 **Dependen de ti / largo plazo**
 17. Recompensa diaria de 100K (~23M hasta mayo): sin ruta conocida; si la petición lleva firma del anuncio no se puede automatizar.

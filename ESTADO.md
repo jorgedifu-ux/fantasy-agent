@@ -283,6 +283,18 @@ clave (Soria) y los titulares a <48 h de la jornada quedan fuera.
   libre; no vende al único portero ni a los protegidos. Avisa por Telegram una vez al día por pareja y guarda `kv.swap_log` (se exporta). NO ejecuta: se activará cuando sus propuestas se vean razonables.
 - (10/10, noche) Cláusulas de una posición que falta cubrir: se admite hasta 1,35× el valor (antes 1,2×; Ryan, 1,22×, quedaba fuera). El fichaje a crédito de emergencia descarta a los que caen.
 
+### Revisión de la J8 (13/10/2026, tras cerrar la jornada)
+- Resultado J8: Josinho 62, nosotros 57, Aleix 45, Pep 28. Total: 341 / 205 / 150 / **146** (brecha con el líder 195). Esperábamos 61,9 con el once de salida y sacamos 57 (−4,9); un partido suelto de un titular tiene
+  desviación 3,6 puntos, la de un once ~12: **no es un fallo de estimación**. Freeman marcó 7 DESPUÉS de que se lo llevaran (21:02, al empezar su partido) y entra en los 57 (7+4+8+7+0+7+1+10+2+8+3):
+  **confirmado que lo que pierdes tras empezar la jornada puntúa igualmente para ti**.
+- Golpes al líder ejecutados solos: Giménez 21,01M (12/10 20:53), Hancko 47,12M (13/10 00:32), Herrero 21,19M (13/10 04:31, su portero). Con la plantilla de hoy el once esperado del líder para la J9 baja a 41,5 pts
+  (12 jugadores, un solo portero: Aitor Fdez) y el nuestro es 64,8 (si no los repone; tiene ~170M). Ventas para financiarlos: Marc Roca 24,01M, Rueda 5,38M, Szczesny 0,99M, Johnny 6,10M. Nos clausulan: Yuri y Freeman (10/10),
+  Agoumé (17,69M) y Pepelu (17,10M) (12/10).
+- Últimos fichajes frente a lo pagado: Ilaix +13,6%, H. González +9,8%, Deossa +9,7%, Giménez +0,6%, Rueda −4,4% (se vendió a 5,38M, +2%), Hancko y Herrero 0,0% el primer día. Hancko (47M) y Herrero (21M) NO subían y venían de un partido
+  mediocre (0,64× y 0,97× su media): los datos de jugadores en su situación dan −3% a 5 días (el 75% baja). Giménez sacó 0 (no jugó) pero subía (+7%): +5% esperado.
+- `python3 -m fantasy_agent cohorts` (nuevo) repite la tabla de cohortes (cohorts.py). Con 0 puntos (sin jugar) el valor baja ~1% diario desde D+2 (−5,8% de D+2 a D+7; el 83% baja); si el jugador YA subía, sigue subiendo
+  (+3,7%). Para los que subían, aguantar y vender al frenarse ≥1,00× (lo que hace el bot) da +9,4% a ≤6 días incluso tras un mal partido; para los que NO subían, aguantar da −6% y vender a la 1.ª oferta ≥1,00× da +3,4%.
+
 ### Hallazgos y notas de la J8 (evidencia)
 #### Exploración del 9/10 (sin cambios de código) — decidir el 20/10
 **Cron**: 16 ejecuciones seguidas OK cada 15 min (última 20:45). Prueba de subir cláusula OK: Mayol 1.112.342 → 1.223.576

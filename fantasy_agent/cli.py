@@ -1328,6 +1328,38 @@ def cmd_rivals(args, s) -> None:
     print(re.sub(r"</?b>", "", rivals.report(activity, hist, managers, names, date.today(), since)))
 
 
+def cmd_cohorts(args, s) -> None:
+    """Qué le pasa al valor tras un partido según los puntos y si el jugador subía (ver cohorts.py). Cachea los históricos en data/analysis."""
+    from pathlib import Path
+    from . import cohorts
+    path = Path("data/analysis/hdated.json")
+    if args.refresh or not path.exists() or time.time() - path.stat().st_mtime > 12 * 3600:
+        api = FantasyAPI(s)
+        print("Leyendo el histórico de valores de todos los jugadores (~4 min)…", file=sys.stderr)
+        players = {}
+        for p in api.players():
+            if p.get("positionId") == "5" or float(p.get("marketValue") or 0) < 1_000_000:
+                continue
+            try:
+                players[p["id"]] = {"w": {int(x["weekNumber"]): x["points"] for x in (p.get("weekPoints") or []) if x.get("points") is not None},
+                                    "team": p["teamId"], "name": p["nickname"], "pos": p["positionId"],
+                                    "v": {d.date().isoformat(): v for d, v in models.parse_value_history(api.market_value_history(p["id"]))}}
+            except Exception:
+                pass
+        cal = {}
+        current = models.to_int(models.pick(api.current_week(), "weekNumber"), default=0)
+        for wk in range(1, current + 1):
+            for m in models.as_list(api.calendar(wk), "matches", "elements"):
+                if models.to_int(m.get("matchState")) in (7, 10):
+                    day = models.parse_dt(m["matchDate"]).date().isoformat()
+                    cal[f"{wk}:{m['localId']}"] = day
+                    cal[f"{wk}:{m['visitorId']}"] = day
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"players": players, "cal": cal}))
+    data = json.loads(path.read_text())
+    print(cohorts.report(cohorts.observations(data["players"], data["cal"])))
+
+
 def cmd_offers(args, s) -> None:
     """Cómo se distribuyen las ofertas de la liga respecto al valor (lo que el bot ha visto)."""
     store = _open_store(s, args.cloud)
@@ -1612,6 +1644,9 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("learn-rivals", help="Aprender de los rivales: qué compran, a qué prima y cómo les sale")
     p.add_argument("--since", help="solo compras desde esta fecha (AAAA-MM-DD)")
     p.set_defaults(func=cmd_rivals)
+    p = sub.add_parser("cohorts", help="Qué le pasa al valor tras un partido según los puntos (y si subía antes)")
+    p.add_argument("--refresh", action="store_true", help="volver a leer los históricos (~4 min)")
+    p.set_defaults(func=cmd_cohorts)
     p = sub.add_parser("offers", help="Distribución de las ofertas de la liga respecto al valor")
     p.add_argument("--cloud", action="store_true", help="usar los datos que ha publicado el bot en GitHub")
     p.set_defaults(func=cmd_offers)
