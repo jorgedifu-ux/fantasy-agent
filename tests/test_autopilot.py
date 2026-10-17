@@ -182,11 +182,32 @@ class OfferDecisionTests(unittest.TestCase):
         self.assertEqual(ap.bid_timing(it(2), now), "now")
         self.assertEqual(ap.bid_timing(SimpleNamespace(expires=None), now), "now")
 
-    def test_rising_player_is_kept_even_near_its_clause(self):
+    def test_rising_player_with_a_cheap_clause_is_sold_before_it_opens(self):
+        """13/10/2026, Yoel Lago: titular en subida, a 23 h de que se abra su cláusula (a su valor) y con una oferta de 1,098x.
+        Antes se esperaba a que subiera más y el líder lo clausuló a su valor; ahora se vende."""
         p = player("p", 3)
-        d, why = ap.offer_decision(self.offer(10_400_000), p, loss=1.0, exposed_in=30, trend_d3=4, trend_d7=12, clause=10_000_000)
+        d, why = ap.offer_decision(self.offer(10_980_000), p, loss=4.8, exposed_in=23, trend_d3=4, trend_d7=12,
+                                   clause=10_000_000, rise_per_day=0.013)
+        self.assertEqual(d, "accept")
+        self.assertIn("protección acaba", why)
+
+    def test_rising_player_far_from_its_clause_is_still_kept(self):
+        p = player("p", 3)
+        d, why = ap.offer_decision(self.offer(10_400_000), p, loss=1.0, exposed_in=100, trend_d3=4, trend_d7=12, clause=10_000_000)
         self.assertEqual(d, "hold")
         self.assertIn("subiendo", why)
+
+    def test_rising_player_with_an_expensive_clause_is_kept(self):
+        """Si la cláusula está muy por encima del valor (David Soria, 1,19x) no se vende barato: que la paguen es ganar dinero."""
+        p = player("p", 3)
+        d, _ = ap.offer_decision(self.offer(10_900_000), p, loss=3.9, exposed_in=10, trend_d3=4, trend_d7=12, clause=11_900_000)
+        self.assertEqual(d, "hold")
+
+    def test_last_offer_before_the_clause_opens_is_taken_at_value(self):
+        p = player("p", 3)
+        d, _ = ap.offer_decision(self.offer(10_150_000), p, loss=3.9, exposed_in=3, trend_d3=3, trend_d7=8, clause=10_000_000,
+                                 rise_per_day=0.011)
+        self.assertEqual(d, "accept")
 
     def test_leader_players_at_fair_clause_get_priority(self):
         now = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
@@ -246,7 +267,12 @@ class OfferDecisionTests(unittest.TestCase):
     def test_at_risk_threshold_decreases_as_protection_ends(self):
         self.assertGreater(ap.at_risk_min(72, key=False), ap.at_risk_min(48, key=False))
         self.assertGreater(ap.at_risk_min(48, key=False), ap.at_risk_min(10, key=False))
-        self.assertGreater(ap.at_risk_min(10, key=True), ap.at_risk_min(10, key=False))
+        self.assertGreater(ap.at_risk_min(60, key=True), ap.at_risk_min(60, key=False))
+        self.assertEqual(ap.at_risk_min(10, key=True), ap.at_risk_min(10, key=False))   # el último día se vende a ~el valor
+
+    def test_a_rising_player_needs_more_because_waiting_pays_the_rise(self):
+        self.assertGreater(ap.at_risk_min(48, key=False, rise_per_day=0.03), ap.at_risk_min(48, key=False))
+        self.assertAlmostEqual(ap.at_risk_min(48, key=False, rise_per_day=0.03), 1.06, places=3)
 
 
 class ExposureTests(unittest.TestCase):

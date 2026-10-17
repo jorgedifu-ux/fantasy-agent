@@ -211,12 +211,31 @@ def _sync_plan(store: Store, s, world) -> plan_mod.Plan:
     return plan_mod.load_plan(store)
 
 
+def _shield_quota(api: FantasyAPI, world, now: datetime) -> bool | None:
+    """¿Quedan blindajes en esta jornada? Dos por equipo, desde que acaba una jornada hasta que acaba la siguiente (LaLiga, doble
+    blindaje: 24 h cada uno). Se pregunta a `check_shield` con un jugador nuestro ya expuesto (200 = quedan; 400 «limit reached» = no;
+    «protected» = ese no sirve para probar). Sin ningún expuesto no se puede preguntar: None."""
+    from .http import HttpError
+    for sl in world.my_slots:
+        if not sl.player_team_id or not sl.clause_open(now):
+            continue
+        try:
+            api.check_shield(world.league_id, sl.player_team_id)
+            return True
+        except HttpError as exc:
+            if "limit reached" in exc.body:
+                return False
+        except Exception:
+            return None
+    return None
+
+
 def _auto_shield(store: Store, s, api: FantasyAPI, world) -> tuple[str | None, str]:
-    """Blindaje (gratis, tope observado de 2 por equipo y jornada, solo sobre una cláusula ya abierta) del
-    jugador que más puntos nos quitaría si lo clausulan (`ap.shield_target`; si nadie pasa el
-    mínimo no se gasta, 13/10: se había blindado a Mayol, 1,1M y 0,5 pts). Antes se pregunta a `check_shield` (400 = el equipo
-    ya gastó el suyo, no se insiste) y después se verifica releyendo la plantilla: el 26/09
-    la API respondió bien sin blindar (en la app pasa por ver un anuncio)."""
+    """Blindaje (gratis, 24 h, máx. 2 por equipo y jornada —desde que acaba una hasta que acaba la siguiente—, y solo sobre una
+    cláusula ya abierta) del jugador que más puntos nos quitaría si lo clausulan (`ap.shield_target`). No se gasta en quien nos quita
+    pocos puntos (13/10: se blindó a Mayol, 1,1M y 0,5 pts, y ese gasto dejó a Yoel Lago sin blindaje el sábado: «limit reached») ni en
+    quien tiene la cláusula por encima de ×1,12 (si la pagan, ganamos). Antes se pregunta a `check_shield`; después se verifica releyendo la
+    plantilla: el 26/09 la API respondió bien sin blindar (en la app pasa por ver un anuncio)."""
     now = datetime.now(timezone.utc)
     if world.clause_freeze and world.clause_freeze[0] <= now < world.clause_freeze[1]:
         return None, ""  # cláusulas congeladas: nadie puede clausularte ahora
@@ -225,25 +244,86 @@ def _auto_shield(store: Store, s, api: FantasyAPI, world) -> tuple[str | None, s
         return None, ""
     target = ap.shield_target(exposed, [sl.player for sl in world.my_slots], world.recent_form)
     if target is None:
-        return None, ""  # nadie que al irse nos quite puntos de verdad: no se gasta el blindaje (máx. 2 por jornada)
-    if not store.alert_is_new(f"shield:{target.player.id}", ttl_hours=96):
-        return None, ""
+        return None, ""  # nadie que al irse nos quite puntos de verdad: no se gasta el blindaje
     name = notify.esc(target.player.name)
+    info = dict(loss=ap.sale_loss([sl.player for sl in world.my_slots], target.player.id, world.recent_form),
+                clause_ratio=round(target.clause / target.player.market_value, 3))
     try:
         api.check_shield(world.league_id, target.player_team_id)
-    except Exception:
+    except Exception as exc:
+        if store.alert_is_new(f"shield_no:{target.player.id}:{str(exc)[-60:]}", ttl_hours=6):
+            store.log_decision("blindaje", target.player.name, "no", f"check-shield: {exc}"[:200], **info)
         return None, ""  # ahora no se puede blindar (límite de la jornada gastado, etc.)
     try:
         api.shield_player(world.league_id, target.player_team_id)
     except Exception as exc:
+        store.log_decision("blindaje", target.player.name, "error", str(exc)[:200], **info)
         return f"🛡️ Intento de blindaje fallido para <b>{name}</b>: {notify.esc(str(exc))}", ""
     squad = models.parse_squad(api.team(world.league_id, world.my_team_id), world.my_team_id, "")
     if not any(sl.player_team_id == target.player_team_id and sl.shielded_until for sl in squad):
+        store.log_decision("blindaje", target.player.name, "sin efecto", "la API respondió bien pero no blindó", **info)
+        if not store.alert_is_new(f"shield_noeffect:{target.player.id}", ttl_hours=12):
+            return None, ""
         return (
             f"🛡️ No he podido blindar a <b>{name}</b>: la API no lo aplica sin ver el anuncio de la "
             f"app. Si quieres protegerlo, blíndalo tú desde la app (es gratis)."
         ), ""
-    return f"🛡️ <b>BLINDADO</b>: {name} protegido de clausulazos (gratis, automático).", target.player.id
+    store.log_decision("blindaje", target.player.name, "sí", "blindado 24 h", **info)
+    return (f"🛡️ <b>BLINDADO</b> 24 h: {name} protegido de clausulazos (gratis, automático). "
+            f"Esas horas dan una oferta más de la liga para venderlo bien."), target.player.id
+
+
+def _protect_exposed(store: Store, s, api: FantasyAPI, world, shielded_player_id: str = "") -> list[str]:
+    """Último recurso (13/10/2026, Yoel Lago: un titular en subida se lo llevó el líder a su valor): si un jugador nuestro que importa o
+    que sube se abre en las próximas horas (o ya está abierto), no se ha podido vender (la oferta diaria no llegó al mínimo de
+    `at_risk_min`) y no quedan blindajes, se sube su cláusula a ×1,20 su valor: cuesta la mitad de lo que sube (comprobado el 7/10) y
+    deja de salirle a cuenta a un rival; si aun así la paga, cobramos un 20% más que su valor."""
+    now = datetime.now(timezone.utc)
+    if world.clause_freeze and world.clause_freeze[0] <= now < world.clause_freeze[1]:
+        return []
+    mine = [sl.player for sl in world.my_slots]
+    sold = set(json.loads(store.get("sold_ids") or "[]"))
+    cash = world.my_cash or 0
+    quota: bool | None = None
+    events: list[str] = []
+    for sl in sorted(world.my_slots, key=lambda x: -x.player.market_value):
+        pid = sl.player.id
+        h = ap.hours_until_exposed(sl, now)
+        if pid in sold or pid == shielded_player_id or h is None or h > ap.RAISE_LEAD_H or not sl.player_team_id:
+            continue
+        trend = world.trends.get(pid, (None, analysis.Trend(0, 0, 0)))[1]
+        rise = max(0.0, trend.d3) / 3 / 100
+        if quota is None:
+            quota = _shield_quota(api, world, now)
+            if quota is None:     # nadie expuesto con quien preguntar: se cuentan los blindajes de esta jornada (≈5 días hacia atrás)
+                my_manager = next((r.manager_id for r in world.standing if r.team_id == world.my_team_id), "")
+                quota = service.shields_used_since(api, world.league_id, my_manager, now - timedelta(days=5)) < 2
+        plan = ap.raise_plan(sl, mine, world.recent_form, cash, now, rise_per_day=rise, shield_ok=bool(quota))
+        if plan is None:
+            continue
+        inc, cost = plan
+        if not store.alert_is_new(f"raise:{pid}", ttl_hours=20):
+            continue
+        name = notify.esc(sl.player.name)
+        info = dict(value=sl.player.market_value, clause=sl.clause, increase=inc, cost=cost, hours=round(h, 1), d3=trend.d3,
+                    loss=ap.sale_loss(mine, pid, world.recent_form))
+        try:
+            api.increase_buyout_clause(world.league_id, sl.player_team_id, inc)
+        except Exception as exc:
+            store.log_decision("cláusula", sl.player.name, "error", str(exc)[:200], **info)
+            events.append(f"🛡️ No he podido subir la cláusula de <b>{name}</b> (+{service.m(inc)}): {notify.esc(str(exc))[:150]}")
+            continue
+        api.clear_cache()
+        squad = models.parse_squad(api.team(world.league_id, world.my_team_id), world.my_team_id, "")
+        after = next((x.clause for x in squad if x.player_team_id == sl.player_team_id), 0)
+        cash_after = service.resolve_league(api, s)[2] or 0
+        store.log_decision("cláusula", sl.player.name, "subida", f"de {sl.clause} a {after}; caja {cash} -> {cash_after}", **info)
+        cash = cash_after or cash - cost
+        events.append(
+            f"🛡️ <b>Cláusula subida</b>: {name} de {service.m(sl.clause)} a {service.m(after)} (valor {service.m(sl.player.market_value)}) "
+            f"por {service.m(max(0, (world.my_cash or 0) - cash_after))}. Se abre en {h:.0f} h, no se vendió y no quedan blindajes: "
+            f"a ×1,20 deja de salirle a cuenta a un rival (si la paga, cobramos de más).")
+    return events
 
 
 def _clause_raise_probe(store: Store, s, api: FantasyAPI, world, skip_player_id: str = "") -> str | None:
@@ -464,6 +544,12 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
     # Sin dinero para un buen golpe al líder (le quita ≥2 pts): también se libera capital vendiendo suplentes.
     unfunded = [m for m in candidates if m.player.id not in funded] + \
         [m for m in moves if m.bonus and m.rival_loss >= 2 and m.player.id not in funded]
+    free_budget = budget - sum(m.cost for m in plan)
+    unreachable = [m.player.name for m in unfunded if not ap.liquidity_reachable(m.cost, free_budget, mine, world.recent_form)]
+    unfunded = [m for m in unfunded if ap.liquidity_reachable(m.cost, free_budget, mine, world.recent_form)]
+    if unreachable and store.alert_is_new("liquidity_unreachable:" + ",".join(sorted(unreachable))[:80], ttl_hours=12):
+        store.log_decision("liquidez", ", ".join(unreachable)[:80], "no", "inversión inalcanzable aun vendiendo los suplentes: no se liquida nada",
+                           free_budget=free_budget)
     store.set("liquidity", json.dumps({"at": time.time(), "n": len(unfunded),
                                        "best": unfunded[0].player.name if unfunded else ""}))
     if credit > 0 and any(m.kind in ("invest", "invest_clause") for m in plan) and store.alert_is_new(
@@ -848,7 +934,12 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
                 cost_basis=None if in_siege else paid.get(pid),
                 injured=sl.player.status.lower() in ap.INJURED, clause=sl.clause, reserve_keeper=reserve_keeper,
                 free_slot=free_slot, trend_d1=trend.d1, exit_mode=exit_flag, exit_late=exit_late,
+                rise_per_day=max(0.0, trend.d3) / 3 / 100,
             )
+            if store.alert_is_new(f"dec:{o.id}:{decision}", ttl_hours=36):
+                store.log_decision("oferta", sl.player.name, decision, why, ratio=round(o.money / sl.player.market_value, 3),
+                                   money=o.money, value=sl.player.market_value, exposed_in=ap.hours_until_exposed(sl, now),
+                                   loss=loss_now, d1=trend.d1, d3=trend.d3, d7=trend.d7, system=o.is_system)
             if decision == "accept" and not done:
                 try:
                     api.accept_offer(world.league_id, it.market_id, o.id, o.money)
@@ -1605,6 +1696,7 @@ def _watch_once(store: Store, s) -> str:
     shielded, shielded_player_id = st("blindaje", _auto_shield, store, s, api, world, default=(None, ""))
     if shielded:
         events.append(shielded)
+    events += st("proteger jugadores que se abren", _protect_exposed, store, s, api, world, shielded_player_id, default=[])
     raised_clause = st("subir cláusula", _clause_raise_probe, store, s, api, world, skip_player_id=shielded_player_id)
     if raised_clause:
         events.append(raised_clause)

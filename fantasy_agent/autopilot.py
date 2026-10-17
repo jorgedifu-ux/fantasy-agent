@@ -69,7 +69,10 @@ AT_RISK_OFFER_LAST = 1.00    # ...el último día: su valor. Nunca menos que la 
 # cobras la cláusula entera, que es lo máximo entre lo que pagaste y su valor (comprobado el 8/10/2026 en 49
 # de 55 jugadores de la liga; el resto, cláusulas subidas a mano). Vender por debajo de eso es perder dinero
 # frente a que te lo quiten (caso David Soria, decisión del usuario).
-AT_RISK_KEY_EXTRA = 0.07     # un jugador clave exige un poco más en todo el tramo
+AT_RISK_KEY_EXTRA = 0.03     # un jugador clave exige un poco más al principio del tramo (el último día se vende a ~el valor:
+# 13/10/2026 Yoel Lago, titular en subida, se dejó pasar a 1,098x y el líder lo clausuló a su valor 26 h después)
+ATTRACTIVE_RATIO = 1.12      # cláusula hasta +12% sobre el valor: a los rivales les sigue saliendo a cuenta (se han pagado hasta +15%);
+# por encima nos favorece que la paguen (David Soria: 1,19x, 148 h expuesto y nadie la pagó) y ni se vende barato ni se blinda
 LISTING_MARKUP = 1.10        # precio al que se ponen a la venta los tuyos
 
 INJURED = ("injured", "suspended", "lesionado", "sancionado")
@@ -674,6 +677,16 @@ def leader_loss(leader: list[Player], player_id: str, form: dict[str, float] | N
     return round(max(0.0, squad_value(leader, form) - squad_value(rest, form)), 2)
 
 
+def liquidity_reachable(cost: int, free_budget: int, mine: list[Player], form: dict[str, float] | None = None) -> bool:
+    """¿Vendiendo los suplentes que apenas puntúan (`BENCH_LOSS`) llegaríamos a pagar esta inversión? Si no, vender suplentes no sirve
+    de nada (18/10/2026: se liquidaron Durán, Iván Martín y H. González «para» Diomande, con cláusula de 69,6M y 25M en caja)."""
+    shortfall = cost - max(0, free_budget)
+    if shortfall <= 0:
+        return True
+    sellable = sum(p.market_value for p in mine if sale_loss(mine, p.id, form) < BENCH_LOSS)
+    return shortfall <= sellable * LIQUIDITY_OFFER_MIN
+
+
 def sale_loss(mine: list[Player], player_id: str, form: dict[str, float] | None = None) -> float:
     """Cuántos pts/jornada pierde tu equipo si se va este jugador (sin el bonus de once
     completo: si romperlo importa o no depende de lo cerca que esté la jornada, ver
@@ -709,10 +722,62 @@ def shield_target(exposed: list[SquadSlot], mine: list[Player], form: dict[str, 
         if loss < SHIELD_MIN_LOSS:
             continue
         ratio = sl.clause / sl.player.market_value if sl.player.market_value else 1.0
+        if ratio > ATTRACTIVE_RATIO:
+            continue    # si un rival paga una cláusula tan por encima del valor, ganamos dinero: no se gasta blindaje
         score = loss / max(ratio, 1.0)
         if score > best_score:
             best, best_score = sl, score
     return best
+
+
+RAISE_TARGET_RATIO = 1.20    # cláusula de disuasión: los rivales han pagado hasta ~1,15x y nadie ha pagado 1,19-1,20x (Soria, Gueye)
+RAISE_MAX_COST_PCT = 0.12    # subirla cuesta la mitad de lo que sube (comprobado el 7/10): como mucho el 12% del valor del jugador
+RAISE_LEAD_H = 6.0           # solo en las últimas horas antes de que se abra (o ya abierta) y sin blindaje posible
+RAISE_MIN_VALUE = 3_000_000
+RAISE_CASH_BUFFER = 2_000_000
+
+
+def draw_pending(now: datetime, opens_at: datetime, margin_min: int = 15) -> bool:
+    """¿Queda una oferta diaria de la liga (~20:53, hora de Madrid) antes de que se abra la cláusula? Si sí, todavía se puede
+    vender gratis y no se gasta dinero en proteger al jugador."""
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Europe/Madrid")
+    except Exception:
+        tz = timezone(timedelta(hours=2))
+    n = now.astimezone(tz)
+    nxt = n.replace(hour=20, minute=53, second=0, microsecond=0)
+    if nxt <= n:
+        nxt += timedelta(days=1)
+    return nxt <= opens_at.astimezone(tz) + timedelta(minutes=margin_min)
+
+
+def raise_plan(slot: SquadSlot, mine: list[Player], form: dict[str, float] | None, cash: int, now: datetime, *,
+               rise_per_day: float = 0.0, shield_ok: bool = False) -> tuple[int, int] | None:
+    """Último recurso para que un rival no se lleve a su valor a un jugador nuestro que importa (o que sube): subir
+    su cláusula a `RAISE_TARGET_RATIO` x su valor. Devuelve (incremento, coste) o None. Solo en las últimas
+    `RAISE_LEAD_H` horas antes de que se abra, o ya abierta, si no se ha podido vender ni blindar; no se hace si el coste
+    pasa del `RAISE_MAX_COST_PCT` del valor ni si deja la caja por debajo del colchón."""
+    p = slot.player
+    if not p.market_value or p.market_value < RAISE_MIN_VALUE or p.status.lower() in INJURED:
+        return None
+    h = hours_until_exposed(slot, now)
+    if h is None or h > RAISE_LEAD_H or shield_ok:
+        return None     # con blindaje disponible se espera a que se abra y se blinda (gratis); luego, otra oferta para venderlo
+    if h > 0 and draw_pending(now, now + timedelta(hours=h)):
+        return None     # aún llega otra oferta de la liga antes de que se abra: primero se intenta vender
+    if slot.clause / p.market_value > ATTRACTIVE_RATIO:
+        return None
+    important = sale_loss(mine, p.id, form) >= SHIELD_MIN_LOSS or (rise_per_day >= 0.01 and p.market_value >= 8_000_000)
+    if not important:
+        return None
+    inc = round(p.market_value * RAISE_TARGET_RATIO - slot.clause)
+    if inc <= 0:
+        return None
+    cost = inc // 2
+    if cost > p.market_value * RAISE_MAX_COST_PCT or cash - cost < RAISE_CASH_BUFFER:
+        return None
+    return inc, cost
 
 
 def hours_until_exposed(slot: SquadSlot, now: datetime) -> float | None:
@@ -727,13 +792,17 @@ def hours_until_exposed(slot: SquadSlot, now: datetime) -> float | None:
     return max((opens - now).total_seconds() / 3600, 0.0) if opens else None
 
 
-def at_risk_min(hours_left: float, key: bool) -> float:
+def at_risk_min(hours_left: float, key: bool, rise_per_day: float = 0.0) -> float:
     """Mínimo exigido a una oferta de la liga por un jugador cuya protección acaba pronto:
-    baja de 1.03x (a 3 días) a 0.98x (último día), para tener varias oportunidades de una
-    buena oferta sin llegar a perderlo gratis por una cláusula."""
+    baja de 1.03x (a 3 días) a 1.00x (último día), para tener varias oportunidades de una buena
+    oferta sin llegar a perderlo gratis por una cláusula. Si el jugador sube, esperar también vale
+    lo que suba hasta que se abra (eso es lo que pagaría el clausulazo): `rise_per_day` (fracción)."""
     frac = min(1.0, max(0.0, (hours_left - 24) / (AT_RISK_HOURS - 24)))
     need = AT_RISK_OFFER_LAST + (AT_RISK_OFFER_START - AT_RISK_OFFER_LAST) * frac
-    return round(need + (AT_RISK_KEY_EXTRA if key else 0.0), 3)
+    if key:
+        need += AT_RISK_KEY_EXTRA * frac
+    carry = max(0.0, rise_per_day) * min(max(hours_left, 0.0), AT_RISK_HOURS) / 24
+    return round(max(need, 1.0 + carry), 3)
 
 
 # Salida al frenarse una subida (10/10/2026). Datos de LaLiga Fantasy (476 jugadores, valores diarios): de los que habían
@@ -755,7 +824,7 @@ def offer_decision(
     breaks_xi: bool = False, hours_to_deadline: float | None = None, exposed_in: float | None = None,
     squad_full: bool = False, cost_basis: int | None = None, no_sell: bool = False, liquidity: bool = False,
     injured: bool = False, clause: int = 0, reserve_keeper: bool = False, free_slot: bool = False,
-    trend_d1: float | None = None, exit_mode: bool = False, exit_late: bool = False,
+    trend_d1: float | None = None, exit_mode: bool = False, exit_late: bool = False, rise_per_day: float = 0.0,
 ) -> tuple[str, str]:
     """("accept" | "reject" | "hold", motivo). "hold" = no hacer nada y dejar que caduque.
     `no_sell`: jugador de una operación en curso (bloqueo al líder): no se vende todavía."""
@@ -776,7 +845,7 @@ def offer_decision(
     leaving = exit_mode and not key and not no_sell and not stalled
     at_risk = exposed_in is not None and exposed_in <= AT_RISK_HOURS
     if at_risk:
-        need = max(at_risk_min(exposed_in, key), clause / value if clause and value else 0.0)
+        need = max(at_risk_min(exposed_in, key, rise_per_day), clause / value if clause and value else 0.0)
         cuando = "ya es clausulable" if exposed_in == 0 else f"su protección acaba en {exposed_in:.0f}h"
         why = f"{cuando}: solo lo vendo si la oferta supera lo que cobraría si me lo clausulan ({clause / 1e6:.2f}M)" if clause \
             else f"{cuando}: mejor venderlo que ver cómo se lo lleva un rival"
@@ -809,7 +878,11 @@ def offer_decision(
         need, why = BENCH_OFFER_MIN, "suplente con la plantilla llena: libera sitio para un fichaje mejor"
     else:
         need, why = PARAMS["league_offer_min"], "oferta por encima de su valor"
-    if trend_d3 > RISING_D3 and trend_d7 > 5 and not injured and not stalled and not leaving and not (free_slot and loss < BENCH_LOSS):
+    # Dentro del tramo de riesgo y con la cláusula atractiva para un rival, esperar a que suba NO vale: el rival
+    # lo paga a su valor y se lleva la subida y los puntos (13/10: Yoel Lago). Ahí manda `at_risk_min`.
+    exposed_cheap = at_risk and (not clause or not value or clause / value <= ATTRACTIVE_RATIO)
+    if trend_d3 > RISING_D3 and trend_d7 > 5 and not injured and not stalled and not leaving and not exposed_cheap \
+            and not (free_slot and loss < BENCH_LOSS):
         # También cerca de que se abra su cláusula (8/10/2026): si un rival lo clausula, cobras su
         # cláusula, que sube con su valor; venderlo antes regala la subida que queda.
         # La técnica (Josinho con Yamal): esperar a que suba. Prueba histórica (4/10/2026): comprar

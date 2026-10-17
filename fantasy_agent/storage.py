@@ -286,6 +286,17 @@ class Store:
     def errors(self) -> list[dict[str, Any]]:
         return json.loads(self.get("errors") or "[]")
 
+    def log_decision(self, kind: str, subject: str, decision: str, why: str, **data: Any) -> None:
+        """Bitácora de decisiones del piloto (oferta aceptada/retenida, blindaje, subida de cláusula...) con su motivo y los números
+        que se vieron. Se exporta para poder auditar a posteriori POR QUÉ se hizo o no se hizo algo (13/10/2026: el motivo de
+        vender o no vender a Yoel Lago no estaba en ningún sitio). Máx. 500 entradas, las más recientes."""
+        items = json.loads(self.get("decisions") or "[]")
+        items.append({"at": round(time.time()), "kind": kind, "who": subject, "do": decision, "why": redact(why)[:300], **data})
+        self.set("decisions", json.dumps(items[-500:], ensure_ascii=False))
+
+    def decisions(self) -> list[dict[str, Any]]:
+        return json.loads(self.get("decisions") or "[]")
+
     def log_proposal(self, changes: dict[str, dict]) -> None:
         """Ajustes que el autoajuste HARÍA (modo shadow); se acumulan para revisarlos."""
         items = json.loads(self.get("proposals") or "[]")
@@ -307,7 +318,7 @@ class Store:
         "player_status_history": ("player_id", "status", "recorded_at"),
     }
     EXPORT_KV = ("errors", "clause_raise_test", "swap_log", "cohort_table", "exit_since", "params", "params_history", "proposals", "siege_state", "siege_ids", "liquidity", "rival_premium",
-                 "sold_ids", "lineup_variant")
+                 "sold_ids", "lineup_variant", "decisions")
 
     def export_state(self) -> dict[str, Any]:
         out: dict[str, Any] = {"tables": {}, "kv": {}}

@@ -37,6 +37,16 @@ F2. Titulares caros "clave" por tener un banquillo flojo (Terrats 19M y Deossa 1
    las ofertas no pasan de 1,10×), así que ese umbral se queda.
 G. Autoajuste `shadow`; bloqueo al líder (viable como pronto en la J10).
 H. Política de cláusulas ("tentadora"): futuro, a petición del usuario.
+S. **Bitácora de decisiones** (18/10): leer `kv.decisions` (rama `data`): ofertas aceptadas/retenidas con su motivo y su mínimo, blindajes (sí/no y por qué) y subidas de cláusula. Comprobar que explican cada venta de la jornada; ajustar lo que no.
+T. **Los que se abren** (18/10, ver ESTADO «Cambios del 18/10»): comprobar cómo salieron Terrats (lun 19 00:16), Fofana (lun 19 21:02), Zabiri (mar 20 20:53), Deossa (mié 21 20:53) e Ilaix (vie 23 21:03): ¿vendidos con la oferta diaria?, ¿cláusula subida a ×1,20 y
+   cuánto costó?, ¿la pagó algún rival? Si la subida a ×1,20 se queda corta (alguien paga ×1,20) o es cara, decidir otro nivel. Pendiente de probar: que la API deje subir la cláusula tanto (solo se ha probado +10%).
+U. **Pujas perdidas** (18/10, 9 pérdidas en la liga desde el 22/9): el ganador pagó +3% a +36% más que nuestra puja (Deossa +36%, H. González +22%, Román +14%, Ilaix +10%, Giménez +10%, Luismi +5%, Barrenetxea +4%, Ibañez +3%; mediana +10%); las 11 ganadas
+   fueron sin competencia (+3–6% sobre la salida). Pagar más tarde por cláusula costó más (Barrenetxea: puja perdida a 24,1M, cláusula a 29,9M; Giménez: 14,9M frente a 21,0M). Propuesta, sin aplicar: para objetivos de ≥3 pts/jornada pujar el p75 de los rivales (tope +12%) aunque aún no
+   haya pujas. Decidir con más datos (hacen falta ~15 pujas y la bitácora).
+V. **Primera permuta** (Giménez → Barrenetxea, vie 16 21:01, 1 min después de empezar el partido de Giménez; sus 6 pts cuentan): a los 2 días Barrenetxea +4,2% (+1,26M) y Giménez +2,3% (+0,49M). La ventaja esperada (6,9M) parece inflada (el modelo daba +0,65M a conservar a Giménez, que sube
+   un 1,2%/día): calibrar con J9–J10.
+W. **Patrimonio frente a Josinho** (reconstruido con `/activity` + valores diarios, ±10M): 5/10 nosotros 253M, él 457M · 13/10 282M / 499M · 18/10 298M / 522M. Brecha 204M → 217M → 223M: crece ~1,5M/día en dinero, pero nuestro ritmo relativo es algo mayor (+1,1%/día frente a +0,9%).
+   Con ~3,3M/día lineales llegaríamos a 700M en ~120 días; compuesto al 1,1%/día, ~80.
 N. **Efecto suplente** (idea del usuario, 13/10): cuando un titular habitual está fuera (lesión, sanción, rotación), su suplente puntúa y puede subir de valor. Datos J4–J8 (33 casos, `data/analysis/subs.py`): el mercado NO lo anticipa (el valor del
    suplente no sube antes del partido), pero solo compensa con suplentes baratos: <4M → +14,7% de media a 5 días (mediana +6,7%, sube el 62%; sin los 3 mejores casos +3,3%); ≥4M → −8,6% aunque puntúen (Rüdiger 9 pts: +1%). Si el suplente NO juega, −13% a 5 días.
    Con el suplente "más probable" solo juega 30 de 61 veces: sin saber la alineación es cara o cruz (+5,9% de media, −8% de mediana en <4M). Hace falta confirmación (alineación probable de futbolfantasy ≥75%) y, aun así, el dinero es pequeño

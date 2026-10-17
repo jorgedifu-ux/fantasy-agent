@@ -49,11 +49,11 @@ Los límites son **económicos**, no de número de operaciones (quitados los "2 
 | Líder / venganza | Clausular al líder o a quien te acaba de clausular se puede, pero con menos prioridad (×0,6) |
 | Poner a la venta | **Todos tus jugadores siempre en venta** (a 1,1× su valor): así la liga manda una oferta diaria por cada uno. Estar en venta no obliga a vender |
 | Ofertas de la liga | Acepta desde **1,05× el valor**; 0,97× si está en caída/lesionado o es un suplente con la plantilla llena; **1,25× si es clave** (quitarlo baja el once ≥3 pts/jornada) o si es titular y faltan <48h para la jornada. Nunca si te deja sin 11 a <48h |
-| Venta antes de perder la protección | Si la cláusula de un jugador tuyo es atractiva (≤1,2× valor), empieza a intentar venderlo **3 días antes** de que acabe su protección: exige 1,03× a 3 días y baja hasta 0,98× el último día (+7% si es clave) |
+| Venta antes de perder la protección | Si la cláusula de un jugador tuyo es atractiva (≤1,12× valor), empieza a intentar venderlo **3 días antes** de que acabe su protección: exige 1,03× a 3 días y baja hasta 1,00× el último día (+3% al principio si es clave), y nunca menos de lo que subiría hasta que se abra (`at_risk_min`, 18/10). **Dentro de ese tramo ya no se espera a que suba más** (eso dejó pasar a Yoel Lago el 17/10) |
 | Ofertas de rivales | Se rechazan, salvo que paguen ≥1,3× el valor |
 | Alineación | El mejor once por puntos esperados × probabilidad de titularidad × **partido** (casa +5% / fuera −5%, rival del 1º al último de LaLiga −10% a +10%, con la tabla real calculada de los resultados); se guarda y se **verifica releyéndola**. No se toca con la jornada en juego |
-| Blindaje | Solo para quien al irse nos quita ≥2 pts/jornada (`ap.shield_target`; antes se blindaba al de cláusula más barata y el 13/10 fue Mayol, 1,1M). Pregunta antes a `check-shield` (si el equipo ya gastó el de la jornada, no insiste) y verifica después. El 26/09 la API respondió bien sin blindar (en la app pide ver un anuncio): si vuelve a pasar, te avisa para que lo hagas tú |
-| Subir tu cláusula (pago) | Tus jugadores de media ≥5 cuya protección acaba en <24h y no se han vendido: cláusula a 1,5× su valor (pagas la mitad de la subida), solo si cabe sin tocar el colchón; se verifica releyendo |
+| Blindaje | Gratis, **24 h**, máx. **2 por jornada** (desde que acaba una hasta que acaba la siguiente) y solo con la cláusula ya abierta. Solo para quien al irse nos quita ≥2 pts/jornada y tiene la cláusula ≤1,12× su valor (`ap.shield_target`); si es mayor, que la paguen nos favorece. Las horas de blindaje valen para tener **una oferta más** de la liga con la que venderlo. Se pregunta antes a `check-shield` (400 «limit reached» = sin blindajes; 400 «protected» = aún no se abre) y se verifica después |
+| Subir tu cláusula (último recurso) | Si un jugador nuestro que importa (quita ≥2 pts) o sube (≥1%/día y ≥8M) se abre en ≤6 h, no se ha vendido (ya no queda oferta diaria antes de abrirse) y no quedan blindajes: cláusula a **×1,20** su valor (pagas la mitad de la subida, máx. 12% del valor y sin bajar de 2M de caja). Se verifica releyendo (`_protect_exposed`) |
 | Fichaje a crédito | Último recurso a <24h de la jornada con plantilla incompleta (tope 20% del valor) |
 | Te clausulan a alguien | Te avisa (compara la plantilla entre pasadas) |
 
@@ -73,7 +73,7 @@ Todas las cifras están como constantes al principio de `fantasy_agent/autopilot
 - **Cláusula** (`/buyout/{playerTeamId}/pay`) y **poner a la venta** (`/market/sell`).
 - **`/activity`**: lista plana `{activityTypeId, user1Id, user2Id, playerMasterId, amount,
   createdAt}`; 1 = cláusula (user1 paga, user2 la sufre), 33 = venta, 31 = puja ganada,
-  4 = puesto a la venta. user1Id/user2Id son manager_id.
+  4 = blindaje (user1 = quien blinda; `playerMasterId` = el blindado), 6 = premio de jornada. user1Id/user2Id son manager_id.
 - **Mercado**: se resuelve cada día a las ~20:53 (pujas y ofertas nuevas).
 - **Blindaje**: `PUT /shield/player` responde bien pero no blinda; `check-shield` → 400
   "Player team shield limit reached".
@@ -330,6 +330,28 @@ clave (Soria) y los titulares a <48 h de la jornada quedan fuera.
 - **Porteros sobrantes** (13/10 noche): solo juega un portero; uno CARO (>1,5M) de banquillo que se frena o cae (salida al frenarse, salida de 3 días o caída ≥4%) se suelta aunque sea la "reserva" (`autopilot.hold_as_reserve`); la
   regla de reserva comprará uno barato si hace falta. Uno barato o que sube se queda. Con 3 porteros sobra uno. Prioridad al comprar: primero un titular (el planificador); si no, la reserva barata.
   Corregido de paso: la salida de 3 días no estaba pasando el dato de "su valor sigue subiendo hoy" (la llamada no lo incluía): con Herrero subiendo no habría salido por otro motivo, pero la protección no actuaba.
+
+### Cambios del 18/10/2026: no regalar a un rival un jugador que importa (tras perder a Yoel Lago)
+**Qué pasó (J9).** El sábado 17 a las 23:14 Josinho pagó la cláusula de Yoel Lago (19,72M = su valor): era nuestro titular en subida (4,8 pts/jornada, 8 pts en la J8).
+Cadena: (1) el martes 13 se blindó a Mayol (1,1M, 0,5 pts) y el viernes 16 a Soria (cláusula ×1,19: si la pagan, ganamos 7M) → los **2 blindajes de la jornada**
+(desde que acaba la J8 hasta que acaba la J9) estaban gastados; el sábado `check-shield` respondió «Player team shield limit reached» (comprobado en vivo con Soria y Mayol).
+(2) El viernes a las 21:01 había una oferta de 1,098× por Yoel Lago (a ~23 h de abrirse su cláusula) y no se aceptó: la regla «sigue subiendo, espero» (hasta 1,25×) mandaba
+también dentro del tramo de riesgo. (3) Los rivales cobran en cuanto se abre cualquier jugador atractivo: en la liga hay 44 cláusulas pagadas y, cuando el jugador sube, caen a las
+0,1–2 h de abrirse (Freeman 0,1; Yuri 0,1; Pepelu 0,4; Yoel Lago 1,0; Agoumé 2,0 h). Pagan casi siempre ×1,00 el valor (mediana 1,00, p75 1,03, máx. 1,15 con jugadores en subida);
+con ×1,19 (Soria, 148 h expuesto) o ×1,2 (Gueye) nadie ha pagado.
+**Reglas confirmadas** (ayuda oficial de LaLiga y comprobación en vivo): las cláusulas se cierran 24 h antes del primer partido de la jornada; «doble blindaje» = 2 por jornada,
+24 h cada uno (48 h en ligas Premium), solo sobre jugadores con la cláusula ya activa, gratis (con anuncio en la app; por API ha funcionado el 23/09, 24/09, 13/10 y 16/10). Blindar no quita el clausulazo, lo retrasa.
+Subir la cláusula: la ayuda oficial no lo documenta; nuestra prueba del 7/10 (Mayol) lo confirma: se paga **la mitad** de lo que sube.
+**Qué ha cambiado:**
+- `at_risk_min`: 1,03× a 72 h → 1,00× el último día; el «clave» pide +3% solo al principio (antes +7% todo el tramo); y nunca menos de lo que subiría el jugador hasta que se abra
+  (lo que pagaría el clausulazo). Dentro del tramo ya no se aplica el «espero a que suba» si la cláusula es ≤1,12× el valor.
+- Blindaje (`shield_target`): solo a quien quita ≥2 pts/jornada y con cláusula ≤1,12×. Se sigue sin gastar en Mayol ni en Soria. El fallo de `check-shield` ya no bloquea 96 h el reintento.
+- Último recurso (`_protect_exposed` / `raise_plan`): si no se vendió y no quedan blindajes, se sube la cláusula a ×1,20 en las últimas horas (después de la última oferta diaria
+  antes de abrirse); cuesta ~10% del valor y deja de salirle a cuenta a un rival. Si la paga igualmente, cobramos 20% más que su valor.
+- **Bitácora de decisiones** (`kv.decisions`, exportada): cada oferta (aceptada/retenida/rechazada con su motivo, ratio, mínimo, tendencia, horas hasta abrirse), cada blindaje (sí/no y por qué)
+  y cada subida de cláusula. Antes no quedaba rastro del porqué de nada.
+**Lo que viene esta semana (jugadores que se abren):** Terrats (lun 19 00:16), Fofana (lun 19 21:02), Zabiri (mar 20 20:53), Deossa (mié 21 20:53), Ilaix (vie 23 21:03). Esta noche y mañana no hay
+blindajes (hasta el martes 20 a las 03:00), así que se resuelven con la oferta diaria o, si no llega, con la subida de cláusula.
 
 ### Reglas de la deuda (comprobadas el 13/10/2026 con la ayuda oficial de LaLiga Fantasy y una guía de Comuniate)
 - Límite: **20% del valor de la plantilla** (no del patrimonio con saldo; hoy 269,6M → 53,9M; con saldo serían 56,9M). Puja máxima = saldo + ese 20% (hoy 68,7M).

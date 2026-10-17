@@ -32,6 +32,10 @@ Agente de análisis para LaLiga Fantasy. Python 3.10+, **solo librería estánda
   sea una estrella, no compensa — ver `analysis.clause_alerts`, `max_ratio`).
 - **Blindaje**: un jugador puede estar `isShielded` con `shieldedEndDate` — mientras dure, su
   cláusula NO es pagable aunque `buyoutClauseLockedEndTime` ya haya pasado. Ver `SquadSlot.clause_open`.
+- **Blindaje** (oficial de LaLiga, «doble blindaje»): gratis, 24 h, **2 por jornada** (desde que acaba una hasta que acaba la siguiente) y solo con la cláusula ya
+  activa; no quita el clausulazo, lo retrasa. `check-shield` responde 400 «limit reached» (sin blindajes) o «protected» (aún no se abre). No gastarlo en quien casi no puntúa.
+- **Cláusula atractiva** = ≤×1,12 el valor: los rivales pagan casi siempre ×1,00 (máx. 15%), en cuanto se abre (0,1–2 h) si el jugador sube. Por encima, que la paguen nos favorece.
+  Subir tu cláusula cuesta la mitad de lo que sube. Ver ESTADO «Cambios del 18/10/2026».
 - **Congelación de jornada**: la liga bloquea TODAS las cláusulas desde 24h antes del primer
   partido de la jornada hasta que arranca ese partido. Ver `service.clause_freeze_window`.
 - **Horizonte de inversión**: comprar (puja o cláusula) blinda al jugador 14 días — las
