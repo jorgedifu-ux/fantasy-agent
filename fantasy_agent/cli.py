@@ -400,7 +400,7 @@ def _deliver(store: Store, s, st, events: list[str]) -> None:
         store.log_error("bandeja", traceback.format_exc())
         urgent = list(events)
     if urgent or store.get("outbox"):
-        st("enviar", _send_or_queue, store, s, ("🔴 <b>URGENTE</b>\n\n" + "\n\n".join(urgent)) if urgent else "")
+        st("enviar", _send_or_queue, store, s, inbox.render_urgent(urgent) if urgent else "")
     now = datetime.now()
     try:
         due = inbox.digest_due(store, now)

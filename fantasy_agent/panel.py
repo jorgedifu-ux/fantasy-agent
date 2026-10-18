@@ -28,7 +28,7 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
     now = now or datetime.now(timezone.utc)
     esc = notify.esc
     mine = [sl.player for sl in world.my_slots]
-    lines = [f"🎯 <b>MISIONES</b> · {now.astimezone():%a %d/%m %H:%M}"]
+    lines = [f"🎯 <b>MISIONES</b> · {DAYS[now.astimezone().weekday()]} {now.astimezone():%d/%m %H:%M}"]
 
     # --- jornada y once
     live = bool((week or {}).get("isLive"))

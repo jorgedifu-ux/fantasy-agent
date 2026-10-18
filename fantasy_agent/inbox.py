@@ -9,6 +9,7 @@ mensajes que decían casi lo mismo. Ahora:
 """
 from __future__ import annotations
 
+import html
 import json
 import re
 import time
@@ -88,14 +89,34 @@ def digest_due(store: Store, now: datetime) -> bool:
     return last < last_slot(now).timestamp()
 
 
-def _clean(text: str, limit: int = 260) -> str:
-    one = re.sub(r"\s+", " ", text).strip()
-    return one if len(one) <= limit else one[: limit - 1].rstrip() + "…"
+NOUNS = {"Ventas": "venta(s)", "Fichajes y bloqueo": "fichaje(s)", "Protección y ofertas": "protección(es)", "Permutas posibles": "permuta(s)",
+         "Alineación": "alineación", "Fallos y pujas perdidas": "fallo(s)/puja(s) perdida(s)", "Calendario y ajustes": "aviso(s)", "Otros": "otro(s)"}
+ICONS = {"Ventas": "💰", "Fichajes y bloqueo": "🛒", "Protección y ofertas": "🛡️", "Permutas posibles": "🔁", "Alineación": "🧩",
+         "Fallos y pujas perdidas": "❌", "Calendario y ajustes": "📅", "Otros": "•"}
+DAYS = ("lun", "mar", "mié", "jue", "vie", "sáb", "dom")
+MAX_CHARS = 3600        # Telegram corta a 4096: se recorta el detalle antes que dejar un mensaje roto
 
 
-def render_digest(items: list[dict], since: float | None = None, now: datetime | None = None) -> str:
-    """Resumen agrupado, sin repetidos; de «Alineación» y «Permutas posibles» solo lo último."""
-    now = now or datetime.now()
+def _label(text: str, limit: int = 78) -> str:
+    """Una línea corta y legible en el móvil: sin etiquetas, sin el «por qué» (lo que va detrás de « — ») ni el «(valor ...)»."""
+    plain = html.unescape(re.sub(r"<[^>]+>", "", text))
+    plain = plain.split(" — ")[0]
+    plain = re.sub(r"\s*\((?:valor|salida)[^)]*\)", "", plain)
+    plain = re.sub(r"^[^\w¿¡(]+", "", plain)            # el emoji de delante sobra: ya está en el título del grupo
+    plain = re.sub(r"\s+", " ", plain).strip()
+    if len(plain) > limit:
+        plain = plain[: limit - 1].rsplit(" ", 1)[0] + "…"
+    return html.escape(plain, quote=False)
+
+
+def _detail(text: str) -> str:
+    """El texto completo (con su motivo), en varias líneas cortas en vez de un párrafo pegado."""
+    body = re.sub(r"[ \t]+", " ", text).strip()
+    body = body.replace(" — ", "\n↳ ")
+    return body
+
+
+def _group(items: list[dict]) -> dict[str, list[str]]:
     groups: dict[str, list[str]] = {title: [] for _, title in GROUPS}
     other: list[str] = []
     for it in items:
@@ -108,24 +129,54 @@ def render_digest(items: list[dict], since: float | None = None, now: datetime |
             other.append(text)
     for title in ("Alineación", "Permutas posibles"):
         groups[title] = groups[title][-1:]
-    head = f"📬 <b>Resumen</b> · {now:%a %d/%m %H:%M}"
-    if since:
-        head += f" · desde las {datetime.fromtimestamp(since):%H:%M}"
-    lines = [head]
-    for title, rows in list(groups.items()) + [("Otros", other)]:
-        seen, uniq = set(), []
+    groups["Otros"] = other
+    return {k: v for k, v in groups.items() if v}
+
+
+def render_digest(items: list[dict], since: float | None = None, now: datetime | None = None) -> str:
+    """Resumen pensado para el móvil: arriba una línea con los totales; luego cada grupo con sus etiquetas cortas y, plegado
+    (`<blockquote expandable>`, se despliega con un toque), el detalle con el porqué. Sin repetidos."""
+    now = now or datetime.now()
+    groups = _group(items)
+    counts = " · ".join(f"{ICONS[t]} {len(v)} {NOUNS[t]}" for t, v in groups.items())
+    head = f"📬 <b>Resumen</b> · {DAYS[now.weekday()]} {now:%d/%m %H:%M}" + (f"\n<i>desde las {datetime.fromtimestamp(since):%H:%M}</i>" if since else "")
+    blocks = []
+    for title, rows in groups.items():
+        uniq, seen = [], set()
         for r in rows:
-            c = _clean(r)
-            if c not in seen:
-                seen.add(c)
-                uniq.append(c)
-        if uniq:
-            lines.append(f"\n<b>{title}</b>")
-            lines += [f"• {u}" for u in uniq[:8]]
-            if len(uniq) > 8:
-                lines.append(f"  … y {len(uniq) - 8} más")
-    lines.append("\n<i>/misiones · /brecha · /porque nombre · /resumen · /ayuda</i>")
-    return "\n".join(lines)
+            k = _label(r)
+            if k not in seen:
+                seen.add(k)
+                uniq.append(r)
+        shown = uniq[-8:]
+        lines = [f"<b>{ICONS[title]} {title}</b>"] + [f"• {_label(r)}" for r in shown]
+        if len(uniq) > len(shown):
+            lines.append(f"  … y {len(uniq) - len(shown)} más antes")
+        details = [_detail(r) for r in shown if " — " in r or len(re.sub(r"<[^>]+>", "", r)) > len(_label(r)) + 12]
+        blocks.append((lines, details))
+    footer = "\n<i>Toca ▾ para ver el porqué · /misiones /brecha /porque nombre</i>"
+
+    def build(with_details: bool) -> str:
+        parts = [head, f"<i>{counts}</i>"]
+        for lines, details in blocks:
+            parts.append("\n".join(lines))
+            if with_details and details:
+                parts.append("<blockquote expandable>" + "\n\n".join(details) + "</blockquote>")
+        return "\n\n".join(parts) + footer
+
+    text = build(True)
+    return text if len(text) <= MAX_CHARS else build(False)
+
+
+def render_urgent(events: list[str]) -> str:
+    """Aviso urgente: título corto y, plegado, el detalle."""
+    parts = ["🔴 <b>URGENTE</b>"]
+    for e in events:
+        parts.append(f"<b>{_label(e, 110)}</b>")
+        d = _detail(e)
+        if len(re.sub(r"<[^>]+>", "", d)) > len(_label(e, 110)) + 5:
+            parts.append("<blockquote expandable>" + d + "</blockquote>")
+    return "\n\n".join(parts)[:MAX_CHARS]
 
 
 def flush_text(store: Store, now: datetime | None = None) -> str | None:

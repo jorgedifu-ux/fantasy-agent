@@ -54,7 +54,7 @@ class Digest(unittest.TestCase):
             "💰 Vendido A", "💰 Vendido A", "🛒 Fichado B", "🧩 Alineación guardada 3-4-3", "🧩 Alineación guardada 4-4-2",
             "❌ Puja perdida: C")]
         text = inbox.render_digest(items, now=datetime(2026, 10, 18, 9, 0))
-        self.assertEqual(text.count("Vendido A"), 1)
+        self.assertEqual(text.count("• Vendido A"), 1)
         self.assertIn("4-4-2", text)
         self.assertNotIn("3-4-3", text)
         self.assertIn("Ventas", text)
