@@ -56,7 +56,7 @@ def _visible_len(text: str) -> int:
     return len(html.unescape(re.sub(r"<[^>]+>", "", text)))
 
 
-BUTTONS = [("📈 Brecha", "cmd:brecha"), ("📬 Resumen", "cmd:resumen"), ("🔄 Actualizar y limpiar", "cmd:misiones")]
+BUTTONS = [("🏟 Partidos", "cmd:partidos"), ("📈 Brecha", "cmd:brecha"), ("📬 Resumen", "cmd:resumen"), ("🔄 Actualizar y limpiar", "cmd:misiones")]
 MAX_CHARS = 3950
 POS_LABEL = (("goalkeeper", "POR"), ("defender", "DEF"), ("midfield", "CEN"), ("striker", "DEL"))
 

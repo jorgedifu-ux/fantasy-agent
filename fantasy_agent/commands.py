@@ -6,12 +6,13 @@ import json
 import time
 from datetime import datetime, timezone
 
-from . import autopilot as ap, charts, confirm, fullnames, inbox, notify, panel, tidy, wealth
+from . import autopilot as ap, charts, confirm, fullnames, inbox, matches, notify, panel, tidy, wealth
 from .storage import Store
 
 HELP = (
     "🤖 <b>Qué puedes pedirme</b>\n\n"
     "<blockquote>/misiones · pone al día el panel fijado y borra lo demás (botón 🔄)\n"
+    "/partidos · los partidos de la jornada: qué se ha jugado, qué falta y qué jugadores tiene cada uno\n"
     "/resumen · las novedades pendientes, ya\n"
     "/brecha · diferencia con el líder; /brecha aleix o /brecha pep para otro rival\n"
     "/revision · balance de las operaciones\n"
@@ -200,6 +201,14 @@ def resumen(settings, store: Store) -> None:
     notify.send_all(settings, text, html=True)
 
 
+def partidos(settings, store: Store, api, world) -> None:
+    d = matches.collect(world, api)
+    if not d:
+        notify.send_all(settings, "No he podido leer los partidos de la jornada ahora mismo.")
+        return
+    notify.send_all(settings, matches.render(d), html=True)
+
+
 def porque(settings, store: Store, arg: str) -> None:
     arg = arg.strip().lower()
     if not arg:
@@ -236,6 +245,8 @@ def run(settings, store: Store, api, world, text: str) -> bool:
         resumen(settings, store)
     elif cmd == "brecha":
         brecha(settings, store, api, world, arg)
+    elif cmd in ("partidos", "enfrentamientos"):
+        partidos(settings, store, api, world)
     elif cmd == "grafica":
         grafica(settings, store, api, world, arg)
     elif cmd == "jornada":
