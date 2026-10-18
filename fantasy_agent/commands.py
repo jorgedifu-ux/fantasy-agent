@@ -58,7 +58,7 @@ def gap_lines(ser: dict[str, dict[str, float]], me: str, rival: str, offsets=(5,
         d = _days(today, off)
         if d in ser:
             g = ser[d].get(rival, 0) - ser[d].get(me, 0)
-            lines.append(f"hace {off:>2} días: {g:6.0f}M → {gap_now:6.0f}M ({gap_now - g:+.0f}M)")
+            lines.append(f"hace {off:>2} d: {g:4.0f}M → {gap_now:4.0f}M ({gap_now - g:+.0f}M)")
     return lines
 
 
@@ -70,13 +70,13 @@ def brecha(settings, store: Store, api, world, arg: str = "") -> None:
     ri_row = next(r for r in world.standing if str(r.manager_id) == rival)
     ser = wealth.series(store)
     today = sorted(ser)[-1] if ser else None
-    lines = [f"📈 <b>Brecha con {notify.esc(rival_name)}</b>",
-             f"Puntos: {my_row.points} contra {ri_row.points} → <b>{my_row.points - ri_row.points:+d}</b>"]
+    lines = [f"📈 <b>Brecha con {notify.esc(rival_name)}</b>", "",
+             f"⚽ <b>Puntos</b>\n   tú {my_row.points} · él {ri_row.points}\n   diferencia <b>{my_row.points - ri_row.points:+d}</b>"]
     if today:
         a, b = ser[today].get(me, 0), ser[today].get(rival, 0)
-        lines.append(f"Patrimonio: {a:.0f}M contra {b:.0f}M → <b>{a - b:+.0f}M</b> (tienes el {a / b * 100:.0f}% del suyo)")
-        lines.append("<b>La diferencia de patrimonio, antes y ahora</b>")
-        lines += [f"<code>{l}</code>" for l in gap_lines(ser, me, rival)]
+        lines += ["", f"💰 <b>Patrimonio</b>\n   tú {a:.0f}M · él {b:.0f}M\n   diferencia <b>{a - b:+.0f}M</b> (tienes el {a / b * 100:.0f}% del suyo)",
+                  "", "📉 <b>La diferencia de patrimonio, antes y ahora</b>",
+                  "<pre>" + "\n".join(gap_lines(ser, me, rival)) + "</pre>"]
     buttons = [(f"vs {n.split()[0][:10]}", f"cmd:brecha:{n.split()[0].lower()[:8]}") for mid, n in names.items() if mid not in (me, rival)]
     buttons.insert(0, (f"vs {rival_name.split()[0][:10]}", f"cmd:brecha:{rival_name.split()[0].lower()[:8]}"))
     notify.send_all(settings, "\n".join(lines), html=True, buttons=buttons[:3])
@@ -137,12 +137,12 @@ def jornada(settings, store: Store, api, world) -> None:
         rows.append((p.name, pts))
     rows.sort(key=lambda r: -(r[1] if r[1] is not None else -99))
     total = sum(r[1] for r in rows if r[1] is not None)
-    lines = [f"⚽ <b>Jornada {cur}</b>{' · en juego' if wk.get('isLive') else ''} · tu once lleva <b>{total}</b> pts"]
-    lines.append(", ".join(f"{notify.esc(n)} {pts if pts is not None else '–'}" for n, pts in rows) or "No encuentro la alineación guardada.")
+    lines = [f"⚽ <b>Jornada {cur}</b>{' · en juego' if wk.get('isLive') else ''}", f"<i>tu once lleva {total} pts</i>", ""]
+    lines += [f"• {notify.esc(n)} <b>{pts if pts is not None else '–'}</b>" for n, pts in rows] or ["No encuentro la alineación guardada."]
     try:
         week_rows = api.standing_week(world.league_id, cur)
-        lines.append("Jornada: " + " · ".join(f"{notify.esc(r['team']['manager']['managerName'].split()[0][:10])} {r['points']}"
-                                                for r in sorted(week_rows, key=lambda r: -r['points'])))
+        lines += ["", "<b>Así va la jornada</b>"]
+        lines += [f"• {notify.esc(r['team']['manager']['managerName'][:16])} {r['points']}" for r in sorted(week_rows, key=lambda r: -r['points'])]
     except Exception:
         pass
     notify.send_all(settings, "\n".join(lines), html=True)
@@ -150,17 +150,23 @@ def jornada(settings, store: Store, api, world) -> None:
 
 def plantilla(settings, world) -> None:
     now = datetime.now(timezone.utc)
-    lines = ["👥 <b>Plantilla</b>"]
-    for sl in sorted(world.my_slots, key=lambda x: (x.player.position_id, -x.player.market_value)):
-        p = sl.player
-        if sl.shielded_until and sl.shielded_until > now:
-            prot = f"blindado hasta {sl.shielded_until.astimezone():%a %H:%M}"
-        elif sl.clause_locked_until and sl.clause_locked_until > now:
-            prot = f"protegido hasta {sl.clause_locked_until.astimezone():%a %d %H:%M}"
-        else:
-            prot = "cláusula abierta"
-        ratio = sl.clause / p.market_value if p.market_value else 0
-        lines.append(f"{('POR', 'DEF', 'CEN', 'DEL')[p.position_id - 1]} {notify.esc(p.name)} · {p.market_value / 1e6:.1f}M · cláusula ×{ratio:.2f} · {prot} · {p.avg_points:.1f} pts")
+    names = {1: "Porteros", 2: "Defensas", 3: "Centrocampistas", 4: "Delanteros"}
+    lines = ["👥 <b>Plantilla</b>", "<i>🔒 protegido hasta · 🔓 cláusula abierta · 🛡️ blindado</i>"]
+    for pos in (1, 2, 3, 4):
+        rows = [sl for sl in sorted(world.my_slots, key=lambda x: -x.player.market_value) if sl.player.position_id == pos]
+        if not rows:
+            continue
+        lines += ["", f"<b>{names[pos]}</b>"]
+        for sl in rows:
+            p = sl.player
+            if sl.shielded_until and sl.shielded_until > now:
+                prot = f"🛡️ {sl.shielded_until.astimezone():%d/%m %H:%M}"
+            elif sl.clause_locked_until and sl.clause_locked_until > now:
+                prot = f"🔒 {sl.clause_locked_until.astimezone():%d/%m}"
+            else:
+                prot = "🔓"
+            ratio = sl.clause / p.market_value if p.market_value else 0
+            lines.append(f"• {notify.esc(p.name)} · {p.market_value / 1e6:.1f}M · ×{ratio:.2f} · {prot}")
     notify.send_all(settings, "\n".join(lines), html=True)
 
 
@@ -175,9 +181,9 @@ def porque(settings, store: Store, arg: str) -> None:
         return
     lines = [f"🔎 <b>Por qué: {notify.esc(arg)}</b>"]
     for d in rows:
-        when = datetime.fromtimestamp(d["at"]).strftime("%a %d %H:%M")
+        when = f"{panel.DAYS[datetime.fromtimestamp(d['at']).weekday()]} {datetime.fromtimestamp(d['at']):%d %H:%M}"
         extra = f" (×{d['ratio']})" if d.get("ratio") else ""
-        lines.append(f"{when} · {notify.esc(str(d['kind']))}: <b>{notify.esc(str(d['do']))}</b>{extra} — {notify.esc(str(d['why']))}")
+        lines += ["", f"<b>{when} · {notify.esc(str(d['kind']))} · {notify.esc(str(d['do']))}</b>{extra}", f"<blockquote expandable>{notify.esc(str(d['why']))}</blockquote>"]
     notify.send_all(settings, "\n".join(lines), html=True)
 
 

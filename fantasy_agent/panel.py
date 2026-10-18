@@ -11,7 +11,7 @@ from . import analysis, autopilot as ap, notify
 from .storage import Store
 
 PANEL_ID_KEY = "panel_message_id"
-REFRESH_S = 30 * 60
+REFRESH_S = 10 * 60
 DAYS = ("lun", "mar", "mié", "jue", "vie", "sáb", "dom")
 
 
@@ -24,39 +24,45 @@ def _m(x: float) -> str:
     return f"{x / 1e6:.1f}M"
 
 
+BUTTONS = [("📈 Brecha", "cmd:brecha"), ("⚽ Jornada", "cmd:jornada"), ("👥 Plantilla", "cmd:plantilla"), ("📬 Resumen", "cmd:resumen")]
+
+
 def render(world, store: Store, *, hours_to_deadline: float | None, week: dict | None = None, now: datetime | None = None) -> str:
+    """Panel para leer en el móvil: una sección por tema, separadas por una línea en blanco, líneas cortas y las explicaciones plegadas."""
     now = now or datetime.now(timezone.utc)
     esc = notify.esc
     mine = [sl.player for sl in world.my_slots]
-    lines = [f"🎯 <b>MISIONES</b> · {DAYS[now.astimezone().weekday()]} {now.astimezone():%d/%m %H:%M}"]
+    local = now.astimezone()
+    sections: list[str] = [f"🎯 <b>MISIONES</b>\n<i>{DAYS[local.weekday()]} {local:%d/%m %H:%M}</i>"]
 
     # --- jornada y once
     live = bool((week or {}).get("isLive"))
     n_week = (week or {}).get("weekNumber")
-    if live:
-        lines.append(f"⚽ <b>Jornada {n_week} en juego</b> · ver /jornada")
     short = [f"{n} {('portero', 'defensa', 'centrocampista', 'delantero')[pos - 1]}" for pos, n in analysis.position_shortage(world.my_slots).items() if n > 0]
-    if ap.complete_eleven(mine):
-        xi = "✅ once legal"
-    else:
-        xi = "⚠️ <b>once incompleto</b>" + (f" (faltan {', '.join(short)})" if short else "")
-    if hours_to_deadline is not None and hours_to_deadline > 0:
-        nxt = world.outlook.next_first if world.outlook and world.outlook.next_first else None
-        lines.append(f"📋 Próxima jornada: {_when(nxt) if nxt else '—'} · {xi}")
+    xi_ok = ap.complete_eleven(mine)
+    head = [f"⚽ <b>Jornada {n_week}</b>" + (" · en juego" if live else "")] if live else []
+    nxt = world.outlook.next_first if world.outlook and world.outlook.next_first else None
+    lines = []
+    if hours_to_deadline is not None and hours_to_deadline > 0 and nxt:
+        lines.append(f"📋 <b>Próxima jornada</b>\n   empieza {_when(nxt)}")
         if world.clause_freeze:
-            lines.append(f"   Congelación de cláusulas: {_when(world.clause_freeze[0])} → {_when(world.clause_freeze[1])}")
+            lines.append(f"   cláusulas congeladas desde {_when(world.clause_freeze[0])}")
     else:
-        lines.append(f"📋 {xi}")
-    lines.append(f"💰 Caja {_m(world.my_cash)} · plantilla {len(world.my_slots)} jugadores · valor {_m(sum(p.market_value for p in mine))}")
+        lines.append("📋 <b>Once</b>")
+    lines.append("   ✅ once legal" if xi_ok else "   ⚠️ <b>once incompleto</b>" + (f": falta {', '.join(short)}" if short else ""))
+    sections.append("\n".join(head + lines))
+
+    # --- dinero
+    sections.append(f"💰 <b>Caja</b> {_m(world.my_cash)}\n   {len(world.my_slots)} jugadores · valen {_m(sum(p.market_value for p in mine))}")
 
     # --- fichajes en curso
     bids = [b for b in store.unresolved_market_bids("buy") if not b.get("expires_at") or b["expires_at"] > time.time() - 600]
     if bids:
-        lines.append("🛒 <b>Pujas en curso</b>: " + ", ".join(
-            f"{esc(b['player_name'])} {_m(b['price'])}" + (f" (resuelve {datetime.fromtimestamp(b['expires_at']):%a %H:%M})" if b.get("expires_at") else "")
-            for b in bids[:6]))
+        rows = [f"   • {esc(b['player_name'])} {_m(b['price'])}" + (f" · resuelve {datetime.fromtimestamp(b['expires_at']):%d/%m %H:%M}" if b.get("expires_at") else "")
+                for b in bids[:6]]
+        sections.append("🛒 <b>Pujas en curso</b>\n" + "\n".join(rows))
     else:
-        lines.append("🛒 Pujas en curso: ninguna")
+        sections.append("🛒 <b>Pujas en curso</b>\n   ninguna")
 
     # --- proteger a los que se abren
     exposed, deliberate = [], []
@@ -71,15 +77,13 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
         exposed.append((h, sl))
     exposed.sort(key=lambda x: x[0])
     if exposed:
-        rows = []
-        for h, sl in exposed[:5]:
-            when = "ya abierta" if h == 0 else _when(now + timedelta(hours=h))
-            rows.append(f"{esc(sl.player.name)} ({when})")
-        lines.append("🛡️ <b>Se abren pronto</b>: " + " · ".join(rows) + "\n   Plan: vender con la oferta de las 20:53; si no, blindar o subir la cláusula a ×1,20")
-
+        rows = [f"   • {esc(sl.player.name)} · " + ("ya abierta" if h == 0 else _when(now + timedelta(hours=h))) for h, sl in exposed[:5]]
+        sections.append("🛡️ <b>Se abren pronto</b>\n" + "\n".join(rows) +
+                        "\n<blockquote expandable>Plan: vender con la oferta de las 20:53; si no llega, blindar (24 h) o subir la cláusula a ×1,20.</blockquote>")
     if deliberate:
-        lines.append("👑 Cláusula alta, abierta a propósito (si la pagan, ganamos): " + ", ".join(
-            f"{esc(sl.player.name)} ×{sl.clause / sl.player.market_value:.2f}" for sl in deliberate))
+        sections.append("👑 <b>Cláusula alta a propósito</b>\n" + "\n".join(
+            f"   • {esc(sl.player.name)} ×{sl.clause / sl.player.market_value:.2f}" for sl in deliberate) +
+            "\n<blockquote expandable>Si un rival la paga, ganamos dinero: ni se blinda ni se vende barato.</blockquote>")
 
     # --- bloqueo al líder
     leader = world.leader_team_id
@@ -88,27 +92,28 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
         locked = [sl for sl in gks if sl.clause_locked_until and sl.clause_locked_until > now]
         free_from = max((sl.clause_locked_until for sl in locked), default=None)
         name = next((r.manager_name for r in world.standing if r.team_id == leader), "el líder")
-        if not ap.complete_eleven(mine):
-            lines.append(f"🎯 Bloqueo a {esc(name)}: parado hasta completar nuestro once")
+        if not xi_ok:
+            state = "parado hasta completar nuestro once"
         elif free_from and world.clause_freeze and free_from > world.clause_freeze[0]:
-            lines.append(f"🎯 Bloqueo a {esc(name)}: no antes de la jornada siguiente (su portero queda libre el {_when(free_from)})")
+            state = f"no antes de la jornada siguiente\n   (su portero queda libre el {_when(free_from)})"
         else:
-            lines.append(f"🎯 Bloqueo a {esc(name)}: posible en la próxima congelación ({len(gks)} portero(s) suyo(s))")
+            state = f"posible en la próxima congelación\n   ({len(gks)} portero(s) suyo(s))"
+        sections.append(f"🎯 <b>Bloqueo a {esc(name)}</b>\n   {state}")
 
     # --- brecha
     my = next((r for r in world.standing if r.team_id == world.my_team_id), None)
     top = max(world.standing, key=lambda r: r.points) if world.standing else None
     if my and top and top.team_id != my.team_id:
-        lines.append(f"📈 Brecha con {esc(top.manager_name)}: {my.points - top.points:+d} pts ({my.points} contra {top.points}) · /brecha para la gráfica")
+        sections.append(f"📈 <b>Brecha</b> {my.points - top.points:+d} pts\n   tú {my.points} · {esc(top.manager_name)} {top.points}")
 
     # --- calendario
     out = world.outlook
     if out and out.in_break and out.next_first:
-        lines.append(f"📅 <b>Parón</b> hasta el {out.next_first.astimezone():%d/%m} · inversión a crédito permitida hasta el 20%")
+        sections.append(f"📅 <b>Parón</b> hasta el {out.next_first.astimezone():%d/%m}\n   inversión a crédito permitida (hasta el 20%)")
     elif out and out.next_break and (out.next_break[0] - now) <= timedelta(days=3):
         a, b = out.next_break
-        lines.append(f"📅 <b>Parón en {max(0, (a - now).days)} día(s)</b>: del {a.astimezone():%d/%m} al {b.astimezone():%d/%m}")
-    return "\n".join(lines)
+        sections.append(f"📅 <b>Parón en {max(0, (a - now).days)} día(s)</b>\n   del {a.astimezone():%d/%m} al {b.astimezone():%d/%m}")
+    return "\n\n".join(sections)
 
 
 def sync(store: Store, settings, text: str, force: bool = False) -> bool:
@@ -122,9 +127,9 @@ def sync(store: Store, settings, text: str, force: bool = False) -> bool:
     if not force and time.time() - last < REFRESH_S:
         return False
     msg_id = store.get(PANEL_ID_KEY)
-    ok = notify.edit_message(settings, int(msg_id), text) if msg_id else False
+    ok = notify.edit_message(settings, int(msg_id), text, buttons=BUTTONS) if msg_id else False
     if not ok:
-        new_id = notify.send_all(settings, text, html=True)
+        new_id = notify.send_all(settings, text, html=True, buttons=BUTTONS)
         if new_id:
             store.set(PANEL_ID_KEY, str(new_id))
             notify.pin_message(settings, new_id)
