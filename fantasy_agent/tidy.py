@@ -58,3 +58,20 @@ def sweep(store: Store, settings, now: float | None = None, delete=None) -> int:
         left.append(it)
     store.set(KEY, json.dumps(left[-MAX_TRACKED:]))
     return deleted
+
+
+def purge(store: Store, settings, delete=None) -> int:
+    """Borra YA todo lo que el bot tiene apuntado (menos el panel fijado): lo de «actualizar y limpiar»."""
+    delete = delete or (lambda mid: notify.delete_message(settings, mid))
+    keep = keep_ids(store)
+    sent, notify.SENT_IDS[:] = list(notify.SENT_IDS), []
+    track(store, [m for m in sent if m not in keep])
+    items = [i for i in _load(store) if i["id"] not in keep]
+    left, deleted = [], 0
+    for it in items:
+        if deleted < 100 and delete(it["id"]):
+            deleted += 1
+        else:
+            left.append(it)
+    store.set(KEY, json.dumps(left[-MAX_TRACKED:]))
+    return deleted

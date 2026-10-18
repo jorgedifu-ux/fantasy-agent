@@ -1860,7 +1860,7 @@ def cmd_plan(args, s) -> None:
 
 _JOB_START = time.time()
 _LAST_CTX: dict = {}
-LISTEN_BASE_S = 4 * 60          # tras la pasada se queda escuchando Telegram este rato...
+LISTEN_BASE_S = 9 * 60          # tras la pasada se queda escuchando Telegram este rato...
 LISTEN_ACTIVE_S = 11 * 60       # ...o este, si has hablado con él en los últimos 45 min
 LISTEN_JOB_CAP_S = 13 * 60      # y nunca más allá de aquí desde que empezó el trabajo (la siguiente pasada llega a los 15)
 

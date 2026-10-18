@@ -93,3 +93,14 @@ class Listen(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Purge(Base):
+    def test_purge_deletes_everything_tracked_but_the_panel(self):
+        self.store.set("panel_message_id", "1")
+        tidy.track(self.store, [2, 3], now=time.time())            # recientes: no han vencido
+        notify.SENT_IDS.extend([1, 4])                              # el panel y un mensaje de esta pasada
+        gone = []
+        n = tidy.purge(self.store, SimpleNamespace(), delete=lambda mid: gone.append(mid) or True)
+        self.assertEqual((n, sorted(gone)), (3, [2, 3, 4]))
+        self.assertEqual(json.loads(self.store.get("sent_msgs")), [])

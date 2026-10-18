@@ -37,7 +37,7 @@ def _m(x: float) -> str:
     return f"{x / 1e6:.1f}M"
 
 
-BUTTONS = [("📈 Gráficas", "cmd:brecha"), ("⚽ Jornada", "cmd:jornada"), ("📬 Resumen", "cmd:resumen"), ("🔄 Actualizar", "cmd:misiones")]
+BUTTONS = [("📈 Gráficas", "cmd:brecha"), ("⚽ Jornada", "cmd:jornada"), ("📬 Resumen", "cmd:resumen"), ("🔄 Actualizar y limpiar", "cmd:misiones")]
 MAX_CHARS = 3900
 POS_LABEL = (("goalkeeper", "POR"), ("defender", "DEF"), ("midfield", "CEN"), ("striker", "DEL"))
 
@@ -70,32 +70,36 @@ def jornada_data(world, api) -> dict | None:
             pts = next((x.get("points") for x in (r.get("weekPoints") or []) if x.get("weekNumber") == cur), None)
             fx = world.fixtures.get(str(r.get("teamId")))
             when = fx.when if (pts is None and fx and fx.when and (closing is None or fx.when <= closing)) else None
-            rows.append({"pos": label, "name": pm.get("nickname") or r.get("nickname") or "?", "pts": pts, "when": when})
+            rows.append({"pid": pid, "pos": label, "name": pm.get("nickname") or r.get("nickname") or "?", "pts": pts, "when": when})
     mine = next((x for x in week_rows if str(x["team"]["id"]) == str(world.my_team_id)), None)
     total = int(mine["points"]) if mine else sum(r["pts"] or 0 for r in rows)
     return {"week": cur, "live": bool(wk.get("isLive")), "total": total, "rows": rows, "sold": total - sum(r["pts"] or 0 for r in rows),
             "managers": sorted(((x["team"]["manager"]["managerName"], int(x["points"])) for x in week_rows), key=lambda z: -z[1])}
 
 
-def jornada_lines(d: dict) -> list[str]:
+def jornada_lines(d: dict, full: dict[str, str] | None = None) -> list[str]:
+    full = full or {}
     lines = []
     for r in d["rows"]:
+        name = notify.esc(full.get(str(r.get("pid")), r["name"]))
         if r["pts"] is not None:
-            lines.append(f"{r['pos']} {notify.esc(r['name'])} · <b>{r['pts']}</b>")
+            lines.append(f"{r['pos']} {name} · <b>{r['pts']}</b>")
         else:
             when = f" ({_when(r['when'])})" if r["when"] else ""
-            lines.append(f"{r['pos']} {notify.esc(r['name'])} · –{when}")
+            lines.append(f"{r['pos']} {name} · –{when}")
     if d["sold"] > 0:
         lines.append(f"+ {d['sold']} de jugadores vendidos después de puntuar")
     return lines
 
 
 def render(world, store: Store, *, hours_to_deadline: float | None, week: dict | None = None, now: datetime | None = None,
-           jornada: dict | None = None) -> str:
+           jornada: dict | None = None, full: dict[str, str] | None = None) -> str:
     """Panel para leer en el móvil: una sección por tema, separadas por una línea en blanco y líneas cortas. Los datos (jornada, brecha, rivales, plantilla,
     pendientes) van dentro, plegados: se consultan sin esperar al bot, tal y como se guardaron en la última actualización."""
     now = now or datetime.now(timezone.utc)
     esc = notify.esc
+    full = full or {}
+    nm = lambda p: esc(full.get(str(p.id), p.name))      # noqa: E731  nombre completo si se conoce
     mine = [sl.player for sl in world.my_slots]
     local = now.astimezone()
     sections: list[str] = [f"🎯 <b>MISIONES</b>\n<i>actualizado {DAYS[local.weekday()]} {local:%d/%m %H:%M}</i>"]
@@ -108,7 +112,7 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
     if jornada and jornada["rows"] is not None:
         rivals_wk = " · ".join(f"{esc(short_name(n, n == my_name))} {p}" for n, p in jornada["managers"])
         sections.append(f"⚽ <b>Jornada {jornada['week']}</b>{' · en juego' if jornada['live'] else ''}\n   llevas <b>{jornada['total']}</b> pts · {rivals_wk}\n"
-                        + _fold(jornada_lines(jornada)))
+                        + _fold(jornada_lines(jornada, full)))
 
     # --- próxima jornada y once
     short = [f"{n} {('portero', 'defensa', 'centrocampista', 'delantero')[pos - 1]}" for pos, n in analysis.position_shortage(world.my_slots).items() if n > 0]
@@ -147,11 +151,11 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
         exposed.append((h, sl))
     exposed.sort(key=lambda x: x[0])
     if exposed:
-        rows = [f"{esc(sl.player.name)} · " + ("ya abierta" if h == 0 else _when(now + timedelta(hours=h))) for h, sl in exposed[:5]]
+        rows = [f"{nm(sl.player)} · " + ("ya abierta" if h == 0 else _when(now + timedelta(hours=h))) for h, sl in exposed[:5]]
         rows.append("Plan: vender con la oferta de las 20:53; si no llega, blindar (24 h) o subir la cláusula a ×1,20.")
         sections.append(f"🛡️ <b>Se abren pronto</b> ({len(exposed)})\n" + _fold(rows))
     if deliberate:
-        rows = [f"{esc(sl.player.name)} ×{sl.clause / sl.player.market_value:.2f}" for sl in deliberate]
+        rows = [f"{nm(sl.player)} ×{sl.clause / sl.player.market_value:.2f}" for sl in deliberate]
         rows.append("Si un rival la paga, ganamos dinero: ni se blinda ni se vende barato.")
         sections.append("👑 <b>Cláusula alta a propósito</b>\n" + _fold(rows))
 
@@ -206,7 +210,7 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
             prot = f"🔒 {sl.clause_locked_until.astimezone():%d/%m}"
         else:
             prot = "🔓"
-        rows.append(f"{('POR', 'DEF', 'CEN', 'DEL')[p.position_id - 1]} {esc(p.name)} · {p.market_value / 1e6:.1f}M · {prot}")
+        rows.append(f"{('POR', 'DEF', 'CEN', 'DEL')[p.position_id - 1]} {nm(p)} · {p.market_value / 1e6:.1f}M · {prot}")
     sections.append(f"👥 <b>Plantilla</b> ({len(world.my_slots)})\n" + _fold(rows))
 
     # --- novedades pendientes del resumen
@@ -221,6 +225,7 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
     elif out and out.next_break and (out.next_break[0] - now) <= timedelta(days=3):
         a, b = out.next_break
         sections.append(f"📅 <b>Parón en {max(0, (a - now).days)} día(s)</b>\n   del {a.astimezone():%d/%m} al {b.astimezone():%d/%m}")
+    sections.append("<i>Lo plegado se abre con un toque. Los botones los atiendo en cuanto estoy escuchando (a veces hasta 15 min).</i>")
     text = "\n\n".join(sections)
     if len(text) > MAX_CHARS:      # Telegram corta a 4096: se quitan primero los pendientes y la plantilla plegada
         text = "\n\n".join(s for s in sections if not s.startswith(("📬", "👥")))

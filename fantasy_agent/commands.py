@@ -6,14 +6,15 @@ import json
 import time
 from datetime import datetime, timezone
 
-from . import autopilot as ap, charts, confirm, inbox, notify, panel, tidy, wealth
+from . import autopilot as ap, charts, confirm, fullnames, inbox, notify, panel, tidy, wealth
 from .storage import Store
 
 HELP = (
     "🤖 <b>Qué puedes pedirme</b>\n"
-    "/misiones — estado de lo importante (también está fijado arriba)\n"
+    "/misiones — pone al día el panel fijado y borra los mensajes anteriores (igual que el botón 🔄)\n"
     "/resumen — las novedades pendientes, ya\n"
-    "/brecha — diferencia con el líder (dinero y puntos) con gráficas; /brecha aleix o /brecha pep para otro rival\n"
+    "/brecha — diferencia con el líder (dinero y puntos) con barras; /brecha aleix o /brecha pep para otro rival\n"
+    "/grafica — las gráficas en imagen (patrimonio y puntos por jornada)\n"
     "/jornada — puntos de la jornada en juego\n"
     "/plantilla — tu plantilla, con su valor, cláusula y protección\n"
     "/plan — el plan de equipo de la semana\n"
@@ -62,54 +63,111 @@ def gap_lines(ser: dict[str, dict[str, float]], me: str, rival: str, offsets=(5,
     return lines
 
 
-def brecha(settings, store: Store, api, world, arg: str = "") -> None:
-    names = _managers(world)
-    me, rival = _my_manager_id(world), _pick_rival(world, arg)
-    my_name, rival_name = "Tú", panel.short_name(names.get(rival, "Rival"))
-    my_row = next(r for r in world.standing if str(r.manager_id) == me)
-    ri_row = next(r for r in world.standing if str(r.manager_id) == rival)
-    ser = wealth.series(store)
-    today = sorted(ser)[-1] if ser else None
-    lines = [f"📈 <b>Brecha con {notify.esc(rival_name)}</b>", "",
-             f"⚽ <b>Puntos</b>\n   tú {my_row.points} · él {ri_row.points}\n   diferencia <b>{my_row.points - ri_row.points:+d}</b>"]
-    if today:
-        a, b = ser[today].get(me, 0), ser[today].get(rival, 0)
-        lines += ["", f"💰 <b>Patrimonio</b>\n   tú {a:.0f}M · él {b:.0f}M\n   diferencia <b>{a - b:+.0f}M</b> (tienes el {a / b * 100:.0f}% del suyo)",
-                  "", "📉 <b>La diferencia de patrimonio, antes y ahora</b>",
-                  "<pre>" + "\n".join(gap_lines(ser, me, rival)) + "</pre>"]
-    buttons = [(f"vs {panel.short_name(n)}", f"cmd:brecha:{panel.short_name(n).lower()}") for mid, n in names.items() if mid != me]
-    notify.send_all(settings, "\n".join(lines), html=True, buttons=buttons[:3])
-    if today:
-        days = sorted(ser)
-        me_s = [ser[d].get(me) for d in days]
-        ri_s = [ser[d].get(rival) for d in days]
-        url = charts.render_url(charts.wealth_config(days, me_s, ri_s, rival_name, my_name))
-        notify.send_photo(settings, url, "Patrimonio de cada uno. Hasta el 18/10 es una reconstrucción (±10M); desde entonces, foto diaria.")
+BAR = 10
+SPARK = "▁▂▃▄▅▆▇█"
+
+
+def _bars(values: list[float], icons: list[str]) -> list[str]:
+    """Barras de emojis a la misma escala (lo más largo, BAR casillas): se ven igual de alineadas en cualquier móvil."""
+    top = max(values) or 1
+    out = []
+    for v, icon in zip(values, icons):
+        n = max(0, min(BAR, round(v / top * BAR)))
+        out.append(icon * n + "⬜" * (BAR - n))
+    return out
+
+
+def _spark(values: list[float]) -> str:
+    lo, hi = min(values), max(values)
+    if hi == lo:
+        return SPARK[3] * len(values)
+    return "".join(SPARK[round((v - lo) / (hi - lo) * (len(SPARK) - 1))] for v in values)
+
+
+def _week_points(settings, store: Store, api, world) -> tuple[int, dict]:
     cur = int((api.current_week() or {}).get("weekNumber") or 0)
     cached = json.loads(store.get("pts_weeks") or "{}")
     if cached.get("w") != cur or time.time() - cached.get("at", 0) > 2 * 3600:
         cached = {"at": time.time(), "w": cur, "d": wealth.points_by_week(api, world.league_id, cur)}
         store.set("pts_weeks", json.dumps(cached))
-    pts = cached["d"]
+    return cur, cached["d"]
+
+
+def brecha(settings, store: Store, api, world, arg: str = "") -> None:
+    """Brecha con un rival en texto visual (barras de emojis y una línea de evolución): se lee de un vistazo y no ocupa como una imagen."""
+    names = _managers(world)
+    me, rival = _my_manager_id(world), _pick_rival(world, arg)
+    rival_name = panel.short_name(names.get(rival, "Rival"))
+    my_row = next(r for r in world.standing if str(r.manager_id) == me)
+    ri_row = next(r for r in world.standing if str(r.manager_id) == rival)
+    ser = wealth.series(store)
+    days = sorted(ser)
+    pb = _bars([my_row.points, ri_row.points], ["🟦", "🟧"])
+    lines = [f"📈 <b>Brecha con {notify.esc(rival_name)}</b>", "",
+             f"⚽ <b>Puntos</b>", f"{pb[0]} Tú {my_row.points}", f"{pb[1]} {notify.esc(rival_name)} {ri_row.points}",
+             f"Diferencia <b>{my_row.points - ri_row.points:+d}</b>"]
+    if days:
+        a, b = ser[days[-1]].get(me, 0), ser[days[-1]].get(rival, 0)
+        wb = _bars([a, b], ["🟦", "🟧"])
+        lines += ["", "💰 <b>Patrimonio</b>", f"{wb[0]} Tú {a:.0f}M", f"{wb[1]} {notify.esc(rival_name)} {b:.0f}M",
+                  f"Diferencia <b>{a - b:+.0f}M</b> · tienes el {a / b * 100:.0f}% del suyo"]
+        gap = [ser[d].get(rival, 0) - ser[d].get(me, 0) for d in days[-30:]]
+        lines += ["", f"📉 <b>La diferencia, día a día</b> (últimos {len(gap)})", f"{_spark(gap)}", f"{gap[0]:.0f}M → {gap[-1]:.0f}M"]
+        hist = gap_lines(ser, me, rival)
+        if hist:
+            lines += ["", "<b>Antes y ahora</b>", "<blockquote expandable>" + "\n".join(hist) + "</blockquote>"]
+    try:
+        cur, pts = _week_points(settings, store, api, world)
+        if me in pts and rival in pts and cur:
+            rows = []
+            for w in range(1, cur + 1):
+                m = pts[me][w - 1] if w <= len(pts[me]) else 0
+                r = pts[rival][w - 1] if w <= len(pts[rival]) else 0
+                if m or r:
+                    rows.append(f"J{w}{' (en juego)' if w == cur else ''} · tú {m} · {notify.esc(rival_name)} {r} → <b>{m - r:+d}</b>")
+            if rows:
+                lines += ["", "🗓 <b>Por jornada</b>", "<blockquote expandable>" + "\n".join(rows) + "</blockquote>"]
+    except Exception:
+        pass
+    buttons = [(f"vs {panel.short_name(n)}", f"cmd:brecha:{panel.short_name(n).lower()}") for mid, n in names.items() if mid != me]
+    buttons.append(("📊 Gráficas", "cmd:grafica"))
+    notify.send_all(settings, "\n".join(lines), html=True, buttons=buttons[:4])
+
+
+def grafica(settings, store: Store, api, world, arg: str = "") -> None:
+    """Las dos imágenes (patrimonio y puntos por jornada), solo si las pides: ocupan mucho."""
+    names = _managers(world)
+    me, rival = _my_manager_id(world), _pick_rival(world, arg)
+    rival_name = panel.short_name(names.get(rival, "Rival"))
+    ser = wealth.series(store)
+    if ser:
+        days = sorted(ser)
+        url = charts.render_url(charts.wealth_config(days, [ser[d].get(me) for d in days], [ser[d].get(rival) for d in days], rival_name, "Tú"))
+        notify.send_photo(settings, url, "Patrimonio. Hasta el 18/10 es una reconstrucción (±10M); desde entonces, foto diaria.")
+    cur, pts = _week_points(settings, store, api, world)
     if me in pts and rival in pts and cur:
         weeks = [w for w in range(1, cur + 1) if (pts[me][w - 1] if w <= len(pts[me]) else 0) or (pts[rival][w - 1] if w <= len(pts[rival]) else 0)]
-        mine_p = [pts[me][w - 1] for w in weeks]
-        ri_p = [pts[rival][w - 1] for w in weeks]
-        url = charts.render_url(charts.points_config(weeks, mine_p, ri_p, rival_name, my_name, live_week=cur))
+        url = charts.render_url(charts.points_config(weeks, [pts[me][w - 1] for w in weeks], [pts[rival][w - 1] for w in weeks], rival_name, "Tú", live_week=cur))
         notify.send_photo(settings, url, "Puntos de cada jornada (la última, en juego).")
+
+
+def _full_names(store: Store, api, world, jornada: dict | None) -> dict[str, str]:
+    ids = [sl.player.id for sl in world.my_slots] + [r["pid"] for r in (jornada or {}).get("rows", []) if r.get("pid")]
+    return fullnames.ensure(store, api, list(dict.fromkeys(ids)))
 
 
 def refresh_panel(settings, store: Store, api, world, force: bool = False) -> bool:
     from . import cli
-    text = panel.render(world, store, hours_to_deadline=cli._hours_to_deadline(world), week=api.current_week(),
-                        jornada=panel.jornada_data(world, api))
+    jd = panel.jornada_data(world, api)
+    text = panel.render(world, store, hours_to_deadline=cli._hours_to_deadline(world), week=api.current_week(), jornada=jd,
+                        full=_full_names(store, api, world, jd))
     return panel.sync(store, settings, text, force=force)
 
 
 def misiones(settings, store: Store, api, world) -> None:
-    """Pone al día el panel fijado en el sitio (y lo recrea si lo borraste); aquí solo avisa."""
+    """«Actualizar y limpiar»: borra los mensajes anteriores del bot y pone al día el panel fijado en el sitio (lo recrea si lo borraste)."""
+    tidy.purge(store, settings)
     refresh_panel(settings, store, api, world, force=True)
-    notify.send_all(settings, "🔄 Panel actualizado: está fijado arriba.", html=True)
 
 
 def resumen(settings, store: Store) -> None:
@@ -123,23 +181,17 @@ def jornada(settings, store: Store, api, world) -> None:
     if not d:
         notify.send_all(settings, "No he podido leer la jornada ahora mismo; prueba en unos minutos.")
         return
+    full = _full_names(store, api, world, d)
     lines = [f"⚽ <b>Jornada {d['week']}</b>{' · en juego' if d['live'] else ''}", f"<b>Llevas {d['total']} puntos</b>", ""]
-    table = []
-    for r in d["rows"]:
-        pts = str(r["pts"]) if r["pts"] is not None else "–"
-        when = f"  {panel._when(r['when'])}" if r["when"] else ""
-        table.append(f"{r['pos']} {r['name'][:15]:<15} {pts:>3}{when}")
-    if d["sold"] > 0:
-        table.append(f"{'':3} {'vendidos':<15} {'+' + str(d['sold']):>3}")
-    lines.append("<pre>" + notify.esc("\n".join(table)) + "</pre>")
-    if d["sold"] > 0:
-        lines.append("<i>Los «vendidos» puntuaron antes de venderlos y cuentan.</i>")
-    lines += ["", "<b>Así va la jornada</b>", "<pre>" + notify.esc("\n".join(f"{panel.short_name(n, n == my_name):<16} {p:>3}" for n, p in d["managers"])) + "</pre>"]
+    lines += panel.jornada_lines(d, full)
+    lines += ["", "<b>Así va la jornada</b>"]
+    lines += [f"{notify.esc(panel.short_name(n, n == my_name))} · <b>{p}</b>" for n, p in d["managers"]]
     notify.send_all(settings, "\n".join(lines), html=True)
 
 
-def plantilla(settings, world) -> None:
+def plantilla(settings, store: Store, api, world) -> None:
     now = datetime.now(timezone.utc)
+    full = _full_names(store, api, world, None)
     names = {1: "Porteros", 2: "Defensas", 3: "Centrocampistas", 4: "Delanteros"}
     lines = ["👥 <b>Plantilla</b>", "<i>🔒 protegido hasta · 🔓 cláusula abierta · 🛡️ blindado</i>"]
     for pos in (1, 2, 3, 4):
@@ -156,7 +208,7 @@ def plantilla(settings, world) -> None:
             else:
                 prot = "🔓"
             ratio = sl.clause / p.market_value if p.market_value else 0
-            lines.append(f"• {notify.esc(p.name)} · {p.market_value / 1e6:.1f}M · ×{ratio:.2f} · {prot}")
+            lines.append(f"{notify.esc(full.get(p.id, p.name))} · {p.market_value / 1e6:.1f}M · ×{ratio:.2f} · {prot}")
     notify.send_all(settings, "\n".join(lines), html=True)
 
 
@@ -190,16 +242,18 @@ def run(settings, store: Store, api, world, text: str) -> bool:
         notify.send_all(settings, HELP, html=True)
         if cmd == "start":
             refresh_panel(settings, store, api, world, force=True)       # tras vaciar el chat, vuelve a crear y fijar el panel
-    elif cmd == "misiones":
+    elif cmd in ("misiones", "limpiar"):
         misiones(settings, store, api, world)
     elif cmd == "resumen":
         resumen(settings, store)
     elif cmd == "brecha":
         brecha(settings, store, api, world, arg)
+    elif cmd == "grafica":
+        grafica(settings, store, api, world, arg)
     elif cmd == "jornada":
         jornada(settings, store, api, world)
     elif cmd == "plantilla":
-        plantilla(settings, world)
+        plantilla(settings, store, api, world)
     elif cmd == "plan":
         from . import plan as plan_mod
         notify.send_all(settings, plan_mod.render_plan_text(plan_mod.load_plan(store)), html=True)
@@ -224,7 +278,7 @@ def _handle(settings, store: Store, api, world, updates: list[dict]) -> list[str
             store.set("last_user_at", str(time.time()))
             text = (cq or {}).get("data") if cq else (upd.get("message") or {}).get("text", "")
             if cq:
-                notify.answer_callback(settings, cq["id"])
+                notify.answer_callback(settings, cq["id"], "Actualizado y limpio ✅" if text == "cmd:misiones" else "Voy…")
             if text and run(settings, store, api, world, text):
                 if not cq and (upd.get("message") or {}).get("message_id"):
                     tidy.track(store, [upd["message"]["message_id"]], ttl_s=tidy.USER_TTL_S)   # tu orden, ya contestada, se borra en 1 h
