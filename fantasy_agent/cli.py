@@ -573,8 +573,10 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
                            "sus cláusulas se abren en menos de 3 días: se planifica ya su sustituto")
     avoid = frozenset(t for t in (world.leader_team_id, world.revenge_against_team_id) if t)
     short_pos = frozenset(pos for pos, n in analysis.position_shortage(world.my_slots).items() if n)
+    hours_left = _hours_to_deadline(world)
+    emergency = hours_left is not None and hours_left <= ap.EMERGENCY_H        # con días por delante no se paga una cláusula cara: se puja en el mercado
     moves = ap.clause_moves(world.rival_slots, now, freeze=world.clause_freeze, avoid_team_ids=avoid,
-                            leader_team_id=world.leader_team_id or "", short_positions=short_pos) + \
+                            leader_team_id=world.leader_team_id or "", short_positions=short_pos if emergency else frozenset()) + \
         ap.bid_moves(world.market, skip_player_ids=frozenset(pl.id for pl in incoming))
     trends = {pid: tr for pid, (_, tr) in world.trends.items()}
     # Tendencia de las cláusulas de rivales con precio razonable (no están en `world.trends`).
@@ -596,7 +598,7 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
             m.rival_loss = ap.leader_loss(leader_players, m.player.id, world.recent_form)
         kept.append(m)
     moves = kept
-    plan = ap.plan_acquisitions(planning_mine, moves, budget, vacated=[p for p in mine if p.id in vacating], form=world.recent_form, max_squad=s.max_squad,
+    plan = ap.plan_acquisitions(planning_mine, moves, budget, vacated=[p for p in mine if p.id in vacating], needed_positions=short_pos, form=world.recent_form, max_squad=s.max_squad,
                                 rivals=_rival_premium(store, api, world))
     # El portero de reserva va ANTES que las inversiones (protege el once). Si no hay plaza, se quita lo último del
     # plan y se avisa a `_resolve_offers` de que hay que liberar plazas (kv `slots_needed`).

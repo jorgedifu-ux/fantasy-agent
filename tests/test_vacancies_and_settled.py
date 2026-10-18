@@ -121,3 +121,20 @@ class Settled(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NeededBids(unittest.TestCase):
+    def item(self):
+        from fantasy_agent.models import MarketItem
+        p = pl("x", 2, 3.0, value=5_000_000)
+        return MarketItem(player=p, price=5_000_000, expires=NOW + timedelta(hours=5), seller="LaLiga", bids=0, market_id="m1")
+
+    def test_a_needed_position_is_bid_stronger_than_a_normal_target(self):
+        rivals = ap.RivalPremium(median=1.10, p75=1.14)
+        normal = ap.bid_amount(self.item(), 1.0, rivals)
+        needed = ap.bid_amount(self.item(), 1.0, rivals, needed=True)
+        self.assertGreater(needed, normal)
+        self.assertEqual(needed, round(5_000_000 * 1.12))          # p75 +14%, con el techo de +12%
+
+    def test_without_rival_data_a_needed_position_goes_to_the_cap(self):
+        self.assertEqual(ap.bid_amount(self.item(), 1.0, None, needed=True), round(5_000_000 * (1 + ap.MAX_OVERBID)))

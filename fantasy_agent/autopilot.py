@@ -483,7 +483,10 @@ class RivalPremium:
     p75: float
 
 
-def bid_amount(item: MarketItem, gain: float, rivals: RivalPremium | None = None) -> int:
+EMERGENCY_H = 36     # solo a ≤36 h de la jornada se paga una cláusula con prima alta para cubrir una posición; antes, se espera a las pujas del mercado (cada día a las 20:53)
+
+
+def bid_amount(item: MarketItem, gain: float, rivals: RivalPremium | None = None, needed: bool = False) -> int:
     """Pujar para ganar sin regalar dinero: casi todos los anuncios tienen 0 pujas, así que el
     empuje fuerte solo se paga cuando YA hay otra puja compitiendo; entonces, al menos lo que
     suelen pagar los rivales (mediana). Techo: +12% (lo que pagas de más sobre el valor es
@@ -495,6 +498,10 @@ def bid_amount(item: MarketItem, gain: float, rivals: RivalPremium | None = None
         overbid += 0.05
         if rivals and gain >= 1.5:
             overbid = max(overbid, rivals.median - 1)
+    if needed:
+        # Posición que hay que cubrir y con días por delante: se puja fuerte en el mercado (los rivales ganan pujando de media +10% y p75 +14%) en vez de
+        # esperar a pagar una cláusula con prima en el último momento.
+        overbid = max(overbid, (rivals.p75 - 1) if rivals else MAX_OVERBID)
     return round(bid_floor(item) * (1 + min(overbid, MAX_OVERBID)))
 
 
@@ -610,7 +617,7 @@ PREMIUM_OVERRIDE_GAIN = 3.0
 def plan_acquisitions(
     mine: list[Player], moves: list[Move], budget: int, *,
     form: dict[str, float] | None = None, max_squad: int = 16, rivals: RivalPremium | None = None,
-    vacated: list[Player] | tuple = (),
+    vacated: list[Player] | tuple = (), needed_positions: frozenset[int] = frozenset(),
 ) -> list[Move]:
     """Cartera de compras: en cada paso elige la que más puntos suma por recurso gastado (con
     penalización si alimenta al líder o es venganza), la añade a la plantilla simulada y
@@ -633,7 +640,7 @@ def plan_acquisitions(
             gain = squad_value(roster + [m.player], form) - base
             if gain + m.rival_loss < MIN_GAIN:
                 continue
-            cost = bid_amount(m.item, gain, rivals) if m.kind == "bid" and m.item else m.cost
+            cost = bid_amount(m.item, gain, rivals, needed=m.player.position_id in needed_positions) if m.kind == "bid" and m.item else m.cost
             if cost > left:
                 continue
             # Beneficio neto en M: lo que suma al once durante unas jornadas + lo que se revaloriza,
