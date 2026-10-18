@@ -371,6 +371,11 @@ Subir la cláusula: la ayuda oficial no lo documenta; nuestra prueba del 7/10 (M
 **Lo que viene esta semana (jugadores que se abren):** Terrats (lun 19 00:16), Fofana (lun 19 21:02), Zabiri (mar 20 20:53), Deossa (mié 21 20:53), Ilaix (vie 23 21:03). Esta noche y mañana no hay
 blindajes (hasta el martes 20 a las 03:00), así que se resuelven con la oferta diaria o, si no llega, con la subida de cláusula.
 
+### Cierre de contradicciones (18/10/2026): recambio primero y puntos definitivos
+- **Orden de prioridades**: 1) once legal siempre, 2) no regalar un titular en subida a un rival, 3) puntos, 4) dinero. Cuando chocan 1 y 2 (venderlo dejaría el once ilegal), se protege (blindaje o cláusula ×1,20) y no se vende hasta tener recambio (`BREAKS_XI_HOLD_H`=120 h).
+- **Plan de recambios** (`ap.vacating_soon`): el titular cuya cláusula se abre en ≤3 días y es atractiva (≤×1,12) cuenta como vacante al planificar fichajes (`_acquire`), así el sustituto se busca ANTES de que salga. Queda anotado en `kv.decisions` («recambio previsto»).
+- **Forma con la jornada en curso** (`cli._refine_form`, `pts.settled_points`): los puntos de la jornada actual entran en la forma de los últimos 3 partidos SOLO cuando el partido terminó hace ≥40 min y el valor de la ficha lleva ≥20 min sin cambiar (Fantasy tarda unos minutos en repartir los puntos). Backtest J4–J8 (1.459 casos): media de temporada 3,13 de error, últimas 3 3,16, mezcla 60/40 3,11: sin diferencia práctica; el rival pesa poco (casa-fuera ≈0,6 pts; el resto, dentro del ruido).
+
 ### Reglas de la deuda (comprobadas el 13/10/2026 con la ayuda oficial de LaLiga Fantasy y una guía de Comuniate)
 - Límite: **20% del valor de la plantilla** (no del patrimonio con saldo; hoy 269,6M → 53,9M; con saldo serían 56,9M). Puja máxima = saldo + ese 20% (hoy 68,7M).
 - **No se puede endeudar para pagar una cláusula ni para subir la propia**: las cláusulas se pagan solo con saldo (el bot ya trabaja así). Las pujas de mercado sí pueden usar deuda.

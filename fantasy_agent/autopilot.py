@@ -800,6 +800,24 @@ def raise_plan(slot: SquadSlot, mine: list[Player], form: dict[str, float] | Non
     return inc, cost
 
 
+BREAKS_XI_HOLD_H = 120       # a menos de 5 días de la jornada, no se vende a quien dejaría el once ilegal: el recambio va primero
+
+
+def vacating_soon(slots: list[SquadSlot], now: datetime, form: dict[str, float] | None = None) -> set[str]:
+    """Titulares que se van a vender en cuanto llegue una oferta razonable porque su cláusula se abre en ≤ `AT_RISK_HOURS` y es atractiva para un rival: su sitio
+    cuenta ya como vacante al planificar fichajes, para tener el recambio antes (no después) de que salgan."""
+    mine = [sl.player for sl in slots]
+    out = set()
+    for sl in slots:
+        p = sl.player
+        h = hours_until_exposed(sl, now)
+        if h is None or h > AT_RISK_HOURS or not p.market_value or p.status.lower() in INJURED:
+            continue
+        if sl.clause / p.market_value <= ATTRACTIVE_RATIO and sale_loss(mine, p.id, form) >= STARTER_LOSS:
+            out.add(p.id)
+    return out
+
+
 def hours_until_exposed(slot: SquadSlot, now: datetime) -> float | None:
     """Horas hasta que un rival pueda clausular a tu jugador (0 = ya puede), o None si su
     cláusula es tan alta que no es un objetivo lógico para nadie."""
@@ -858,8 +876,9 @@ def offer_decision(
         return "reject", f"oferta de {offer.from_manager} (x{ratio:.2f} el valor): las de rivales casi nunca convienen"
     if reserve_keeper:
         return "hold", "recambio necesario (portero de reserva o cuarto defensa): sin él no hay once legal ni se puede soltar a un titular que se frena"
-    if breaks_xi and (hours_to_deadline is None or hours_to_deadline < 48):
-        return "hold", "venderlo ahora te dejaría sin 11 para la jornada"
+    if breaks_xi and (hours_to_deadline is None or hours_to_deadline < BREAKS_XI_HOLD_H):
+        return "hold", ("venderlo ahora te dejaría sin once legal y aún no hay recambio: primero el recambio (mientras, se protege "
+                        "con blindaje o subiendo su cláusula)")
     key = loss >= KEY_PLAYER_LOSS
     stalled = is_stalled(trend_d1, trend_d7, value) and not key and not no_sell
     leaving = exit_mode and not key and not no_sell and not stalled

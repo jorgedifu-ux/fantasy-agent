@@ -527,6 +527,33 @@ def _prune_bids(store: Store, api: FantasyAPI, world, lock_hours: float = 24) ->
     return events
 
 
+def _refine_form(store: Store, api: FantasyAPI, world) -> None:
+    """La forma reciente de nuestros jugadores y de los del mercado incluye la jornada en curso SOLO cuando su partido terminó y Fantasy ya asignó los puntos
+    (`pts.settled_points`: ≥ 40 min tras el final y el valor estable ≥ 20 min). Antes la jornada actual no contaba hasta cerrar: Deossa seguía con 5,8 tras un 0."""
+    from . import pts as pts_mod
+    try:
+        cur = models.to_int(models.pick(api.current_week(), "weekNumber"), default=0)
+        by_id = models.week_points_by_id(api.players())
+        raw = {str(p["id"]): p for p in api.players()}
+    except Exception:
+        return
+    sched = pts_mod.schedule(api, cur)
+    ids = {sl.player.id for sl in world.my_slots} | {it.player.id for it in world.market}
+    changed = []
+    for pid in ids:
+        info = sched.get(str(raw.get(pid, {}).get("teamId")))
+        value = pts_mod.settled_points(store, api, pid, cur, info)
+        if value is None:
+            continue
+        done = [pts for wn, pts in by_id.get(pid, []) if 0 < wn < cur]
+        recent = (done + [value])[-3:]
+        old = world.recent_form.get(pid)
+        world.recent_form[pid] = sum(recent) / len(recent)
+        changed.append((pid, old, world.recent_form[pid]))
+    if changed:
+        store.log_decision("forma", f"{len(changed)} jugadores", "actualizada", "la jornada en curso ya cuenta en su forma reciente (partido acabado y puntos asignados)")
+
+
 def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -> tuple[list[str], list[ap.Move]]:
     """Fichajes y clausulazos autónomos (ver autopilot.plan_acquisitions). Devuelve también
     las cláusulas que se liberan pronto y ya tienen su dinero reservado (para `_snipe`)."""
@@ -539,6 +566,11 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
         return [], []
     budget = max(0, budget)
     mine = [sl.player for sl in world.my_slots] + incoming
+    vacating = ap.vacating_soon(world.my_slots, now, world.recent_form)
+    planning_mine = [p for p in mine if p.id not in vacating]       # el sitio de quien se va ya cuenta como hueco: se busca su recambio antes
+    if vacating and store.alert_is_new("vacating:" + ",".join(sorted(vacating)), ttl_hours=12):
+        store.log_decision("recambio", ", ".join(sorted(p.name for p in mine if p.id in vacating))[:120], "previsto",
+                           "sus cláusulas se abren en menos de 3 días: se planifica ya su sustituto")
     avoid = frozenset(t for t in (world.leader_team_id, world.revenge_against_team_id) if t)
     short_pos = frozenset(pos for pos, n in analysis.position_shortage(world.my_slots).items() if n)
     moves = ap.clause_moves(world.rival_slots, now, freeze=world.clause_freeze, avoid_team_ids=avoid,
@@ -564,7 +596,7 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
             m.rival_loss = ap.leader_loss(leader_players, m.player.id, world.recent_form)
         kept.append(m)
     moves = kept
-    plan = ap.plan_acquisitions(mine, moves, budget, form=world.recent_form, max_squad=s.max_squad,
+    plan = ap.plan_acquisitions(planning_mine, moves, budget, form=world.recent_form, max_squad=s.max_squad,
                                 rivals=_rival_premium(store, api, world))
     # El portero de reserva va ANTES que las inversiones (protege el once). Si no hay plaza, se quita lo último del
     # plan y se avisa a `_resolve_offers` de que hay que liberar plazas (kv `slots_needed`).
@@ -1755,6 +1787,7 @@ def _watch_once(store: Store, s) -> str:
     st("telegram", commands.poll, s, store, api, world)  # lo que hayas escrito (/brecha, /misiones...) y los botones antiguos
     st("cohortes", _setup_match_context, store, api, world)
     st("alineación probable", _setup_start_probs, store, api, world)
+    st("forma con la jornada en curso", _refine_form, store, api, world)
     st("historial", _record_status_history, store, world)
     team_plan = st("plan", _sync_plan, store, s, world, default=plan_mod.Plan())
     st("patrimonio", _record_wealth, store, world)

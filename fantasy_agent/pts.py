@@ -34,6 +34,44 @@ def week_points(store: Store | None, api, pid: str, week: int, list_value=None, 
     if value is None:
         value = list_value
     if store is not None:
-        cache[pid] = {"w": week, "p": value, "t": round(time.time())}
+        same_since = hit.get("same_since", hit.get("t", time.time())) if hit and hit.get("w") == week and hit.get("p") == value else time.time()
+        cache[pid] = {"w": week, "p": value, "t": round(time.time()), "same_since": round(same_since)}
         store.set(KEY, json.dumps(cache))
+    return value
+
+
+# ---- puntos DEFINITIVOS: partido terminado Y puntos ya asignados por Fantasy ----
+FULL_TIME_S = 115 * 60        # saque inicial + duración
+GRACE_S = 40 * 60             # Fantasy tarda en repartir los puntos tras el pitido final
+STABLE_S = 20 * 60            # y el valor debe llevar al menos esto sin cambiar entre lecturas
+
+
+def schedule(api, week: int) -> dict[str, dict]:
+    """team_id -> {kickoff, finished} de la jornada (del calendario)."""
+    from . import models
+    out: dict[str, dict] = {}
+    try:
+        for m in models.as_list(api.calendar(week), "matches", "elements", "calendar"):
+            when = models.parse_dt(m.get("matchDate") or m.get("date"))
+            if when is None:
+                continue
+            done = m.get("localScore") is not None or m.get("matchState") == 7
+            for team in (str(m.get("localId")), str(m.get("visitorId"))):
+                out[team] = {"kickoff": when, "finished": bool(done)}
+    except Exception:
+        pass
+    return out
+
+
+def settled_points(store: Store, api, pid: str, week: int, match: dict | None, now: float | None = None):
+    """Puntos del jugador en `week` solo si son definitivos: el partido terminó hace ≥ `GRACE_S` y el valor de su ficha lleva ≥ `STABLE_S` sin cambiar. Si no, None."""
+    now = now or time.time()
+    if not match or not match.get("finished"):
+        return None
+    if now < match["kickoff"].timestamp() + FULL_TIME_S + GRACE_S:
+        return None
+    value = week_points(store, api, pid, week, started=True)
+    entry = (json.loads(store.get(KEY) or "{}") if store is not None else {}).get(pid) or {}
+    if value is None or now - entry.get("same_since", now) < STABLE_S:
+        return None
     return value
