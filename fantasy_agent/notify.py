@@ -5,6 +5,7 @@ from .config import Settings
 from .http import request_json
 
 TELEGRAM_CHUNK = 4000
+SENT_IDS: list[int] = []     # ids de lo mandado en esta pasada: `tidy` los apunta para borrarlos pasado un tiempo
 
 
 def telegram_enabled(settings: Settings) -> bool:
@@ -59,6 +60,8 @@ def send_telegram(
             body["reply_markup"] = {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in buttons]]}
         resp = request_json("POST", url, json_body=body)
         message_id = (resp or {}).get("result", {}).get("message_id")
+        if message_id:
+            SENT_IDS.append(int(message_id))
     return message_id
 
 
@@ -94,7 +97,10 @@ def send_photo(settings: Settings, photo_url: str, caption: str = "", *, buttons
     if buttons:
         body["reply_markup"] = {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in buttons]]}
     resp = request_json("POST", url, json_body=body)
-    return (resp or {}).get("result", {}).get("message_id")
+    message_id = (resp or {}).get("result", {}).get("message_id")
+    if message_id:
+        SENT_IDS.append(int(message_id))
+    return message_id
 
 
 def pin_message(settings: Settings, message_id: int) -> None:
@@ -123,17 +129,40 @@ def answer_callback(settings: Settings, callback_query_id: str, text: str = "") 
         pass
 
 
-def get_telegram_updates(settings: Settings, offset: int | None = None) -> list[dict]:
-    """Mensajes nuevos recibidos por el bot (para leer confirmaciones). Long-poll corto:
-    no bloquea, solo devuelve lo que ya haya llegado desde `offset`."""
+def get_telegram_updates(settings: Settings, offset: int | None = None, wait: int = 0) -> list[dict]:
+    """Mensajes nuevos recibidos por el bot. Con `wait=0` no bloquea (solo lo que ya haya llegado desde `offset`); con `wait>0` Telegram
+    mantiene la petición abierta hasta que llegue algo o pasen esos segundos (así se contesta casi al instante mientras la pasada escucha)."""
     if not telegram_enabled(settings):
         return []
     url = f"https://api.telegram.org/bot{settings.telegram_token}/getUpdates"
-    params: dict[str, int] = {"timeout": 0}
+    params: dict[str, int] = {"timeout": wait}
     if offset is not None:
         params["offset"] = offset
-    resp = request_json("GET", url, params=params)
+    resp = request_json("GET", url, params=params, timeout=wait + 20, retries=0 if wait else 2)
     return resp.get("result", [])
+
+
+def delete_message(settings: Settings, message_id: int) -> bool:
+    """Borra un mensaje del bot (Telegram solo deja si tiene menos de 48 h). True si ya no está."""
+    if not telegram_enabled(settings):
+        return False
+    url = f"https://api.telegram.org/bot{settings.telegram_token}/deleteMessage"
+    try:
+        request_json("POST", url, json_body={"chat_id": settings.telegram_chat_id, "message_id": message_id})
+        return True
+    except Exception as exc:
+        text = str(exc)
+        return "message to delete not found" in text or "can't be deleted" in text or "message can't be deleted" in text
+
+
+def unpin_message(settings: Settings, message_id: int) -> None:
+    if not telegram_enabled(settings):
+        return
+    url = f"https://api.telegram.org/bot{settings.telegram_token}/unpinChatMessage"
+    try:
+        request_json("POST", url, json_body={"chat_id": settings.telegram_chat_id, "message_id": message_id})
+    except Exception:
+        pass
 
 
 def send_all(

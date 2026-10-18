@@ -24,6 +24,10 @@ quieres cambiar la estrategia.
   - **Resumen agrupado** a las 9, 14, 19 y 22 h (solo si hay novedades) o con `/resumen`; el resto de avisos se acumula en la bandeja (`kv.inbox`), sin repetidos.
   - **Panel de misiones**: UN mensaje fijado que se edita en el sitio (como mucho cada 30 min y solo si cambia): jornada y once, caja, pujas en curso, jugadores que se abren, bloqueo al líder, brecha, parón.
   - **Consultas** (se contestan en la pasada siguiente, ≤15 min): `/misiones`, `/resumen`, `/brecha [aleix|pep]` (texto + 3 gráficas de QuickChart.io), `/jornada`, `/plantilla`, `/porque <jugador>` (lee `kv.decisions`), `/ayuda`. Solo hace caso a tu chat.
+  - **Respuestas casi al instante**: tras cada pasada el mismo job se queda escuchando Telegram (4 min, o 11 si le has hablado en los últimos 45 min; nunca más de 13 min desde que empezó) y contesta en cuanto escribes (long-poll). Es el mismo job, no uno aparte, porque dos jobs con la misma
+    caché de estado se pisarían al guardarla. Si escribes en frío puede tardar hasta 15 min en la primera respuesta.
+  - **Chat ordenado**: lo único que se queda es el panel fijado; el resto de lo que manda el bot se borra a las 24 h y tus órdenes ya contestadas a la hora (`tidy.py`; Telegram solo deja borrar lo que tenga menos de 48 h). El plan semanal ya no se manda ni se fija: `/plan`.
+    Si borras todo el chat, escribe `/misiones` y el panel se vuelve a crear y fijar.
   - Un corte pasajero de Telegram no avisa, y si falla el envío el parte se guarda y sale en la pasada siguiente (`kv.outbox`).
   - Parón: aviso 48 h antes, uno al empezar y una línea en el panel mientras dura.
   - Patrimonio de los cuatro: histórico sembrado hasta el 18/10 (`seed_patrimonio.json`, ±10M) y una foto diaria desde entonces (`kv.wealth_league`).

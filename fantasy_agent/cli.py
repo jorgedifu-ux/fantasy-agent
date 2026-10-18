@@ -194,21 +194,16 @@ def _check_bid_resolutions(store: Store, world) -> list[str]:
 
 
 def _sync_plan(store: Store, s, world) -> plan_mod.Plan:
-    """Regenera el plan si toca (una vez por semana, no cada tick — ver plan.py) y mantiene
-    un ÚNICO mensaje fijado en Telegram con el plan actual, editándolo en el sitio en vez de
-    mandar uno nuevo cada vez. Siempre devuelve el plan vigente (aunque no toque regenerar),
-    para que el resto del tick pueda consultar targets/sell_priority/watchlist."""
+    """Regenera el plan si toca (una vez por semana, no cada tick — ver plan.py). Ya no se manda ni se fija solo (el único mensaje fijado es el
+    panel de misiones): se consulta con `/plan`. Siempre devuelve el plan vigente, para que el resto del tick pueda consultar
+    targets/sell_priority/watchlist."""
+    old_id = store.get(plan_mod.PLAN_MESSAGE_ID_KEY)
+    if old_id and old_id.isdigit() and not store.get("plan_unpinned"):
+        notify.unpin_message(s, int(old_id))       # el viejo plan fijado deja el sitio al panel
+        store.set("plan_unpinned", "1")
     if plan_mod.due_for_refresh(store):
         plan = plan_mod.generate_plan(world, s, store)
         plan_mod.save_plan(store, plan)
-        text = plan_mod.render_plan_text(plan)
-        msg_id = store.get(plan_mod.PLAN_MESSAGE_ID_KEY)
-        edited = notify.edit_message(s, int(msg_id), text) if msg_id else False
-        if not edited:
-            new_id = notify.send_all(s, text, html=True)
-            if new_id:
-                store.set(plan_mod.PLAN_MESSAGE_ID_KEY, str(new_id))
-                notify.pin_message(s, new_id)
         return plan
     return plan_mod.load_plan(store)
 
@@ -1828,6 +1823,7 @@ def _watch_once(store: Store, s) -> str:
         st("al segundo", _timed_actions, store, api, world, reserved, default=[])
     if sniped:
         _deliver(store, s, st, sniped)
+    _LAST_CTX.update(api=api, world=world)
     return f"[{now:%H:%M}] ok · {len(events) + len(sniped)} acciones/avisos"
 
 
@@ -1863,6 +1859,30 @@ def cmd_plan(args, s) -> None:
                 notify.pin_message(s, new_id)
 
 
+_JOB_START = time.time()
+_LAST_CTX: dict = {}
+LISTEN_BASE_S = 4 * 60          # tras la pasada se queda escuchando Telegram este rato...
+LISTEN_ACTIVE_S = 11 * 60       # ...o este, si has hablado con él en los últimos 45 min
+LISTEN_JOB_CAP_S = 13 * 60      # y nunca más allá de aquí desde que empezó el trabajo (la siguiente pasada llega a los 15)
+
+
+def _listen_after_tick(store: Store, s) -> None:
+    """Contestar al instante en vez de esperar 15 min a la pasada siguiente: tras el trabajo, el mismo proceso escucha Telegram un rato (más largo si
+    acabas de hablarle). Es el mismo job (mismo estado): un job aparte cada pocos minutos chocaría con esta pasada al guardar la caché."""
+    api, world = _LAST_CTX.get("api"), _LAST_CTX.get("world")
+    if api is None or world is None or not notify.telegram_enabled(s):
+        return
+    active = time.time() - float(store.get("last_user_at") or 0) < 45 * 60
+    until = min(time.time() + (LISTEN_ACTIVE_S if active else LISTEN_BASE_S), _JOB_START + LISTEN_JOB_CAP_S)
+    if until - time.time() > 40:
+        commands.listen(s, store, api, world, until)
+
+
+def _tidy_chat(store: Store, s) -> None:
+    from . import tidy
+    tidy.sweep(store, s)
+
+
 def cmd_tick(args, s) -> None:
     """Una sola pasada de vigilancia (pensado para cron / GitHub Actions)."""
     if args.dry_run:
@@ -1873,6 +1893,13 @@ def cmd_tick(args, s) -> None:
     store = Store(s.db_file)
     try:
         print(_watch_once(store, s))
+        for name, fn in (("escuchar", _listen_after_tick), ("ordenar el chat", _tidy_chat)):
+            try:
+                fn(store, s)
+            except Exception as exc:       # lo de después de la pasada nunca debe hacerla fallar
+                import traceback
+                store.log_error(name, traceback.format_exc())
+                print(f"[{name}] {exc}")
     except Exception as exc:
         import traceback
         store.log_error("pasada", traceback.format_exc())

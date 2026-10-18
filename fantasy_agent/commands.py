@@ -6,7 +6,7 @@ import json
 import time
 from datetime import datetime, timezone
 
-from . import autopilot as ap, charts, confirm, inbox, notify, panel, wealth
+from . import autopilot as ap, charts, confirm, inbox, notify, panel, tidy, wealth
 from .storage import Store
 
 HELP = (
@@ -16,8 +16,9 @@ HELP = (
     "/brecha — diferencia con el líder (dinero y puntos) con gráficas; /brecha aleix o /brecha pep para otro rival\n"
     "/jornada — puntos de la jornada en juego\n"
     "/plantilla — tu plantilla, con su valor, cláusula y protección\n"
+    "/plan — el plan de equipo de la semana\n"
     "/porque Terrats — por qué se hizo (o no) algo con un jugador\n\n"
-    "Respondo en la siguiente pasada (como mucho 15 min)."
+    "Contesto en cuanto estoy escuchando (casi al instante si acabas de hablar conmigo); si no, en la siguiente pasada (máx. 15 min)."
 )
 
 
@@ -201,6 +202,9 @@ def run(settings, store: Store, api, world, text: str) -> bool:
         jornada(settings, store, api, world)
     elif cmd == "plantilla":
         plantilla(settings, world)
+    elif cmd == "plan":
+        from . import plan as plan_mod
+        notify.send_all(settings, plan_mod.render_plan_text(plan_mod.load_plan(store)), html=True)
     elif cmd == "porque":
         porque(settings, store, arg)
     else:
@@ -208,14 +212,8 @@ def run(settings, store: Store, api, world, text: str) -> bool:
     return True
 
 
-def poll(settings, store: Store, api, world) -> list[str]:
-    """Lee lo que hayas escrito o pulsado: comandos nuevos y, como antes, los botones de Confirmar/Cancelar antiguos."""
+def _handle(settings, store: Store, api, world, updates: list[dict]) -> list[str]:
     results: list[str] = []
-    if not notify.telegram_enabled(settings):
-        return results
-    store.expire_pending()
-    last_id = store.get("telegram_last_update_id")
-    updates = notify.get_telegram_updates(settings, offset=int(last_id) + 1 if last_id else None)
     pending = {p["id"]: p for p in store.get_pending()}
     mine = str(settings.telegram_chat_id)
     for upd in updates:
@@ -225,10 +223,13 @@ def poll(settings, store: Store, api, world) -> list[str]:
             msg = (cq or {}).get("message") or upd.get("message") or {}
             if str((msg.get("chat") or {}).get("id")) != mine:
                 continue                                              # solo hago caso a tu chat
+            store.set("last_user_at", str(time.time()))
             text = (cq or {}).get("data") if cq else (upd.get("message") or {}).get("text", "")
             if cq:
                 notify.answer_callback(settings, cq["id"])
             if text and run(settings, store, api, world, text):
+                if not cq and (upd.get("message") or {}).get("message_id"):
+                    tidy.track(store, [upd["message"]["message_id"]], ttl_s=tidy.USER_TTL_S)   # tu orden, ya contestada, se borra en 1 h
                 continue
             confirm._process_update(settings, store, api, pending, results, upd)
         except Exception as exc:
@@ -236,3 +237,27 @@ def poll(settings, store: Store, api, world) -> list[str]:
             store.log_error("comando", redact(str(exc)))
             notify.send_all(settings, f"⚠️ No he podido atender ese mensaje: {notify.esc(redact(str(exc)))[:300]}", html=True)
     return results
+
+
+def poll(settings, store: Store, api, world) -> list[str]:
+    """Lee lo que hayas escrito o pulsado: comandos nuevos y, como antes, los botones de Confirmar/Cancelar antiguos."""
+    if not notify.telegram_enabled(settings):
+        return []
+    store.expire_pending()
+    last_id = store.get("telegram_last_update_id")
+    return _handle(settings, store, api, world, notify.get_telegram_updates(settings, offset=int(last_id) + 1 if last_id else None))
+
+
+def listen(settings, store: Store, api, world, until: float, wait: int = 25) -> int:
+    """Se queda escuchando hasta `until` (timestamp): Telegram avisa en cuanto escribes y se contesta al momento, sin esperar a la pasada
+    siguiente. Devuelve cuántos mensajes atendió."""
+    if not notify.telegram_enabled(settings):
+        return 0
+    n = 0
+    while time.time() + wait + 5 < until:
+        last_id = store.get("telegram_last_update_id")
+        updates = notify.get_telegram_updates(settings, offset=int(last_id) + 1 if last_id else None, wait=wait)
+        if updates:
+            _handle(settings, store, api, world, updates)
+            n += len(updates)
+    return n
