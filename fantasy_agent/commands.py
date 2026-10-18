@@ -222,7 +222,7 @@ def porque(settings, store: Store, arg: str) -> None:
     for d in rows:
         when = f"{panel.DAYS[datetime.fromtimestamp(d['at']).weekday()]} {datetime.fromtimestamp(d['at']):%d %H:%M}"
         extra = f" (×{d['ratio']})" if d.get("ratio") else ""
-        lines += ["", f"<b>{when} · {notify.esc(str(d['kind']))} · {notify.esc(str(d['do']))}</b>{extra}", f"<blockquote expandable>{notify.esc(str(d['why']))}</blockquote>"]
+        lines += ["", f"<b>{when} · {notify.esc(str(d['kind']))} · {notify.esc(str(d['do']))}</b>{extra}", f"<blockquote>{notify.esc(str(d['why']))}</blockquote>"]
     notify.send_all(settings, "\n".join(lines), html=True)
 
 

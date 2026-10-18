@@ -14,43 +14,36 @@ class Names(unittest.TestCase):
 
 class Jornada(unittest.TestCase):
     D = {"rows": [{"pid": "1", "pos": "DEF", "name": "Hancko", "pts": 10, "when": None, "gone": None},
-                  {"pid": "2", "pos": "POR", "name": "Soria", "pts": None, "when": datetime(2026, 10, 19, 19, 0, tzinfo=timezone.utc), "gone": None},
+                  {"pid": "2", "pos": "POR", "name": "Soria", "pts": None, "when": datetime(2026, 10, 19, 19, 0, tzinfo=timezone.utc),
+                   "vs": "vs Rayo", "gone": None},
                   {"pid": "3", "pos": "CEN", "name": "Giménez", "pts": 6, "when": None, "gone": "vendido · 16/10 21:01"},
                   {"pid": "4", "pos": "DEF", "name": "Yoel Lago", "pts": None, "when": None, "gone": "clausulado por Josinho · 17/10 23:14"}],
-         "sold": 0}
+         "bench": [{"pid": "9", "pos": "POR", "name": "A. Herrero", "avg": 5.4, "status": "ok"},
+                   {"pid": "8", "pos": "DEF", "name": "Salinas", "avg": 2.3, "status": "injured"}],
+         "formation": [3, 5, 2], "missing": {"DEF": 2, "CEN": 5}, "sold": 0}
 
-    def test_grouped_by_position_with_a_state_icon(self):
-        text = "\n".join(panel.jornada_lines(self.D, {"1": "Dávid Hancko"}))
-        self.assertIn("<b>🧤 Portero</b>\n⏳ Soria — lun", text)
-        self.assertIn("<b>🛡️ Defensas</b>\n✅ Dávid Hancko — <b>10 pts</b>", text)
+    def test_three_blocks_one_line_per_player_with_position_and_state_icons(self):
+        b = panel.jornada_blocks(self.D, {"1": "Dávid Hancko"})
+        self.assertEqual(b["once"][0], "🧤 Soria — ⏳ lun 19 21:00 · vs Rayo")
+        self.assertIn("🛡️ Dávid Hancko — ✅ <b>10 pts</b>", b["once"])
+        self.assertIn("🛡️ <i>2 hueco(s): ya no están</i>", b["once"])
+        self.assertTrue(all(not l.startswith("<b>") for l in b["once"]))          # sin títulos metidos dentro del desplegable
+
+    def test_out_of_the_eleven_with_average_and_injury_flag(self):
+        b = panel.jornada_blocks(self.D)
+        self.assertIn("🧤 A. Herrero — media 5,4", b["fuera"])
+        self.assertIn("🛡️ Salinas — media 2,3 · ⚠️ injured", b["fuera"])
 
     def test_those_who_left_go_apart_with_how_and_their_points(self):
-        text = "\n".join(panel.jornada_lines(self.D))
-        self.assertIn("<b>🚪 Ya no están</b>", text)
-        self.assertIn("Giménez (CEN) — <b>6 pts</b> · vendido · 16/10 21:01", text)
-        self.assertIn("Yoel Lago (DEF) — sin jugar · clausulado por Josinho", text)
-        self.assertNotIn("Giménez — <b>6 pts</b>\n", text.split("Ya no están")[0])      # no sale entre los de la plantilla
+        b = panel.jornada_blocks(self.D)
+        self.assertIn("🧠 Giménez — <b>6 pts</b> · vendido · 16/10 21:01", b["ya_no"])
+        self.assertIn("🛡️ Yoel Lago — sin jugar · clausulado por Josinho · 17/10 23:14", b["ya_no"])
+        self.assertIn("<i>Lo que puntuó antes de irse cuenta.</i>", b["ya_no"])
+        self.assertFalse(any("Giménez" in l for l in b["once"]))
 
     def test_points_not_explained_by_any_row_are_shown(self):
         d = {"rows": [{"pid": "1", "pos": "DEF", "name": "Hancko", "pts": 10, "when": None, "gone": None}], "sold": 6}
-        self.assertIn("+ 6 pts más", panel.jornada_lines(d)[-1])
-
-
-class JornadaDetail(unittest.TestCase):
-    def test_who_is_in_the_eleven_who_is_out_and_the_holes(self):
-        d = {"rows": [{"pid": "1", "pos": "DEF", "name": "Hancko", "pts": 10, "when": None, "gone": None},
-                      {"pid": "2", "pos": "POR", "name": "Soria", "pts": None, "when": datetime(2026, 10, 19, 19, 0, tzinfo=timezone.utc),
-                       "vs": "vs Rayo", "gone": None}],
-             "bench": [{"pid": "9", "pos": "POR", "name": "A. Herrero", "avg": 5.4, "status": "ok"},
-                       {"pid": "8", "pos": "DEF", "name": "Salinas", "avg": 2.3, "status": "injured"}],
-             "formation": [3, 5, 2], "missing": {"DEF": 2, "CEN": 5, "DEL": 2}, "sold": 0}
-        text = "\n".join(panel.jornada_lines(d))
-        self.assertIn("🧩 Tu once (3-5-2)</b> · 2 de 11 siguen contigo", text)
-        self.assertIn("⏳ Soria — lun 19 21:00 · vs Rayo", text)
-        self.assertIn("… 2 hueco(s)", text)
-        self.assertIn("🪑 Fuera del once</b> (no puntúan)", text)
-        self.assertIn("A. Herrero (POR) — media 5,4", text)
-        self.assertIn("Salinas (DEF) — media 2,3 · ⚠️ injured", text)
+        self.assertIn("+ 6 pts más", panel.jornada_blocks(d)["ya_no"][-1])
 
     def test_repeated_surnames_are_collapsed(self):
         self.assertEqual(panel.clean_name("Moriba Kourouma Kourouma"), "Moriba Kourouma")
@@ -62,8 +55,8 @@ class Results(unittest.TestCase):
 
     def test_summary_visible_and_details_folded(self):
         text = panel.results_section(self.LINES)
-        self.assertIn("30 operaciones · 19 con ganancia · +22.12M", text)
-        self.assertIn("<blockquote expandable>Patrimonio ahora", text)
+        self.assertIn("30 operaciones · 19 con ganancia · +22,1M", text)
+        self.assertIn("<blockquote expandable>💰 Patrimonio ahora: 301,2M", text)
         self.assertNotIn("Puntos: 162", text)
 
     def test_nothing_to_show_without_a_review(self):
