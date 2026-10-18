@@ -1742,9 +1742,9 @@ def _watch_once(store: Store, s) -> str:
     errs: list[str] = []
     st = lambda name, fn, *a, default=None, **k: _step(store, errs, name, fn, *a, default=default, **k)  # noqa: E731
     st("propuestas", store.retire_all_pending)
-    st("telegram", commands.poll, s, store, api, world)  # lo que hayas escrito (/brecha, /misiones...) y los botones antiguos
 
     world = _world(api, s, trends=True)  # sin datos no se puede hacer nada: si falla, falla la pasada
+    st("telegram", commands.poll, s, store, api, world)  # lo que hayas escrito (/brecha, /misiones...) y los botones antiguos
     st("cohortes", _setup_match_context, store, api, world)
     st("alineación probable", _setup_start_probs, store, api, world)
     st("historial", _record_status_history, store, world)
@@ -1820,7 +1820,7 @@ def _watch_once(store: Store, s) -> str:
     events += st("publicar datos", _publish_state, store, s, default=[])
     if errs and store.alert_is_new("step_errors:" + ",".join(sorted(e.split(":")[0] for e in errs)), ttl_hours=6):
         events.append("⚠️ Pasos con error en esta pasada (el resto se hizo): " + notify.esc("; ".join(errs))[:600])
-    st("patrimonio", wealth.snapshot, store, api, world)
+    st("patrimonio de la liga", wealth.snapshot, store, api, world)
     _deliver(store, s, st, events)
     st("panel", _sync_panel, store, s, api, world)
 
