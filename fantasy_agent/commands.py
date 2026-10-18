@@ -15,8 +15,7 @@ HELP = (
     "/resumen — las novedades pendientes, ya\n"
     "/brecha — diferencia con el líder (dinero y puntos) con barras; /brecha aleix o /brecha pep para otro rival\n"
     "/grafica — las gráficas en imagen (patrimonio y puntos por jornada)\n"
-    "/jornada — puntos de la jornada en juego\n"
-    "/plantilla — tu plantilla, con su valor, cláusula y protección\n"
+    "/revision — balance de las operaciones (también en el panel, plegado en «Resultados»)\n"
     "/plan — el plan de equipo de la semana\n"
     "/porque Terrats — por qué se hizo (o no) algo con un jugador\n\n"
     "Contesto en cuanto estoy escuchando (casi al instante si acabas de hablar conmigo); si no, en la siguiente pasada (máx. 15 min)."
@@ -156,12 +155,41 @@ def _full_names(store: Store, api, world, jornada: dict | None) -> dict[str, str
     return fullnames.ensure(store, api, list(dict.fromkeys(ids)))
 
 
+def review_lines(settings, store: Store, api, world) -> list[str]:
+    """Líneas de la revisión (operaciones cerradas, lo que sigue sin vender...), guardadas 6 h: cuesta ~30 llamadas a la API."""
+    from . import cli
+    cached = json.loads(store.get("review_cache") or "{}")
+    if cached.get("lines") and time.time() - cached.get("at", 0) < 6 * 3600:
+        return cached["lines"]
+    try:
+        lines = cli._review_text(api, store, world).splitlines()
+    except Exception:
+        return cached.get("lines", [])
+    store.set("review_cache", json.dumps({"at": time.time(), "lines": lines}, ensure_ascii=False))
+    return lines
+
+
 def refresh_panel(settings, store: Store, api, world, force: bool = False) -> bool:
     from . import cli
     jd = panel.jornada_data(world, api, store)
     text = panel.render(world, store, hours_to_deadline=cli._hours_to_deadline(world), week=api.current_week(), jornada=jd,
-                        full=_full_names(store, api, world, jd))
+                        full=_full_names(store, api, world, jd), review=review_lines(settings, store, api, world))
     return panel.sync(store, settings, text, force=force)
+
+
+def in_panel(settings, store: Store, api, world, section: str) -> None:
+    """Jornada y plantilla ya están en el panel fijado, plegadas: se pone al día y se avisa en una línea (no se manda otro tocho)."""
+    refresh_panel(settings, store, api, world, force=True)
+    notify.send_all(settings, f"📌 Está en el panel fijado, plegado en <b>{section}</b>. Acabo de actualizarlo.", html=True)
+
+
+def revision(settings, store: Store, api, world) -> None:
+    lines = review_lines(settings, store, api, world)
+    if not lines:
+        notify.send_all(settings, "No he podido preparar la revisión ahora mismo.")
+        return
+    summary = [l for l in lines[1:4]]
+    notify.send_all(settings, "📊 <b>Revisión</b>\n" + "\n".join(summary) + "\n" + panel._fold([l.strip() for l in lines[4:]]), html=True)
 
 
 def misiones(settings, store: Store, api, world) -> None:
@@ -173,43 +201,6 @@ def misiones(settings, store: Store, api, world) -> None:
 def resumen(settings, store: Store) -> None:
     text = inbox.flush_text(store)
     notify.send_all(settings, text or "📭 Nada nuevo desde el último resumen.", html=True)
-
-
-def jornada(settings, store: Store, api, world) -> None:
-    d = panel.jornada_data(world, api, store)
-    my_name = next((r.manager_name for r in world.standing if r.team_id == world.my_team_id), "")
-    if not d:
-        notify.send_all(settings, "No he podido leer la jornada ahora mismo; prueba en unos minutos.")
-        return
-    full = _full_names(store, api, world, d)
-    lines = [f"⚽ <b>Jornada {d['week']}</b>{' · en juego' if d['live'] else ''}", f"<b>Llevas {d['total']} puntos</b>", ""]
-    lines += panel.jornada_lines(d, full)
-    lines += ["", "<b>Así va la jornada</b>"]
-    lines += [f"{notify.esc(panel.short_name(n, n == my_name))} · <b>{p}</b>" for n, p in d["managers"]]
-    notify.send_all(settings, "\n".join(lines), html=True)
-
-
-def plantilla(settings, store: Store, api, world) -> None:
-    now = datetime.now(timezone.utc)
-    full = _full_names(store, api, world, None)
-    names = {1: "Porteros", 2: "Defensas", 3: "Centrocampistas", 4: "Delanteros"}
-    lines = ["👥 <b>Plantilla</b>", "<i>🔒 protegido hasta · 🔓 cláusula abierta · 🛡️ blindado</i>"]
-    for pos in (1, 2, 3, 4):
-        rows = [sl for sl in sorted(world.my_slots, key=lambda x: -x.player.market_value) if sl.player.position_id == pos]
-        if not rows:
-            continue
-        lines += ["", f"<b>{names[pos]}</b>"]
-        for sl in rows:
-            p = sl.player
-            if sl.shielded_until and sl.shielded_until > now:
-                prot = f"🛡️ {sl.shielded_until.astimezone():%d/%m %H:%M}"
-            elif sl.clause_locked_until and sl.clause_locked_until > now:
-                prot = f"🔒 {sl.clause_locked_until.astimezone():%d/%m}"
-            else:
-                prot = "🔓"
-            ratio = sl.clause / p.market_value if p.market_value else 0
-            lines.append(f"{notify.esc(full.get(p.id, p.name))} · {p.market_value / 1e6:.1f}M · ×{ratio:.2f} · {prot}")
-    notify.send_all(settings, "\n".join(lines), html=True)
 
 
 def porque(settings, store: Store, arg: str) -> None:
@@ -251,9 +242,11 @@ def run(settings, store: Store, api, world, text: str) -> bool:
     elif cmd == "grafica":
         grafica(settings, store, api, world, arg)
     elif cmd == "jornada":
-        jornada(settings, store, api, world)
+        in_panel(settings, store, api, world, "Jornada")
     elif cmd == "plantilla":
-        plantilla(settings, store, api, world)
+        in_panel(settings, store, api, world, "Plantilla")
+    elif cmd == "revision":
+        revision(settings, store, api, world)
     elif cmd == "plan":
         from . import plan as plan_mod
         notify.send_all(settings, plan_mod.render_plan_text(plan_mod.load_plan(store)), html=True)

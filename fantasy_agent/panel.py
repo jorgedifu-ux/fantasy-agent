@@ -37,7 +37,7 @@ def _m(x: float) -> str:
     return f"{x / 1e6:.1f}M"
 
 
-BUTTONS = [("📈 Gráficas", "cmd:brecha"), ("⚽ Jornada", "cmd:jornada"), ("📬 Resumen", "cmd:resumen"), ("🔄 Actualizar y limpiar", "cmd:misiones")]
+BUTTONS = [("📈 Brecha", "cmd:brecha"), ("📬 Resumen", "cmd:resumen"), ("🔄 Actualizar y limpiar", "cmd:misiones")]
 MAX_CHARS = 3900
 POS_LABEL = (("goalkeeper", "POR"), ("defender", "DEF"), ("midfield", "CEN"), ("striker", "DEL"))
 
@@ -143,8 +143,21 @@ def jornada_lines(d: dict, full: dict[str, str] | None = None) -> list[str]:
     return lines
 
 
+def results_section(review_lines: list[str] | None) -> str | None:
+    """«Resultados»: una línea con el balance de las operaciones y, plegado, el detalle de la revisión."""
+    if not review_lines:
+        return None
+    summary = next((l for l in review_lines if l.startswith("Operaciones cerradas")), None)
+    head = "📊 <b>Resultados</b>"
+    if summary:
+        m = re.search(r":\s*(\d+) · (\d+) con ganancia · resultado ([+-][\d.]+M)", summary)
+        head += f"\n   {m.group(1)} operaciones · {m.group(2)} con ganancia · {m.group(3)}" if m else ""
+    body = [l.strip() for l in review_lines[1:] if not l.startswith("Puntos:")]
+    return head + "\n" + _fold(body)
+
+
 def render(world, store: Store, *, hours_to_deadline: float | None, week: dict | None = None, now: datetime | None = None,
-           jornada: dict | None = None, full: dict[str, str] | None = None) -> str:
+           jornada: dict | None = None, full: dict[str, str] | None = None, review: list[str] | None = None) -> str:
     """Panel para leer en el móvil: una sección por tema, separadas por una línea en blanco y líneas cortas. Los datos (jornada, brecha, rivales, plantilla,
     pendientes) van dentro, plegados: se consultan sin esperar al bot, tal y como se guardaron en la última actualización."""
     now = now or datetime.now(timezone.utc)
@@ -251,6 +264,11 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
             rows.append(f"{esc(short_name(r.manager_name, mid == me_id))} · {r.points} pts" + (f" · {cur:.0f}M{delta}" if cur is not None else ""))
         sections.append("🏆 <b>Todos</b>\n" + _fold(rows))
 
+    # --- resultados de las operaciones
+    res = results_section(review)
+    if res:
+        sections.append(res)
+
     # --- plantilla
     rows = []
     for sl in sorted(world.my_slots, key=lambda x: (x.player.position_id, -x.player.market_value)):
@@ -279,7 +297,7 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
     sections.append("<i>Lo plegado se abre con un toque. Los botones los atiendo en cuanto estoy escuchando (a veces hasta 15 min).</i>")
     text = "\n\n".join(sections)
     if len(text) > MAX_CHARS:      # Telegram corta a 4096: se quitan primero los pendientes y la plantilla plegada
-        text = "\n\n".join(s for s in sections if not s.startswith(("📬", "👥")))
+        text = "\n\n".join(s for s in sections if not s.startswith(("📬", "👥", "📊")))
     return text[:4090]
 
 

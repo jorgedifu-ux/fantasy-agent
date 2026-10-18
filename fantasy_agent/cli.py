@@ -1362,11 +1362,8 @@ def _review_text(api: FantasyAPI, store: Store, world, since: str = PILOT_START,
 
 
 def _weekly_review(store: Store, s, api: FantasyAPI, world) -> list[str]:
-    now = datetime.now()
-    key = f"weekly:{now.isocalendar().year}-{now.isocalendar().week}"
-    if now.weekday() != 6 or now.hour < 12 or not store.alert_is_new(key, ttl_hours=24 * 8):
-        return []
-    return [_review_text(api, store, world) + "\n\n" + notify.esc(_params_text(store))]
+    """Ya no se manda sola (era un tocho): los resultados están en el panel fijado y la revisión entera se pide con /revision."""
+    return []
 
 
 def cmd_review(args, s) -> None:

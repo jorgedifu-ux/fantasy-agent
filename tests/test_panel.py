@@ -31,6 +31,20 @@ class Jornada(unittest.TestCase):
         self.assertIn("+ 6 más", panel.jornada_lines(d)[-1])
 
 
+class Results(unittest.TestCase):
+    LINES = ["<b>📊 REVISIÓN</b>", "Patrimonio ahora: 301.19M (saldo 46.34M + plantilla 254.85M)",
+             "Operaciones cerradas desde 2026-09-26: 30 · 19 con ganancia · resultado +22.12M", "  compradas por puja: 14 · -6.00M", "Puntos: 162"]
+
+    def test_summary_visible_and_details_folded(self):
+        text = panel.results_section(self.LINES)
+        self.assertIn("30 operaciones · 19 con ganancia · +22.12M", text)
+        self.assertIn("<blockquote expandable>Patrimonio ahora", text)
+        self.assertNotIn("Puntos: 162", text)
+
+    def test_nothing_to_show_without_a_review(self):
+        self.assertIsNone(panel.results_section(None))
+
+
 class Charts(unittest.TestCase):
     def test_wealth_chart_carries_the_data_the_gap_and_labels_the_last_point(self):
         cfg = charts.wealth_config(["2026-10-17", "2026-10-18"], [295.0, 298.8], [517.9, 521.8], "Josinho", "Tú")

@@ -20,7 +20,9 @@ from .storage import Store
 DIGEST_HOURS = (9, 14, 19, 22)
 URGENT_PREFIXES = ("🔴", "🚨")
 URGENT_CONTAINS = ("No he podido guardar la alineación",)
-DROP_PREFIXES = ("🏷️ En venta",)          # «todos tus jugadores en venta»: siempre es verdad, no informa de nada
+DROP_PREFIXES = ("🏷️ En venta",                     # «todos tus jugadores en venta»: siempre es verdad, no informa de nada
+                 "🔁 <b>Permuta posible",             # propuestas que no se ejecutan: quedan en la bitácora (kv.decisions)
+                 "📊 Tabla de cohortes")              # mantenimiento interno
 INBOX_MAX = 120
 
 # (prefijos, título del grupo), en el orden en que salen en el resumen
