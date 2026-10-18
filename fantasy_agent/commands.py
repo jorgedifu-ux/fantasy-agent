@@ -10,15 +10,16 @@ from . import autopilot as ap, charts, confirm, fullnames, inbox, notify, panel,
 from .storage import Store
 
 HELP = (
-    "🤖 <b>Qué puedes pedirme</b>\n"
-    "/misiones — pone al día el panel fijado y borra los mensajes anteriores (igual que el botón 🔄)\n"
-    "/resumen — las novedades pendientes, ya\n"
-    "/brecha — diferencia con el líder (dinero y puntos) con barras; /brecha aleix o /brecha pep para otro rival\n"
-    "/grafica — las gráficas en imagen (patrimonio y puntos por jornada)\n"
-    "/revision — balance de las operaciones (también en el panel, plegado en «Resultados»)\n"
-    "/plan — el plan de equipo de la semana\n"
-    "/porque Terrats — por qué se hizo (o no) algo con un jugador\n\n"
-    "Contesto en cuanto estoy escuchando (casi al instante si acabas de hablar conmigo); si no, en la siguiente pasada (máx. 15 min)."
+    "🤖 <b>Qué puedes pedirme</b>\n\n"
+    "<blockquote>/misiones · pone al día el panel fijado y borra lo demás (botón 🔄)\n"
+    "/resumen · las novedades pendientes, ya\n"
+    "/brecha · diferencia con el líder; /brecha aleix o /brecha pep para otro rival\n"
+    "/revision · balance de las operaciones\n"
+    "/porque Terrats · por qué se hizo (o no) algo con un jugador\n"
+    "/plan · el plan de equipo de la semana\n"
+    "/grafica · las gráficas en imagen</blockquote>\n\n"
+    "<i>La jornada y la plantilla están en el panel fijado, plegadas. Contesto en cuanto estoy escuchando (casi al instante si acabas de hablar "
+    "conmigo); si no, en la siguiente pasada (máx. 15 min).</i>"
 )
 
 
@@ -58,12 +59,11 @@ def gap_lines(ser: dict[str, dict[str, float]], me: str, rival: str, offsets=(5,
         d = _days(today, off)
         if d in ser:
             g = ser[d].get(rival, 0) - ser[d].get(me, 0)
-            lines.append(f"hace {off:>2} d: {g:4.0f}M → {gap_now:4.0f}M ({gap_now - g:+.0f}M)")
+            lines.append(f"Hace {off} días: {g:.0f}M → hoy {gap_now:.0f}M ({gap_now - g:+.0f}M)")
     return lines
 
 
 BAR = 10
-SPARK = "▁▂▃▄▅▆▇█"
 
 
 def _bars(values: list[float], icons: list[str]) -> list[str]:
@@ -74,13 +74,6 @@ def _bars(values: list[float], icons: list[str]) -> list[str]:
         n = max(0, min(BAR, round(v / top * BAR)))
         out.append(icon * n + "⬜" * (BAR - n))
     return out
-
-
-def _spark(values: list[float]) -> str:
-    lo, hi = min(values), max(values)
-    if hi == lo:
-        return SPARK[3] * len(values)
-    return "".join(SPARK[round((v - lo) / (hi - lo) * (len(SPARK) - 1))] for v in values)
 
 
 def _week_points(settings, store: Store, api, world) -> tuple[int, dict]:
@@ -102,19 +95,18 @@ def brecha(settings, store: Store, api, world, arg: str = "") -> None:
     ser = wealth.series(store)
     days = sorted(ser)
     pb = _bars([my_row.points, ri_row.points], ["🟦", "🟧"])
-    lines = [f"📈 <b>Brecha con {notify.esc(rival_name)}</b>", "",
-             f"⚽ <b>Puntos</b>", f"{pb[0]} Tú {my_row.points}", f"{pb[1]} {notify.esc(rival_name)} {ri_row.points}",
-             f"Diferencia <b>{my_row.points - ri_row.points:+d}</b>"]
+    rn = notify.esc(rival_name)
+    lines = [f"📈 <b>Brecha con {rn}</b>", "",
+             "⚽ <b>Puntos</b>",
+             f"<blockquote>{pb[0]} Tú · {my_row.points}\n{pb[1]} {rn} · {ri_row.points}\nDiferencia: <b>{my_row.points - ri_row.points:+d}</b></blockquote>"]
     if days:
         a, b = ser[days[-1]].get(me, 0), ser[days[-1]].get(rival, 0)
         wb = _bars([a, b], ["🟦", "🟧"])
-        lines += ["", "💰 <b>Patrimonio</b>", f"{wb[0]} Tú {a:.0f}M", f"{wb[1]} {notify.esc(rival_name)} {b:.0f}M",
-                  f"Diferencia <b>{a - b:+.0f}M</b> · tienes el {a / b * 100:.0f}% del suyo"]
-        gap = [ser[d].get(rival, 0) - ser[d].get(me, 0) for d in days[-30:]]
-        lines += ["", f"📉 <b>La diferencia, día a día</b> (últimos {len(gap)})", f"{_spark(gap)}", f"{gap[0]:.0f}M → {gap[-1]:.0f}M"]
+        lines += ["", "💰 <b>Patrimonio</b>",
+                  f"<blockquote>{wb[0]} Tú · {a:.0f}M\n{wb[1]} {rn} · {b:.0f}M\nDiferencia: <b>{a - b:+.0f}M</b> · tienes el {a / b * 100:.0f}% del suyo</blockquote>"]
         hist = gap_lines(ser, me, rival)
         if hist:
-            lines += ["", "<b>Antes y ahora</b>", "<blockquote expandable>" + "\n".join(hist) + "</blockquote>"]
+            lines += ["", "🕓 <b>La diferencia de patrimonio, antes y ahora</b>", "<blockquote expandable>" + "\n".join(hist) + "</blockquote>"]
     try:
         cur, pts = _week_points(settings, store, api, world)
         if me in pts and rival in pts and cur:
@@ -123,9 +115,9 @@ def brecha(settings, store: Store, api, world, arg: str = "") -> None:
                 m = pts[me][w - 1] if w <= len(pts[me]) else 0
                 r = pts[rival][w - 1] if w <= len(pts[rival]) else 0
                 if m or r:
-                    rows.append(f"J{w}{' (en juego)' if w == cur else ''} · tú {m} · {notify.esc(rival_name)} {r} → <b>{m - r:+d}</b>")
+                    rows.append(f"J{w}{' (en juego)' if w == cur else ''}: tú {m} · {rn} {r} → <b>{m - r:+d}</b>")
             if rows:
-                lines += ["", "🗓 <b>Por jornada</b>", "<blockquote expandable>" + "\n".join(rows) + "</blockquote>"]
+                lines += ["", "🗓 <b>Puntos por jornada</b>", "<blockquote expandable>" + "\n".join(rows) + "</blockquote>"]
     except Exception:
         pass
     buttons = [(f"vs {panel.short_name(n)}", f"cmd:brecha:{panel.short_name(n).lower()}") for mid, n in names.items() if mid != me]
@@ -273,8 +265,12 @@ def _handle(settings, store: Store, api, world, updates: list[dict]) -> list[str
             if cq:
                 notify.answer_callback(settings, cq["id"], "Actualizado y limpio ✅" if text == "cmd:misiones" else "Voy…")
             if text and run(settings, store, api, world, text):
-                if not cq and (upd.get("message") or {}).get("message_id"):
-                    tidy.track(store, [upd["message"]["message_id"]], ttl_s=tidy.USER_TTL_S)   # tu orden, ya contestada, se borra en 1 h
+                mid = (upd.get("message") or {}).get("message_id")
+                if not cq and mid:
+                    if text.strip().lower().startswith(("/misiones", "/limpiar")):
+                        notify.delete_message(settings, mid)                # «actualizar y limpiar» no deja ni tu orden
+                    else:
+                        tidy.track(store, [mid], ttl_s=tidy.USER_TTL_S)    # tu orden, ya contestada, se borra en 1 h
                 continue
             confirm._process_update(settings, store, api, pending, results, upd)
         except Exception as exc:

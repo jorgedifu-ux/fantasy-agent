@@ -13,22 +13,27 @@ class Names(unittest.TestCase):
 
 
 class Jornada(unittest.TestCase):
-    def test_lines_list_everyone_and_say_who_left(self):
-        d = {"rows": [{"pid": "1", "pos": "DEF", "name": "Hancko", "pts": 10, "when": None, "gone": None},
-                      {"pid": "2", "pos": "POR", "name": "Soria", "pts": None, "when": datetime(2026, 10, 19, 19, 0, tzinfo=timezone.utc), "gone": None},
-                      {"pid": "3", "pos": "CEN", "name": "Giménez", "pts": 6, "when": None, "gone": "vendido · 16/10 21:01"},
-                      {"pid": "4", "pos": "DEF", "name": "Yoel Lago", "pts": None, "when": None, "gone": "clausulado por Josinho · 17/10 23:14"}],
-             "sold": 0}
-        lines = panel.jornada_lines(d, {"1": "Dávid Hancko"})
-        self.assertIn("DEF Dávid Hancko · <b>10</b>", lines[0])
-        self.assertIn("POR Soria · – (lun", lines[1])
-        self.assertIn("CEN Giménez · <b>6</b> · 🚪 vendido · 16/10 21:01", lines[2])
-        self.assertIn("🚪 clausulado por Josinho", lines[3])
-        self.assertIn("🚪 = ya no está en tu plantilla", lines[-1])
+    D = {"rows": [{"pid": "1", "pos": "DEF", "name": "Hancko", "pts": 10, "when": None, "gone": None},
+                  {"pid": "2", "pos": "POR", "name": "Soria", "pts": None, "when": datetime(2026, 10, 19, 19, 0, tzinfo=timezone.utc), "gone": None},
+                  {"pid": "3", "pos": "CEN", "name": "Giménez", "pts": 6, "when": None, "gone": "vendido · 16/10 21:01"},
+                  {"pid": "4", "pos": "DEF", "name": "Yoel Lago", "pts": None, "when": None, "gone": "clausulado por Josinho · 17/10 23:14"}],
+         "sold": 0}
+
+    def test_grouped_by_position_with_a_state_icon(self):
+        text = "\n".join(panel.jornada_lines(self.D, {"1": "Dávid Hancko"}))
+        self.assertIn("<b>🧤 Portero</b>\n⏳ Soria — lun", text)
+        self.assertIn("<b>🛡️ Defensas</b>\n✅ Dávid Hancko — <b>10 pts</b>", text)
+
+    def test_those_who_left_go_apart_with_how_and_their_points(self):
+        text = "\n".join(panel.jornada_lines(self.D))
+        self.assertIn("<b>🚪 Ya no están</b>", text)
+        self.assertIn("Giménez — <b>6 pts</b> · vendido · 16/10 21:01", text)
+        self.assertIn("Yoel Lago — sin jugar · clausulado por Josinho", text)
+        self.assertNotIn("Giménez — <b>6 pts</b>\n", text.split("Ya no están")[0])      # no sale entre los de la plantilla
 
     def test_points_not_explained_by_any_row_are_shown(self):
         d = {"rows": [{"pid": "1", "pos": "DEF", "name": "Hancko", "pts": 10, "when": None, "gone": None}], "sold": 6}
-        self.assertIn("+ 6 más", panel.jornada_lines(d)[-1])
+        self.assertIn("+ 6 pts más", panel.jornada_lines(d)[-1])
 
 
 class Results(unittest.TestCase):

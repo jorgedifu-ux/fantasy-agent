@@ -127,19 +127,58 @@ def jornada_data(world, api, store: Store | None = None) -> dict | None:
             "managers": sorted(((x["team"]["manager"]["managerName"], int(x["points"])) for x in week_rows), key=lambda z: -z[1])}
 
 
+POS_TITLE = {"POR": "🧤 Portero", "DEF": "🛡️ Defensas", "CEN": "🧠 Centrocampistas", "DEL": "⚽ Delanteros"}
+
+
 def jornada_lines(d: dict, full: dict[str, str] | None = None) -> list[str]:
+    """Por posición, con un icono de estado: ✅ ya jugó (con sus puntos), ⏳ aún no (con la hora del partido) y, aparte, los que ya no están."""
     full = full or {}
-    lines = []
-    for r in d["rows"]:
-        name = notify.esc(full.get(str(r.get("pid")), r["name"]))
-        pts = f"<b>{r['pts']}</b>" if r["pts"] is not None else "–"
-        when = f" ({_when(r['when'])})" if r.get("when") and r["pts"] is None else ""
-        gone = f" · 🚪 {notify.esc(r['gone'])}" if r.get("gone") else ""
-        lines.append(f"{r['pos']} {name} · {pts}{when}{gone}")
+    lines: list[str] = []
+    here = [r for r in d["rows"] if not r.get("gone")]
+    for pos in ("POR", "DEF", "CEN", "DEL"):
+        group = [r for r in here if r["pos"] == pos]
+        if not group:
+            continue
+        lines.append(f"<b>{POS_TITLE[pos]}</b>")
+        for r in group:
+            name = notify.esc(full.get(str(r.get("pid")), r["name"]))
+            if r["pts"] is not None:
+                lines.append(f"✅ {name} — <b>{r['pts']} pts</b>")
+            else:
+                lines.append(f"⏳ {name} — " + (_when(r["when"]) if r.get("when") else "sin jugar"))
+    gone = [r for r in d["rows"] if r.get("gone")]
+    if gone:
+        lines.append("<b>🚪 Ya no están</b>")
+        for r in gone:
+            name = notify.esc(full.get(str(r.get("pid")), r["name"]))
+            res = f"<b>{r['pts']} pts</b>" if r["pts"] is not None else "sin jugar"
+            lines.append(f"{name} — {res} · {notify.esc(r['gone'])}")
+        lines.append("<i>Lo que puntuó antes de irse cuenta.</i>")
     if d["sold"] > 0:
-        lines.append(f"+ {d['sold']} más (de jugadores que ya no están en tu once)")
-    if any(r.get("gone") for r in d["rows"]):
-        lines.append("🚪 = ya no está en tu plantilla; lo que puntuó antes de irse cuenta.")
+        lines.append(f"<i>+ {d['sold']} pts más de jugadores que ya no están en tu once.</i>")
+    return lines
+
+
+def plantilla_lines(world, now: datetime, full: dict[str, str] | None = None) -> list[str]:
+    """Plantilla por posición: nombre — valor · protección (🔒 hasta cuándo, 🔓 abierta con su ×, 🛡️ blindado)."""
+    full = full or {}
+    names = {1: "🧤 Porteros", 2: "🛡️ Defensas", 3: "🧠 Centrocampistas", 4: "⚽ Delanteros"}
+    lines: list[str] = []
+    for pos in (1, 2, 3, 4):
+        rows = [sl for sl in sorted(world.my_slots, key=lambda x: -x.player.market_value) if sl.player.position_id == pos]
+        if not rows:
+            continue
+        lines.append(f"<b>{names[pos]}</b>")
+        for sl in rows:
+            p = sl.player
+            ratio = sl.clause / p.market_value if p.market_value else 0
+            if sl.shielded_until and sl.shielded_until > now:
+                prot = f"🛡️ hasta {_when(sl.shielded_until)}"
+            elif sl.clause_locked_until and sl.clause_locked_until > now:
+                prot = f"🔒 hasta el {sl.clause_locked_until.astimezone():%d/%m}"
+            else:
+                prot = f"🔓 abierta ×{ratio:.2f}"
+            lines.append(f"{notify.esc(full.get(str(p.id), p.name))} — {p.market_value / 1e6:.1f}M · {prot}")
     return lines
 
 
@@ -270,17 +309,7 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
         sections.append(res)
 
     # --- plantilla
-    rows = []
-    for sl in sorted(world.my_slots, key=lambda x: (x.player.position_id, -x.player.market_value)):
-        p = sl.player
-        if sl.shielded_until and sl.shielded_until > now:
-            prot = f"🛡️ {sl.shielded_until.astimezone():%d/%m %H:%M}"
-        elif sl.clause_locked_until and sl.clause_locked_until > now:
-            prot = f"🔒 {sl.clause_locked_until.astimezone():%d/%m}"
-        else:
-            prot = "🔓"
-        rows.append(f"{('POR', 'DEF', 'CEN', 'DEL')[p.position_id - 1]} {nm(p)} · {p.market_value / 1e6:.1f}M · {prot}")
-    sections.append(f"👥 <b>Plantilla</b> ({len(world.my_slots)})\n" + _fold(rows))
+    sections.append(f"👥 <b>Plantilla</b> ({len(world.my_slots)})\n" + _fold(plantilla_lines(world, now, full)))
 
     # --- novedades pendientes del resumen
     pend = inbox.pending(store)

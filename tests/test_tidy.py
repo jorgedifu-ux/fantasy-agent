@@ -104,3 +104,19 @@ class Purge(Base):
         n = tidy.purge(self.store, SimpleNamespace(), delete=lambda mid: gone.append(mid) or True)
         self.assertEqual((n, sorted(gone)), (3, [2, 3, 4]))
         self.assertEqual(json.loads(self.store.get("sent_msgs")), [])
+
+
+class PurgeKeepsUnread(Base):
+    def test_purge_leaves_urgent_and_digest_messages_that_were_not_read(self):
+        tidy.track(self.store, [2], now=time.time())
+        tidy.track(self.store, [3], now=time.time(), keep=True)
+        gone = []
+        tidy.purge(self.store, SimpleNamespace(), delete=lambda mid: gone.append(mid) or True)
+        self.assertEqual(gone, [2])
+        self.assertEqual([i["id"] for i in json.loads(self.store.get("sent_msgs"))], [3])
+
+    def test_the_ttl_sweep_still_deletes_them_when_due(self):
+        tidy.track(self.store, [3], now=time.time() - 30 * 3600, keep=True)
+        gone = []
+        tidy.sweep(self.store, SimpleNamespace(), delete=lambda mid: gone.append(mid) or True)
+        self.assertEqual(gone, [3])

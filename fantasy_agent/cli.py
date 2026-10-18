@@ -395,7 +395,10 @@ def _deliver(store: Store, s, st, events: list[str]) -> None:
         store.log_error("bandeja", traceback.format_exc())
         urgent = list(events)
     if urgent or store.get("outbox"):
+        from . import tidy
+        before = len(notify.SENT_IDS)
         st("enviar", _send_or_queue, store, s, inbox.render_urgent(urgent) if urgent else "")
+        tidy.track(store, notify.SENT_IDS[before:], keep=True)       # sin leer: «actualizar y limpiar» no lo borra
     now = datetime.now()
     try:
         due = inbox.digest_due(store, now)
@@ -404,7 +407,10 @@ def _deliver(store: Store, s, st, events: list[str]) -> None:
     if due:
         text = inbox.flush_text(store, now)
         if text:
+            from . import tidy
+            before = len(notify.SENT_IDS)
             st("enviar resumen", _send_or_queue, store, s, text)
+            tidy.track(store, notify.SENT_IDS[before:], keep=True)
 
 
 def _sync_panel(store: Store, s, api: FantasyAPI, world) -> None:

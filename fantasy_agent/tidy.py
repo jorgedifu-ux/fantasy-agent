@@ -19,8 +19,9 @@ def _load(store: Store) -> list[dict]:
     return json.loads(store.get(KEY) or "[]")
 
 
-def track(store: Store, ids: list[int], now: float | None = None, ttl_s: float = TTL_S) -> None:
-    """Apunta mensajes para borrarlos dentro de `ttl_s` segundos."""
+def track(store: Store, ids: list[int], now: float | None = None, ttl_s: float = TTL_S, keep: bool = False) -> None:
+    """Apunta mensajes para borrarlos dentro de `ttl_s` segundos. `keep=True`: información sin leer (avisos urgentes, resumen) que «actualizar y limpiar»
+    no borra; se borra por plazo."""
     if not ids:
         return
     now = now or time.time()
@@ -28,7 +29,7 @@ def track(store: Store, ids: list[int], now: float | None = None, ttl_s: float =
     seen = {i["id"] for i in items}
     for mid in ids:
         if mid not in seen:
-            items.append({"id": int(mid), "due": round(now + ttl_s)})
+            items.append({"id": int(mid), "due": round(now + ttl_s), **({"keep": True} if keep else {})})
     store.set(KEY, json.dumps(items[-MAX_TRACKED:]))
 
 
@@ -69,7 +70,9 @@ def purge(store: Store, settings, delete=None) -> int:
     items = [i for i in _load(store) if i["id"] not in keep]
     left, deleted = [], 0
     for it in items:
-        if deleted < 100 and delete(it["id"]):
+        if it.get("keep"):
+            left.append(it)
+        elif deleted < 100 and delete(it["id"]):
             deleted += 1
         else:
             left.append(it)

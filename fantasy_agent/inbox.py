@@ -151,9 +151,8 @@ def render_digest(items: list[dict], since: float | None = None, now: datetime |
                 seen.add(k)
                 uniq.append(r)
         shown = uniq[-8:]
-        lines = [f"<b>{ICONS[title]} {title}</b>"] + [f"• {_label(r)}" for r in shown]
-        if len(uniq) > len(shown):
-            lines.append(f"  … y {len(uniq) - len(shown)} más antes")
+        lines = [f"<b>{ICONS[title]} {title}</b>", "<blockquote>" + "\n".join(f"• {_label(r)}" for r in shown) + (
+            f"\n… y {len(uniq) - len(shown)} más antes" if len(uniq) > len(shown) else "") + "</blockquote>"]
         details = [_detail(r) for r in shown if " — " in r or len(re.sub(r"<[^>]+>", "", r)) > len(_label(r)) + 12]
         blocks.append((lines, details))
     footer = "\n<i>Toca ▾ para ver el porqué · /misiones /brecha /porque nombre</i>"
@@ -163,7 +162,7 @@ def render_digest(items: list[dict], since: float | None = None, now: datetime |
         for lines, details in blocks:
             parts.append("\n".join(lines))
             if with_details and details:
-                parts.append("<blockquote expandable>" + "\n\n".join(details) + "</blockquote>")
+                parts.append("<i>Por qué</i>\n<blockquote expandable>" + "\n\n".join(details) + "</blockquote>")
         return "\n\n".join(parts) + footer
 
     text = build(True)
