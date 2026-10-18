@@ -10,7 +10,7 @@ import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from . import analysis, auth, autopilot as ap, cohorts, confirm, digest, export, learn, lineup, models, notify, plan as plan_mod, service, siege
+from . import analysis, auth, autopilot as ap, cohorts, commands, confirm, digest, export, inbox, learn, lineup, models, notify, panel, plan as plan_mod, service, siege, wealth
 from .api import FantasyAPI
 from . import futbolfantasy
 from .attendance import estimate_start_probability, estimate_titularidad
@@ -388,6 +388,33 @@ def _step(store: Store, errors: list[str], name: str, fn, *args, default=None, *
             errors.append(redact(f"{name}: {exc}"))
         print(redact(f"[{name}] {'corte pasajero' if _is_transient(exc) else 'error'}: {exc}"))
         return default
+
+
+def _deliver(store: Store, s, st, events: list[str]) -> None:
+    """Lo urgente sale ya; lo demás va a la bandeja y sale en el resumen de las 9, 14, 19 y 22 h (o con /resumen). Ver `inbox`."""
+    try:
+        urgent, info = inbox.split(events)
+        inbox.add(store, info)
+    except Exception:      # la bandeja nunca debe tragarse un aviso: si falla, sale todo como urgente
+        import traceback
+        store.log_error("bandeja", traceback.format_exc())
+        urgent = list(events)
+    if urgent or store.get("outbox"):
+        st("enviar", _send_or_queue, store, s, ("🔴 <b>URGENTE</b>\n\n" + "\n\n".join(urgent)) if urgent else "")
+    now = datetime.now()
+    try:
+        due = inbox.digest_due(store, now)
+    except Exception:
+        due = False
+    if due:
+        text = inbox.flush_text(store, now)
+        if text:
+            st("enviar resumen", _send_or_queue, store, s, text)
+
+
+def _sync_panel(store: Store, s, api: FantasyAPI, world) -> None:
+    text = panel.render(world, store, hours_to_deadline=_hours_to_deadline(world), week=api.current_week())
+    panel.sync(store, s, text)
 
 
 OUTBOX_MAX_CHARS = 12000
@@ -1715,7 +1742,7 @@ def _watch_once(store: Store, s) -> str:
     errs: list[str] = []
     st = lambda name, fn, *a, default=None, **k: _step(store, errs, name, fn, *a, default=default, **k)  # noqa: E731
     st("propuestas", store.retire_all_pending)
-    st("telegram", confirm.poll_and_execute, s, store, api)  # botones antiguos: responde que ya no aplican
+    st("telegram", commands.poll, s, store, api, world)  # lo que hayas escrito (/brecha, /misiones...) y los botones antiguos
 
     world = _world(api, s, trends=True)  # sin datos no se puede hacer nada: si falla, falla la pasada
     st("cohortes", _setup_match_context, store, api, world)
@@ -1773,7 +1800,8 @@ def _watch_once(store: Store, s) -> str:
             f"puntuar, así que dedico el {int(ap.INVEST_FRACTION_BREAK * 100)}% del saldo libre a inversión "
             f"(jugadores en subida sostenida que se revenden)."
         )
-    if out.next_break and store.alert_is_new(f"break_next:{out.next_break[0]:%Y%m%d}", ttl_hours=24 * 30):
+    if out.next_break and (out.next_break[0] - datetime.now(timezone.utc)).total_seconds() <= 48 * 3600 \
+            and store.alert_is_new(f"break_next:{out.next_break[0]:%Y%m%d}", ttl_hours=24 * 30):
         a, b = out.next_break
         events.append(
             f"📅 Próximo parón: del {a.astimezone():%d/%m} al {b.astimezone():%d/%m} "
@@ -1792,16 +1820,14 @@ def _watch_once(store: Store, s) -> str:
     events += st("publicar datos", _publish_state, store, s, default=[])
     if errs and store.alert_is_new("step_errors:" + ",".join(sorted(e.split(":")[0] for e in errs)), ttl_hours=6):
         events.append("⚠️ Pasos con error en esta pasada (el resto se hizo): " + notify.esc("; ".join(errs))[:600])
-    if events or store.get("outbox"):
-        st("enviar", _send_or_queue, store, s, ("🤖 <b>PILOTO AUTOMÁTICO</b>\n\n" + "\n\n".join(events)) if events else "")
-    if st("parte", digest.due, store, s, default=False):
-        st("enviar parte", notify.send_all, s, service.situational_briefing(world, s))
-        digest.mark_sent(store)
+    st("patrimonio", wealth.snapshot, store, api, world)
+    _deliver(store, s, st, events)
+    st("panel", _sync_panel, store, s, api, world)
 
     sniped = st("bloqueo (ejecución)", _siege_go, store, s, api, world, default=[]) + \
         st("al segundo", _timed_actions, store, api, world, reserved, default=[])
     if sniped:
-        st("enviar", notify.send_all, s, "🤖 <b>PILOTO AUTOMÁTICO</b>\n\n" + "\n\n".join(sniped), html=True)
+        _deliver(store, s, st, sniped)
     return f"[{now:%H:%M}] ok · {len(events) + len(sniped)} acciones/avisos"
 
 

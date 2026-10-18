@@ -85,6 +85,18 @@ def edit_message(
         return False
 
 
+def send_photo(settings: Settings, photo_url: str, caption: str = "", *, buttons: list[tuple[str, str]] | None = None) -> int | None:
+    """Manda una imagen por URL (Telegram la descarga). Devuelve el message_id."""
+    if not telegram_enabled(settings):
+        return None
+    url = f"https://api.telegram.org/bot{settings.telegram_token}/sendPhoto"
+    body = {"chat_id": settings.telegram_chat_id, "photo": photo_url, "caption": caption[:1000], "parse_mode": "HTML"}
+    if buttons:
+        body["reply_markup"] = {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in buttons]]}
+    resp = request_json("POST", url, json_body=body)
+    return (resp or {}).get("result", {}).get("message_id")
+
+
 def pin_message(settings: Settings, message_id: int) -> None:
     if not telegram_enabled(settings):
         return

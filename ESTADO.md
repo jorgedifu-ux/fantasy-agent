@@ -19,9 +19,14 @@ quieres cambiar la estrategia.
 
 ## Cómo hablar con él
 
-- **Telegram**: bot "Mi Fantasy Bot" (`@Vk_fantasia_bot`). Un único mensaje "🤖 PILOTO
-  AUTOMÁTICO" por pasada con todo lo hecho (nada si no ha pasado nada), más un parte de
-  situación corto cada ~90 min (silencio de 23h a 7h).
+- **Telegram** (rediseñado el 18/10/2026): bot "Mi Fantasy Bot" (`@Vk_fantasia_bot`).
+  - **Urgente, al momento** (🔴): lo que impide jugar la jornada (sin once, saldo negativo), que te clausulen a un jugador, fallos al guardar la alineación.
+  - **Resumen agrupado** a las 9, 14, 19 y 22 h (solo si hay novedades) o con `/resumen`; el resto de avisos se acumula en la bandeja (`kv.inbox`), sin repetidos.
+  - **Panel de misiones**: UN mensaje fijado que se edita en el sitio (como mucho cada 30 min y solo si cambia): jornada y once, caja, pujas en curso, jugadores que se abren, bloqueo al líder, brecha, parón.
+  - **Consultas** (se contestan en la pasada siguiente, ≤15 min): `/misiones`, `/resumen`, `/brecha [aleix|pep]` (texto + 3 gráficas de QuickChart.io), `/jornada`, `/plantilla`, `/porque <jugador>` (lee `kv.decisions`), `/ayuda`. Solo hace caso a tu chat.
+  - Un corte pasajero de Telegram no avisa, y si falla el envío el parte se guarda y sale en la pasada siguiente (`kv.outbox`).
+  - Parón: aviso 48 h antes, uno al empezar y una línea en el panel mientras dura.
+  - Patrimonio de los cuatro: histórico sembrado hasta el 18/10 (`seed_patrimonio.json`, ±10M) y una foto diaria desde entonces (`kv.wealth_league`).
 - **Terminal** (en esta carpeta): `python3 -m fantasy_agent <comando>`:
   - `learn-rivals` — cómo opera cada mánager (prima, tendencia previa, resultado a 14 días)
   - `tick --dry-run` — **"¿qué harías ahora?"**: lee todo de verdad y lo imprime, sin escribir
