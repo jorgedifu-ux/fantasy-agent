@@ -33,8 +33,22 @@ def _when(dt: datetime) -> str:
     return f"{DAYS[d.weekday()]} {d:%d %H:%M}"
 
 
+def _c(x: float, nd: int = 1) -> str:
+    """Número con coma decimal, como se escribe en España."""
+    return f"{x:.{nd}f}".replace(".", ",")
+
+
 def _m(x: float) -> str:
-    return f"{x / 1e6:.1f}M"
+    return f"{_c(x / 1e6)}M"
+
+
+def clean_name(name: str) -> str:
+    """Quita palabras repetidas seguidas del nombre completo de la API («Moriba Kourouma Kourouma» → «Moriba Kourouma»)."""
+    out: list[str] = []
+    for w in name.split():
+        if not out or out[-1].lower() != w.lower():
+            out.append(w)
+    return " ".join(out)
 
 
 BUTTONS = [("📈 Brecha", "cmd:brecha"), ("📬 Resumen", "cmd:resumen"), ("🔄 Actualizar y limpiar", "cmd:misiones")]
@@ -71,24 +85,42 @@ def _departures(world, api, opening) -> dict[str, tuple[str, str]]:
 
 
 def jornada_data(world, api, store: Store | None = None) -> dict | None:
-    """Puntos de la jornada en juego: los de tu once (con su partido, si aún no se ha jugado), los de quien ya se ha ido (vendido o clausulado, con
-    el motivo) y el total real de la clasificación. Una sola fuente para el panel y para `/jornada`."""
+    """La jornada en juego, completa: tu once registrado (con puntos o con la hora y el rival del partido que falta), los que están fuera del once, los que ya se
+    han ido (vendidos o clausulados, con el motivo) y el total real de la clasificación. Una sola fuente para el panel y para `/jornada`."""
     try:
         wk = api.current_week() or {}
         cur = int(wk.get("weekNumber") or 0)
-        closing = models.parse_dt(wk.get("closingWeekDate"))
         opening = models.parse_dt(wk.get("openingWeekDate"))
         lu = api.lineup(world.my_team_id)
         raw = {str(p["id"]): p for p in api.players()}
         week_rows = api.standing_week(world.league_id, cur)
     except Exception:
         return None
+    try:
+        sched = {}
+        for m in models.as_list(api.calendar(cur), "matches", "elements", "calendar"):
+            when = models.parse_dt(m.get("matchDate") or m.get("date"))
+            lo, vi = str(m.get("localId")), str(m.get("visitorId"))
+            sched[lo] = (when, vi, True)
+            sched[vi] = (when, lo, False)
+    except Exception:
+        sched = {}
+    now = datetime.now(timezone.utc)
     pos_label = {1: "POR", 2: "DEF", 3: "CEN", 4: "DEL"}
     rows, seen = [], set()
 
     def points(pid: str):
         r = raw.get(pid, {})
         return next((x.get("points") for x in (r.get("weekPoints") or []) if x.get("weekNumber") == cur), None)
+
+    def match(pid: str, pts):
+        """(hora, rival) del partido de la jornada si aún no se ha jugado; ('jugado', rival) si ya pasó sin puntos."""
+        info = sched.get(str(raw.get(pid, {}).get("teamId")))
+        if not info or pts is not None or not info[0]:
+            return None, None, False
+        rival = world.team_names.get(info[1], "")
+        vs = (f"vs {rival}" if info[2] else f"en {rival}") if rival else ""
+        return info[0], vs, info[0] < now - timedelta(hours=2)
 
     for key, label in POS_LABEL:
         for e in (lu.get("formation") or {}).get(key) or []:
@@ -98,9 +130,9 @@ def jornada_data(world, api, store: Store | None = None) -> dict | None:
             pid = str(pm.get("id"))
             r = raw.get(pid, {})
             pts = points(pid)
-            fx = world.fixtures.get(str(r.get("teamId")))
-            when = fx.when if (pts is None and fx and fx.when and (closing is None or fx.when <= closing)) else None
-            rows.append({"pid": pid, "pos": label, "name": pm.get("nickname") or r.get("nickname") or "?", "pts": pts, "when": when, "gone": None})
+            when, vs, missed = match(pid, pts)
+            rows.append({"pid": pid, "pos": label, "name": pm.get("nickname") or r.get("nickname") or "?", "pts": pts, "when": when, "vs": vs,
+                         "missed": missed, "avg": r.get("averagePoints"), "gone": None})
             seen.add(pid)
     # los que estaban en el once al empezar (guardado por el piloto) o se han ido desde entonces
     snap = json.loads(store.get("xi_snapshot") or "{}") if store is not None else {}
@@ -117,13 +149,26 @@ def jornada_data(world, api, store: Store | None = None) -> dict | None:
         if how is None:
             how = ("fuera de tu plantilla", "")
         rows.append({"pid": pid, "pos": pos_label.get(models.to_int(r.get("positionId")), "—"), "name": r.get("nickname") or "?", "pts": pts, "when": None,
-                     "gone": f"{how[0]}{(' · ' + how[1]) if how[1] else ''}"})
+                     "vs": "", "missed": False, "avg": r.get("averagePoints"), "gone": f"{how[0]}{(' · ' + how[1]) if how[1] else ''}"})
+        seen.add(pid)
+    # los que siguen en la plantilla pero no están en el once
+    bench = []
+    for sl in world.my_slots:
+        if sl.player.id not in seen:
+            bench.append({"pid": sl.player.id, "pos": pos_label.get(sl.player.position_id, "—"), "name": sl.player.name, "avg": sl.player.avg_points,
+                          "status": sl.player.status})
     order = {"POR": 0, "DEF": 1, "CEN": 2, "DEL": 3}
     rows.sort(key=lambda x: (order.get(x["pos"], 9), x["gone"] is not None, -(x["pts"] if x["pts"] is not None else -99)))
+    bench.sort(key=lambda x: (order.get(x["pos"], 9), -(x["avg"] or 0)))
+    # huecos del once registrado: la formación dice cuántos de cada posición eran
+    form = (lu.get("formation") or {}).get("tacticalFormation") or []
+    want = {"POR": 1, "DEF": form[0] if len(form) > 0 else 0, "CEN": form[1] if len(form) > 1 else 0, "DEL": form[2] if len(form) > 2 else 0}
+    here = {k: sum(1 for r in rows if r["pos"] == k and not r["gone"]) for k in want}
     mine = next((x for x in week_rows if str(x["team"]["id"]) == str(world.my_team_id)), None)
     total = int(mine["points"]) if mine else sum(r["pts"] or 0 for r in rows)
     accounted = sum(r["pts"] or 0 for r in rows if r["gone"] is None or r["pts"] is not None)
-    return {"week": cur, "live": bool(wk.get("isLive")), "total": total, "rows": rows, "sold": max(0, total - accounted),
+    return {"week": cur, "live": bool(wk.get("isLive")), "total": total, "rows": rows, "bench": bench, "formation": form,
+            "missing": {k: want[k] - here[k] for k in want if want[k] - here[k] > 0}, "sold": max(0, total - accounted),
             "managers": sorted(((x["team"]["manager"]["managerName"], int(x["points"])) for x in week_rows), key=lambda z: -z[1])}
 
 
@@ -131,28 +176,44 @@ POS_TITLE = {"POR": "🧤 Portero", "DEF": "🛡️ Defensas", "CEN": "🧠 Cent
 
 
 def jornada_lines(d: dict, full: dict[str, str] | None = None) -> list[str]:
-    """Por posición, con un icono de estado: ✅ ya jugó (con sus puntos), ⏳ aún no (con la hora del partido) y, aparte, los que ya no están."""
+    """Tu once por posición con un icono de estado (✅ jugó y sus puntos · ⏳ aún no, con hora y rival · ➖ no jugó), después los que están fuera del once
+    y los que ya no están."""
     full = full or {}
+    nm = lambda r: notify.esc(clean_name(full.get(str(r.get("pid")), r["name"])))        # noqa: E731
     lines: list[str] = []
     here = [r for r in d["rows"] if not r.get("gone")]
+    form = "-".join(str(x) for x in d.get("formation") or [])
+    miss = sum((d.get("missing") or {}).values())
+    lines.append(f"<b>🧩 Tu once{f' ({form})' if form else ''}</b> · {len(here)} de {len(here) + miss} siguen contigo" if miss else
+                 f"<b>🧩 Tu once{f' ({form})' if form else ''}</b>")
     for pos in ("POR", "DEF", "CEN", "DEL"):
         group = [r for r in here if r["pos"] == pos]
-        if not group:
+        gap = (d.get("missing") or {}).get(pos, 0)
+        if not group and not gap:
             continue
         lines.append(f"<b>{POS_TITLE[pos]}</b>")
         for r in group:
-            name = notify.esc(full.get(str(r.get("pid")), r["name"]))
             if r["pts"] is not None:
-                lines.append(f"✅ {name} — <b>{r['pts']} pts</b>")
+                lines.append(f"✅ {nm(r)} — <b>{r['pts']} pts</b>")
+            elif r.get("missed"):
+                lines.append(f"➖ {nm(r)} — no jugó")
             else:
-                lines.append(f"⏳ {name} — " + (_when(r["when"]) if r.get("when") else "sin jugar"))
+                when = _when(r["when"]) if r.get("when") else "sin jugar"
+                lines.append(f"⏳ {nm(r)} — {when}" + (f" · {notify.esc(r['vs'])}" if r.get("vs") else ""))
+        if gap:
+            lines.append(f"<i>… {gap} hueco(s): quien estaba aquí ya no está</i>")
+    bench = d.get("bench") or []
+    if bench:
+        lines.append("<b>🪑 Fuera del once</b> (no puntúan)")
+        for b in bench:
+            hurt = " · ⚠️ " + notify.esc(b["status"]) if (b.get("status") or "ok").lower() not in ("ok", "") else ""
+            lines.append(f"{notify.esc(clean_name(full.get(str(b['pid']), b['name'])))} ({b['pos']}) — media {_c(b['avg'] or 0)}{hurt}")
     gone = [r for r in d["rows"] if r.get("gone")]
     if gone:
         lines.append("<b>🚪 Ya no están</b>")
         for r in gone:
-            name = notify.esc(full.get(str(r.get("pid")), r["name"]))
             res = f"<b>{r['pts']} pts</b>" if r["pts"] is not None else "sin jugar"
-            lines.append(f"{name} — {res} · {notify.esc(r['gone'])}")
+            lines.append(f"{nm(r)} ({r['pos']}) — {res} · {notify.esc(r['gone'])}")
         lines.append("<i>Lo que puntuó antes de irse cuenta.</i>")
     if d["sold"] > 0:
         lines.append(f"<i>+ {d['sold']} pts más de jugadores que ya no están en tu once.</i>")
@@ -177,8 +238,8 @@ def plantilla_lines(world, now: datetime, full: dict[str, str] | None = None) ->
             elif sl.clause_locked_until and sl.clause_locked_until > now:
                 prot = f"🔒 hasta el {sl.clause_locked_until.astimezone():%d/%m}"
             else:
-                prot = f"🔓 abierta ×{ratio:.2f}"
-            lines.append(f"{notify.esc(full.get(str(p.id), p.name))} — {p.market_value / 1e6:.1f}M · {prot}")
+                prot = f"🔓 abierta ×{_c(ratio, 2)}"
+            lines.append(f"{notify.esc(clean_name(full.get(str(p.id), p.name)))} — {_m(p.market_value)} · {prot}")
     return lines
 
 
@@ -202,7 +263,7 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
     now = now or datetime.now(timezone.utc)
     esc = notify.esc
     full = full or {}
-    nm = lambda p: esc(full.get(str(p.id), p.name))      # noqa: E731  nombre completo si se conoce
+    nm = lambda p: esc(clean_name(full.get(str(p.id), p.name)))      # noqa: E731  nombre completo si se conoce
     mine = [sl.player for sl in world.my_slots]
     local = now.astimezone()
     sections: list[str] = [f"🎯 <b>MISIONES</b>\n<i>actualizado {DAYS[local.weekday()]} {local:%d/%m %H:%M}</i>"]
@@ -258,7 +319,7 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
         rows.append("Plan: vender con la oferta de las 20:53; si no llega, blindar (24 h) o subir la cláusula a ×1,20.")
         sections.append(f"🛡️ <b>Se abren pronto</b> ({len(exposed)})\n" + _fold(rows))
     if deliberate:
-        rows = [f"{nm(sl.player)} ×{sl.clause / sl.player.market_value:.2f}" for sl in deliberate]
+        rows = [f"{nm(sl.player)} ×{_c(sl.clause / sl.player.market_value, 2)}" for sl in deliberate]
         rows.append("Si un rival la paga, ganamos dinero: ni se blinda ni se vende barato.")
         sections.append("👑 <b>Cláusula alta a propósito</b>\n" + _fold(rows))
 
@@ -282,15 +343,18 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
     days = sorted(ser)
     my = next((r for r in world.standing if r.team_id == world.my_team_id), None)
     if my and top and top.team_id != my.team_id:
-        rows = [f"Puntos: tú {my.points} · {esc(short_name(top.manager_name))} {top.points} → {my.points - top.points:+d}"]
+        rn = esc(short_name(top.manager_name))
+        rows = [f"<b>Puntos</b>: tú {my.points} · {rn} {top.points}", f"Diferencia {my.points - top.points:+d}"]
         if days and me_id in ser[days[-1]] and str(top.manager_id) in ser[days[-1]]:
             a, b = ser[days[-1]][me_id], ser[days[-1]][str(top.manager_id)]
-            rows.append(f"Patrimonio: tú {a:.0f}M · él {b:.0f}M → {a - b:+.0f}M ({a / b * 100:.0f}% del suyo)")
+            rows += ["", f"<b>Patrimonio</b>: tú {a:.0f}M · {rn} {b:.0f}M", f"Diferencia {a - b:+.0f}M · tienes el {a / b * 100:.0f}% del suyo"]
+            hist = []
             for off in (5, 10, 20):
                 d0 = (datetime.fromisoformat(days[-1]) - timedelta(days=off)).date().isoformat()
                 if d0 in ser and me_id in ser[d0] and str(top.manager_id) in ser[d0]:
-                    g0 = ser[d0][str(top.manager_id)] - ser[d0][me_id]
-                    rows.append(f"   hace {off} días la diferencia era {g0:.0f}M")
+                    hist.append(f"hace {off} días: {ser[d0][str(top.manager_id)] - ser[d0][me_id]:.0f}M")
+            if hist:
+                rows += ["", "<b>La diferencia de patrimonio era</b>", " · ".join(hist) + f" · hoy {b - a:.0f}M"]
         sections.append(f"📈 <b>Brecha</b> {my.points - top.points:+d} pts\n" + _fold(rows))
     if days and len(world.standing) > 1:
         rows = []
@@ -299,9 +363,10 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
             cur = ser[days[-1]].get(mid)
             d5 = (datetime.fromisoformat(days[-1]) - timedelta(days=5)).date().isoformat()
             prev = ser.get(d5, {}).get(mid)
-            delta = f" ({cur - prev:+.0f}M en 5 días)" if cur is not None and prev is not None else ""
-            rows.append(f"{esc(short_name(r.manager_name, mid == me_id))} · {r.points} pts" + (f" · {cur:.0f}M{delta}" if cur is not None else ""))
-        sections.append("🏆 <b>Todos</b>\n" + _fold(rows))
+            delta = f" ({cur - prev:+.0f})" if cur is not None and prev is not None else ""
+            rows.append(f"{esc(short_name(r.manager_name, mid == me_id))} — {r.points} pts · {cur:.0f}M{delta}" if cur is not None else
+                        f"{esc(short_name(r.manager_name, mid == me_id))} — {r.points} pts")
+        sections.append("🏆 <b>Todos</b> (puntos · patrimonio · cambio en 5 días)\n" + _fold(rows))
 
     # --- resultados de las operaciones
     res = results_section(review)

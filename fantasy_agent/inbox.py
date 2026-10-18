@@ -24,6 +24,7 @@ DROP_PREFIXES = ("🏷️ En venta",                     # «todos tus jugadores
                  "🔁 <b>Permuta posible",             # propuestas que no se ejecutan: quedan en la bitácora (kv.decisions)
                  "📊 Tabla de cohortes")              # mantenimiento interno
 INBOX_MAX = 120
+HIST_MAX = 150
 
 # (prefijos, título del grupo), en el orden en que salen en el resumen
 GROUPS = (
@@ -66,10 +67,19 @@ def add(store: Store, items: list[str], now: float | None = None) -> None:
             continue
         box.append({"t": round(t), "text": text})
     store.set("inbox", json.dumps(box[-INBOX_MAX:], ensure_ascii=False))
+    hist = json.loads(store.get("inbox_hist") or "[]")
+    hist += [{"t": round(t), "text": text} for text in items if not (hist and hist[-1]["text"] == text)]
+    store.set("inbox_hist", json.dumps(hist[-HIST_MAX:], ensure_ascii=False))     # lo ya enviado, para poder repasarlo con /resumen
 
 
 def pending(store: Store) -> list[dict]:
     return _load(store)
+
+
+def recent(store: Store, hours: float = 24, now: float | None = None) -> list[dict]:
+    """Lo ocurrido en las últimas `hours` horas, esté o no ya enviado en un resumen."""
+    cutoff = (now or time.time()) - hours * 3600
+    return [i for i in json.loads(store.get("inbox_hist") or "[]") if i["t"] >= cutoff]
 
 
 def clear(store: Store, now: float | None = None) -> None:
@@ -135,13 +145,15 @@ def _group(items: list[dict]) -> dict[str, list[str]]:
     return {k: v for k, v in groups.items() if v}
 
 
-def render_digest(items: list[dict], since: float | None = None, now: datetime | None = None) -> str:
+def render_digest(items: list[dict], since: float | None = None, now: datetime | None = None, recap: bool = False) -> str:
     """Resumen pensado para el móvil: arriba una línea con los totales; luego cada grupo con sus etiquetas cortas y, plegado
     (`<blockquote expandable>`, se despliega con un toque), el detalle con el porqué. Sin repetidos."""
     now = now or datetime.now()
     groups = _group(items)
     counts = " · ".join(f"{ICONS[t]} {len(v)} {NOUNS[t]}" for t, v in groups.items())
-    head = f"📬 <b>Resumen</b> · {DAYS[now.weekday()]} {now:%d/%m %H:%M}" + (f"\n<i>desde las {datetime.fromtimestamp(since):%H:%M}</i>" if since else "")
+    head = f"📬 <b>Resumen</b> · {DAYS[now.weekday()]} {now:%d/%m %H:%M}" + (
+        "\n<i>no hay novedades sin enviar: esto es lo de las últimas 24 h</i>" if recap else
+        (f"\n<i>desde las {datetime.fromtimestamp(since):%H:%M}</i>" if since else ""))
     blocks = []
     for title, rows in groups.items():
         uniq, seen = [], set()

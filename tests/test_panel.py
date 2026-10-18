@@ -27,13 +27,33 @@ class Jornada(unittest.TestCase):
     def test_those_who_left_go_apart_with_how_and_their_points(self):
         text = "\n".join(panel.jornada_lines(self.D))
         self.assertIn("<b>🚪 Ya no están</b>", text)
-        self.assertIn("Giménez — <b>6 pts</b> · vendido · 16/10 21:01", text)
-        self.assertIn("Yoel Lago — sin jugar · clausulado por Josinho", text)
+        self.assertIn("Giménez (CEN) — <b>6 pts</b> · vendido · 16/10 21:01", text)
+        self.assertIn("Yoel Lago (DEF) — sin jugar · clausulado por Josinho", text)
         self.assertNotIn("Giménez — <b>6 pts</b>\n", text.split("Ya no están")[0])      # no sale entre los de la plantilla
 
     def test_points_not_explained_by_any_row_are_shown(self):
         d = {"rows": [{"pid": "1", "pos": "DEF", "name": "Hancko", "pts": 10, "when": None, "gone": None}], "sold": 6}
         self.assertIn("+ 6 pts más", panel.jornada_lines(d)[-1])
+
+
+class JornadaDetail(unittest.TestCase):
+    def test_who_is_in_the_eleven_who_is_out_and_the_holes(self):
+        d = {"rows": [{"pid": "1", "pos": "DEF", "name": "Hancko", "pts": 10, "when": None, "gone": None},
+                      {"pid": "2", "pos": "POR", "name": "Soria", "pts": None, "when": datetime(2026, 10, 19, 19, 0, tzinfo=timezone.utc),
+                       "vs": "vs Rayo", "gone": None}],
+             "bench": [{"pid": "9", "pos": "POR", "name": "A. Herrero", "avg": 5.4, "status": "ok"},
+                       {"pid": "8", "pos": "DEF", "name": "Salinas", "avg": 2.3, "status": "injured"}],
+             "formation": [3, 5, 2], "missing": {"DEF": 2, "CEN": 5, "DEL": 2}, "sold": 0}
+        text = "\n".join(panel.jornada_lines(d))
+        self.assertIn("🧩 Tu once (3-5-2)</b> · 2 de 11 siguen contigo", text)
+        self.assertIn("⏳ Soria — lun 19 21:00 · vs Rayo", text)
+        self.assertIn("… 2 hueco(s)", text)
+        self.assertIn("🪑 Fuera del once</b> (no puntúan)", text)
+        self.assertIn("A. Herrero (POR) — media 5,4", text)
+        self.assertIn("Salinas (DEF) — media 2,3 · ⚠️ injured", text)
+
+    def test_repeated_surnames_are_collapsed(self):
+        self.assertEqual(panel.clean_name("Moriba Kourouma Kourouma"), "Moriba Kourouma")
 
 
 class Results(unittest.TestCase):

@@ -63,3 +63,21 @@ class Digest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Recap(unittest.TestCase):
+    def test_resumen_can_always_review_the_last_24_hours(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            store = Store(Path(d) / "s.db")
+            now = datetime(2026, 10, 18, 12, 0).timestamp()
+            inbox.add(store, ["💰 Vendido A"], now=now - 3 * 3600)
+            inbox.add(store, ["💰 Vendido viejo"], now=now - 40 * 3600)
+            inbox.clear(store, now=now)                                     # ya enviado en un resumen: la bandeja queda vacía...
+            self.assertEqual(inbox.pending(store), [])
+            recent = inbox.recent(store, 24, now=now)                       # ...pero se puede repasar
+            self.assertEqual([i["text"] for i in recent], ["💰 Vendido A"])
+            text = inbox.render_digest(recent, since=recent[0]["t"], now=datetime(2026, 10, 18, 12, 0), recap=True)
+            self.assertIn("últimas 24 h", text)
+            store.db.close()

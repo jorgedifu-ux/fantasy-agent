@@ -191,8 +191,13 @@ def misiones(settings, store: Store, api, world) -> None:
 
 
 def resumen(settings, store: Store) -> None:
+    """Las novedades pendientes y, si no hay ninguna, lo de las últimas 24 h (siempre se puede repasar)."""
     text = inbox.flush_text(store)
-    notify.send_all(settings, text or "📭 Nada nuevo desde el último resumen.", html=True)
+    if not text:
+        items = inbox.recent(store, 24)
+        text = inbox.render_digest(items, since=items[0]["t"], now=datetime.now(), recap=True) if items else \
+            "📭 No ha pasado nada en las últimas 24 h."
+    notify.send_all(settings, text, html=True)
 
 
 def porque(settings, store: Store, arg: str) -> None:
