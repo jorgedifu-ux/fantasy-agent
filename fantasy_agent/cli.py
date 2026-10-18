@@ -1101,6 +1101,15 @@ def _setup_start_probs(store: Store, api: FantasyAPI, world) -> None:
     ap.set_start_probs(lambda pid: (probs.get(pid) or {}).get("start_probability"))
 
 
+def _remember_xi(store: Store, api: FantasyAPI, eleven) -> None:
+    """Guarda el once registrado para esta jornada (mientras no esté en juego): luego se sabe quién estaba en él aunque se venda o se lo lleve un rival."""
+    try:
+        week = int((api.current_week() or {}).get("weekNumber") or 0)
+        store.set("xi_snapshot", json.dumps({"week": week, "ids": [{"pid": c.player.id, "name": c.player.name} for c in eleven]}, ensure_ascii=False))
+    except Exception:
+        pass
+
+
 def _apply_lineup(store: Store, api: FantasyAPI, world) -> str | None:
     """Guarda el mejor once (gratis y reversible hasta que empieza la jornada). La forma del
     cuerpo no está documentada: prueba las variantes de `autopilot.lineup_payload`, vuelve a
@@ -1139,6 +1148,7 @@ def _apply_lineup(store: Store, api: FantasyAPI, world) -> str | None:
     current = api.lineup(world.my_team_id)
     current_formation = tuple((current.get("formation") or {}).get("tacticalFormation") or ())
     if ap.lineup_ids(current) == desired and current_formation == tuple(formation):
+        _remember_xi(store, api, eleven)
         return None
     learned = store.get("lineup_variant")
     variants = ([learned] if learned else []) + [v for v in ap.LINEUP_VARIANTS if v != learned]
@@ -1151,6 +1161,7 @@ def _apply_lineup(store: Store, api: FantasyAPI, world) -> str | None:
             continue
         if ap.lineup_ids(api.lineup(world.my_team_id)) == desired:
             store.set("lineup_variant", v)
+            _remember_xi(store, api, eleven)
             aviso = "" if len(eleven) == 11 else f" · ⚠️ solo {len(eleven)} jugadores: faltan fichajes"
             return f"🧩 <b>Alineación guardada</b> {'-'.join(map(str, formation))} · {total} pts esperados{aviso}"
         errors.append(f"{v}: la API respondió bien pero no se guardó")

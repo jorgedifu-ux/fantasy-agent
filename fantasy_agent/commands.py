@@ -158,7 +158,7 @@ def _full_names(store: Store, api, world, jornada: dict | None) -> dict[str, str
 
 def refresh_panel(settings, store: Store, api, world, force: bool = False) -> bool:
     from . import cli
-    jd = panel.jornada_data(world, api)
+    jd = panel.jornada_data(world, api, store)
     text = panel.render(world, store, hours_to_deadline=cli._hours_to_deadline(world), week=api.current_week(), jornada=jd,
                         full=_full_names(store, api, world, jd))
     return panel.sync(store, settings, text, force=force)
@@ -176,7 +176,7 @@ def resumen(settings, store: Store) -> None:
 
 
 def jornada(settings, store: Store, api, world) -> None:
-    d = panel.jornada_data(world, api)
+    d = panel.jornada_data(world, api, store)
     my_name = next((r.manager_name for r in world.standing if r.team_id == world.my_team_id), "")
     if not d:
         notify.send_all(settings, "No he podido leer la jornada ahora mismo; prueba en unos minutos.")

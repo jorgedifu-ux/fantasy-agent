@@ -8,7 +8,7 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import analysis, autopilot as ap, inbox, models, notify, wealth
+from . import analysis, autopilot as ap, inbox, models, notify, service, wealth
 from .storage import Store
 
 PANEL_ID_KEY = "panel_message_id"
@@ -47,19 +47,49 @@ def _fold(rows: list[str]) -> str:
     return "<blockquote expandable>" + "\n".join(rows) + "</blockquote>" if rows else ""
 
 
-def jornada_data(world, api) -> dict | None:
-    """Puntos de la jornada en juego: los de la alineación guardada (con su partido, si aún no se ha jugado) y el total real de la clasificación, que
-    incluye a quien ya se vendió después de puntuar. Una sola fuente para el panel y para `/jornada`."""
+def _departures(world, api, opening) -> dict[str, tuple[str, str]]:
+    """pid -> (cómo se fue, a qué hora) de los jugadores que han salido de tu plantilla desde que empezó la jornada: vendidos a LaLiga o clausulados."""
+    try:
+        rows = service._all_activity(api, world.league_id, max_pages=2)
+    except Exception:
+        return {}
+    names = {str(r.manager_id): short_name(r.manager_name) for r in world.standing}
+    me = next((str(r.manager_id) for r in world.standing if r.team_id == world.my_team_id), "")
+    out: dict[str, tuple[str, str]] = {}
+    for a in rows:
+        when = models.parse_dt(models.pick(a, "createdAt"))
+        if not when or (opening and when < opening):
+            continue
+        kind = models.to_int(models.pick(a, "activityTypeId"))
+        u1, u2 = str(models.pick(a, "user1Id", default="")), str(models.pick(a, "user2Id", default=""))
+        pid = str(models.pick(a, "playerMasterId", default=""))
+        if kind == 33 and u1 == me:
+            out[pid] = ("vendido", f"{when.astimezone():%d/%m %H:%M}")
+        elif kind == 1 and u2 == me:
+            out[pid] = (f"clausulado por {names.get(u1, 'un rival')}", f"{when.astimezone():%d/%m %H:%M}")
+    return out
+
+
+def jornada_data(world, api, store: Store | None = None) -> dict | None:
+    """Puntos de la jornada en juego: los de tu once (con su partido, si aún no se ha jugado), los de quien ya se ha ido (vendido o clausulado, con
+    el motivo) y el total real de la clasificación. Una sola fuente para el panel y para `/jornada`."""
     try:
         wk = api.current_week() or {}
         cur = int(wk.get("weekNumber") or 0)
         closing = models.parse_dt(wk.get("closingWeekDate"))
+        opening = models.parse_dt(wk.get("openingWeekDate"))
         lu = api.lineup(world.my_team_id)
         raw = {str(p["id"]): p for p in api.players()}
         week_rows = api.standing_week(world.league_id, cur)
     except Exception:
         return None
-    rows = []
+    pos_label = {1: "POR", 2: "DEF", 3: "CEN", 4: "DEL"}
+    rows, seen = [], set()
+
+    def points(pid: str):
+        r = raw.get(pid, {})
+        return next((x.get("points") for x in (r.get("weekPoints") or []) if x.get("weekNumber") == cur), None)
+
     for key, label in POS_LABEL:
         for e in (lu.get("formation") or {}).get(key) or []:
             if not isinstance(e, dict):
@@ -67,13 +97,33 @@ def jornada_data(world, api) -> dict | None:
             pm = e.get("playerMaster") or {}
             pid = str(pm.get("id"))
             r = raw.get(pid, {})
-            pts = next((x.get("points") for x in (r.get("weekPoints") or []) if x.get("weekNumber") == cur), None)
+            pts = points(pid)
             fx = world.fixtures.get(str(r.get("teamId")))
             when = fx.when if (pts is None and fx and fx.when and (closing is None or fx.when <= closing)) else None
-            rows.append({"pid": pid, "pos": label, "name": pm.get("nickname") or r.get("nickname") or "?", "pts": pts, "when": when})
+            rows.append({"pid": pid, "pos": label, "name": pm.get("nickname") or r.get("nickname") or "?", "pts": pts, "when": when, "gone": None})
+            seen.add(pid)
+    # los que estaban en el once al empezar (guardado por el piloto) o se han ido desde entonces
+    snap = json.loads(store.get("xi_snapshot") or "{}") if store is not None else {}
+    gone = _departures(world, api, opening)
+    candidates = {**{x["pid"]: x for x in (snap.get("ids") or []) if snap.get("week") == cur}, **{pid: {} for pid in gone}}
+    for pid in candidates:
+        if pid in seen or pid not in raw:
+            continue
+        r = raw[pid]
+        how = gone.get(pid)
+        if how is None and snap.get("week") != cur:
+            continue
+        pts = points(pid)
+        if how is None:
+            how = ("fuera de tu plantilla", "")
+        rows.append({"pid": pid, "pos": pos_label.get(models.to_int(r.get("positionId")), "—"), "name": r.get("nickname") or "?", "pts": pts, "when": None,
+                     "gone": f"{how[0]}{(' · ' + how[1]) if how[1] else ''}"})
+    order = {"POR": 0, "DEF": 1, "CEN": 2, "DEL": 3}
+    rows.sort(key=lambda x: (order.get(x["pos"], 9), x["gone"] is not None, -(x["pts"] if x["pts"] is not None else -99)))
     mine = next((x for x in week_rows if str(x["team"]["id"]) == str(world.my_team_id)), None)
     total = int(mine["points"]) if mine else sum(r["pts"] or 0 for r in rows)
-    return {"week": cur, "live": bool(wk.get("isLive")), "total": total, "rows": rows, "sold": total - sum(r["pts"] or 0 for r in rows),
+    accounted = sum(r["pts"] or 0 for r in rows if r["gone"] is None or r["pts"] is not None)
+    return {"week": cur, "live": bool(wk.get("isLive")), "total": total, "rows": rows, "sold": max(0, total - accounted),
             "managers": sorted(((x["team"]["manager"]["managerName"], int(x["points"])) for x in week_rows), key=lambda z: -z[1])}
 
 
@@ -82,13 +132,14 @@ def jornada_lines(d: dict, full: dict[str, str] | None = None) -> list[str]:
     lines = []
     for r in d["rows"]:
         name = notify.esc(full.get(str(r.get("pid")), r["name"]))
-        if r["pts"] is not None:
-            lines.append(f"{r['pos']} {name} · <b>{r['pts']}</b>")
-        else:
-            when = f" ({_when(r['when'])})" if r["when"] else ""
-            lines.append(f"{r['pos']} {name} · –{when}")
+        pts = f"<b>{r['pts']}</b>" if r["pts"] is not None else "–"
+        when = f" ({_when(r['when'])})" if r.get("when") and r["pts"] is None else ""
+        gone = f" · 🚪 {notify.esc(r['gone'])}" if r.get("gone") else ""
+        lines.append(f"{r['pos']} {name} · {pts}{when}{gone}")
     if d["sold"] > 0:
-        lines.append(f"+ {d['sold']} de jugadores vendidos después de puntuar")
+        lines.append(f"+ {d['sold']} más (de jugadores que ya no están en tu once)")
+    if any(r.get("gone") for r in d["rows"]):
+        lines.append("🚪 = ya no está en tu plantilla; lo que puntuó antes de irse cuenta.")
     return lines
 
 
