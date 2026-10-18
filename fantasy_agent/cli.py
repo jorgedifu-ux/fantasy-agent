@@ -170,23 +170,46 @@ def _emergency_debt_buy(store: Store, s, api: FantasyAPI, world, team_plan: plan
     return msg
 
 
-def _check_bid_resolutions(store: Store, world) -> list[str]:
-    """Una puja "enviada" no es una puja "ganada". Compara lo pendiente con tu plantilla
-    actual: si el jugador ya está en tu equipo, la ganaste; si ya pasó de sobra su hora de
-    cierre y sigue sin estar, la perdiste (otro mánager pujó más)."""
+BID_GRACE_S = 3 * 3600      # LaLiga a veces resuelve el mercado con horas de retraso (18/10: a las 23:04 en vez de a las 20:53)
+
+
+def _bid_results(api, world, since_ts: float) -> dict[str, tuple[str, int]]:
+    """player_id -> (manager_id ganador, importe) de las pujas ya adjudicadas, según la actividad de la liga."""
+    out: dict[str, tuple[str, int]] = {}
+    try:
+        for a in models.as_list(api.activity(world.league_id, 0), "activity", "elements"):
+            when = models.parse_dt(models.pick(a, "createdAt"))
+            if models.to_int(models.pick(a, "activityTypeId")) == 31 and when and when.timestamp() >= since_ts:
+                out.setdefault(str(models.pick(a, "playerMasterId", default="")),
+                               (str(models.pick(a, "user1Id", default="")), models.to_int(models.pick(a, "amount"))))
+    except Exception:
+        pass
+    return out
+
+
+def _check_bid_resolutions(store: Store, world, api: FantasyAPI | None = None) -> list[str]:
+    """Una puja "enviada" no es una puja "ganada". Se da por ganada cuando el jugador ya está en tu equipo; por perdida cuando la actividad de la liga dice que
+    ganó otro, o cuando pasan `BID_GRACE_S` del cierre sin resolverse (antes eran 10 min: el 18/10 el mercado se resolvió con 2 h de retraso, el bot dio por
+    perdidas pujas que aún estaban vivas y fichó por cláusula a Abel, Nsongo y Luismi)."""
     my_ids = {sl.player.id for sl in world.my_slots}
     now = time.time()
     results: list[str] = []
-    for b in store.unresolved_market_bids("buy"):
-        if b["player_id"] in my_ids:
+    pending = store.unresolved_market_bids("buy")
+    winners = _bid_results(api, world, min((b["expires_at"] or now) for b in pending) - 600) if (api and pending) else {}
+    me = next((str(r.manager_id) for r in world.standing if r.team_id == world.my_team_id), "")
+    names = {str(r.manager_id): r.manager_name for r in world.standing}
+    for b in pending:
+        win = winners.get(b["player_id"])
+        if b["player_id"] in my_ids or (win and win[0] == me):
             store.resolve_market_bid(b["id"], "won")
             results.append(f"✅ <b>Puja ganada</b>: {notify.esc(b['player_name'])} ya es tuyo.")
-        elif b["expires_at"] and now > b["expires_at"] + 600:  # 10 min de margen tras el cierre
+        elif win:
             store.resolve_market_bid(b["id"], "lost")
-            results.append(
-                f"❌ <b>Puja perdida</b>: {notify.esc(b['player_name'])} — otro mánager habrá "
-                f"pujado más. No se ha gastado nada."
-            )
+            results.append(f"❌ <b>Puja perdida</b>: {notify.esc(b['player_name'])} — ganó {notify.esc(names.get(win[0], 'otro mánager'))} con {service.m(win[1])} "
+                           f"(tú, {service.m(b['price'])}). No se ha gastado nada.")
+        elif b["expires_at"] and now > b["expires_at"] + BID_GRACE_S:
+            store.resolve_market_bid(b["id"], "lost")
+            results.append(f"❌ <b>Puja perdida</b>: {notify.esc(b['player_name'])} — otro mánager habrá pujado más. No se ha gastado nada.")
     for b in store.unresolved_market_bids("sell"):
         if b["player_id"] not in my_ids:
             store.resolve_market_bid(b["id"], "gone")  # el aviso lo da _resolve_offers / _squad_changes
@@ -465,7 +488,7 @@ def _pay_clause(api: FantasyAPI, league_id: str, slot, planned: int) -> int:
     return cur.clause
 
 
-def _committed_bids(store: Store, world) -> tuple[int, list]:
+def _committed_bids(store: Store, world, api: FantasyAPI | None = None) -> tuple[int, list]:
     """Dinero ya comprometido en pujas vivas (si las ganas, se cobran) y los jugadores que
     llegarían con ellas — cuentan para el saldo y para la plantilla simulada del planificador."""
     now = time.time()
@@ -482,6 +505,23 @@ def _committed_bids(store: Store, world) -> tuple[int, list]:
                 store.resolve_market_bid(b["id"], "cancelled")
                 continue
             by_player[b["player_id"]] = (b["price"], it.player)
+    if api is not None:
+        mine_ids = {sl.player.id for sl in world.my_slots}
+        late = [b for b in store.unresolved_market_bids("buy") if b["expires_at"] and b["expires_at"] <= now < b["expires_at"] + BID_GRACE_S
+                and b["player_id"] not in by_player and b["player_id"] not in mine_ids]
+        if late:
+            try:
+                raw = {str(p["id"]): p for p in api.players()}
+            except Exception:
+                raw = {}
+            for b in late:
+                r = raw.get(b["player_id"])
+                if r:
+                    player = models.Player(id=b["player_id"], name=r.get("nickname") or b["player_name"], position_id=models.to_int(r.get("positionId")),
+                                           team=world.team_names.get(str(r.get("teamId")), "?"), team_id=str(r.get("teamId")),
+                                           market_value=models.to_int(r.get("marketValue")), points=models.to_int(r.get("points")),
+                                           avg_points=float(r.get("averagePoints") or 0), status=str(r.get("playerStatus") or "ok"))
+                    by_player[b["player_id"]] = (b["price"], player)       # cerrada pero sin adjudicar: sigue siendo dinero y plaza comprometidos
     return sum(v for v, _ in by_player.values()), [pl for _, pl in by_player.values()]
 
 
@@ -558,7 +598,7 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
     """Fichajes y clausulazos autónomos (ver autopilot.plan_acquisitions). Devuelve también
     las cláusulas que se liberan pronto y ya tienen su dinero reservado (para `_snipe`)."""
     now = datetime.now(timezone.utc)
-    committed, incoming = _committed_bids(store, world)
+    committed, incoming = _committed_bids(store, world, api)
     budget = int((world.my_cash or 0) * (1 - s.budget_reserve_pct)) - committed - extra_reserved
     credit = ap.credit_room(sum(sl.player.market_value for sl in world.my_slots), (world.my_cash or 0) - committed - extra_reserved,
                             _hours_to_deadline(world), s.leverage_pct)
@@ -908,7 +948,7 @@ def _delever(store: Store, s, api: FantasyAPI, world) -> list[str]:
     """Volver a saldo positivo antes de que empiece la jornada (si no, esa jornada puntúa 0): acepta
     ofertas de la liga, primero de quien menos aporta al once, con un mínimo cada vez menor según se
     acerca el primer partido (`autopilot.delever_min`). Nunca deja el once incompleto."""
-    committed, _ = _committed_bids(store, world)
+    committed, _ = _committed_bids(store, world, api)
     need = committed - (world.my_cash or 0)
     hours = _hours_to_deadline(world)
     floor = ap.delever_min(hours)
@@ -1242,7 +1282,7 @@ def _siege_plan(store: Store, s, api: FantasyAPI, world, max_hours: float = 7 * 
         current = models.to_int(models.pick(api.current_week(), "weekNumber"), default=0)
     except Exception:
         current = 0
-    committed, incoming = _committed_bids(store, world)
+    committed, incoming = _committed_bids(store, world, api)
     mine = [sl.player for sl in world.my_slots] + incoming
     free_cash = int((world.my_cash or 0) * (1 - s.budget_reserve_pct)) - committed
     freeze_start = world.clause_freeze[0] if world.clause_freeze else out.next_first - timedelta(hours=24)
@@ -1795,7 +1835,7 @@ def _watch_once(store: Store, s) -> str:
     st("patrimonio", _record_wealth, store, world)
     events: list[str] = st("plantilla", _squad_changes, store, world, default=[])
     events += st("autoajuste", _autotune_tick, store, s, api, world, default=[])
-    events += st("pujas resueltas", _check_bid_resolutions, store, world, default=[])
+    events += st("pujas resueltas", _check_bid_resolutions, store, world, api, default=[])
 
     repaid = st("devolver crédito", _delever, store, s, api, world, default=[])
     events += repaid
