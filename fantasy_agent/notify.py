@@ -84,8 +84,8 @@ def edit_message(
     try:
         request_json("POST", url, json_body=body)
         return True
-    except Exception:
-        return False
+    except Exception as exc:
+        return "message is not modified" in str(exc)      # mismo texto que ya tenía: está bien, no hay que crear otro
 
 
 def send_photo(settings: Settings, photo_url: str, caption: str = "", *, buttons: list[tuple[str, str]] | None = None) -> int | None:

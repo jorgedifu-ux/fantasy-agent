@@ -347,6 +347,8 @@ def sync(store: Store, settings, text: str, force: bool = False) -> bool:
         if new_id:
             store.set(PANEL_ID_KEY, str(new_id))
             notify.pin_message(settings, new_id)
+            if msg_id:
+                notify.delete_message(settings, int(msg_id))        # que no queden dos paneles
     store.set("panel_hash", body_hash)
     store.set("panel_at", str(time.time()))
     return True
