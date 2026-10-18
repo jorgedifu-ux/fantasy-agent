@@ -9,7 +9,7 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import analysis, autopilot as ap, inbox, models, notify, service, wealth
+from . import analysis, autopilot as ap, inbox, models, notify, reval, service, wealth
 from .storage import Store
 
 PANEL_ID_KEY = "panel_message_id"
@@ -260,6 +260,40 @@ def results_section(review_lines: list[str] | None) -> str | None:
     return head + "\n" + _fold(body)
 
 
+def _sg(x: float) -> str:
+    """+3,1M / −0,9M (con signo y comas)."""
+    m = x / 1e6
+    return ("+" if m >= 0 else "−") + f"{abs(m):.1f}".replace(".", ",") + "M"
+
+
+def reval_section(data: dict | None, detail: bool = False) -> str | None:
+    """«Ayer»: lo que subió o bajó el valor de cada plantilla en la última actualización de valores (la de las 00:00), ordenado de más a menos."""
+    if not data or not data.get("managers"):
+        return None
+    ms = sorted(data["managers"].values(), key=lambda m: -m["delta"])
+    lines = []
+    for i, m in enumerate(ms):
+        who = notify.esc(short_name(m["name"], m["me"]))
+        pct = ("+" if m["pct"] >= 0 else "−") + f"{abs(m['pct']):.1f}".replace(".", ",") + "%"
+        lines.append(f"{MEDALS[i] if i < 3 else f'{i + 1}º'} {who} · <b>{_sg(m['delta'])}</b> ({pct})")
+    day = data.get("day", "")
+    head = f"📈 <b>AYER</b> · lo que subió cada plantilla"
+    rows = []
+    for m in ms:
+        who = notify.esc(short_name(m["name"], m["me"]))
+        if not (detail or m["me"]):
+            continue
+        up = " · ".join(f"{notify.esc(clean_name(n))} {_sg(v)}" for n, v in m["up"])
+        down = " · ".join(f"{notify.esc(clean_name(n))} {_sg(v)}" for n, v in m["down"])
+        rows.append(f"<b>{who}</b>")
+        if up:
+            rows.append(f"⬆️ {up}")
+        if down:
+            rows.append(f"⬇️ {down}")
+        rows.append("Últimos días: " + " · ".join(_sg(x) for x in m["days"]))
+    return head + "\n" + "\n".join(lines) + (f"\n<i>Tus mayores movimientos ▾</i>\n" + _fold(rows) if rows else "") + f"\n<i>Con la plantilla de hoy; valores del {day[8:10]}/{day[5:7]}.</i>"
+
+
 MEDALS = ("🥇", "🥈", "🥉")
 
 
@@ -317,6 +351,11 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
                 if hist:
                     rows.append("Diferencia de patrimonio: " + " · ".join(hist))
         sections.append("🏆 <b>CLASIFICACIÓN</b>\n" + "\n".join(pods) + (f"\n<i>Patrimonio y brecha ▾</i>\n" + _fold(rows) if rows else ""))
+
+    # --- ayer: lo que subió cada plantilla
+    rv = reval_section(reval.load(store))
+    if rv:
+        sections.append(rv)
 
     # --- jornada en juego: resumen visible y tres bloques que se abren por separado
     if jornada and jornada["rows"] is not None:

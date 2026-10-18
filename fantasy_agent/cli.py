@@ -10,7 +10,7 @@ import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from . import analysis, auth, autopilot as ap, cohorts, commands, confirm, digest, export, inbox, learn, lineup, models, notify, panel, plan as plan_mod, service, siege, wealth
+from . import analysis, auth, autopilot as ap, cohorts, commands, confirm, digest, export, inbox, learn, lineup, models, notify, panel, plan as plan_mod, reval, service, siege, wealth
 from .api import FantasyAPI
 from . import futbolfantasy
 from .attendance import estimate_start_probability, estimate_titularidad
@@ -1829,6 +1829,7 @@ def _watch_once(store: Store, s) -> str:
     if errs and store.alert_is_new("step_errors:" + ",".join(sorted(e.split(":")[0] for e in errs)), ttl_hours=6):
         events.append("⚠️ Pasos con error en esta pasada (el resto se hizo): " + notify.esc("; ".join(errs))[:600])
     st("patrimonio de la liga", wealth.snapshot, store, api, world)
+    st("revalorización", reval.refresh, store, world, api)
     _deliver(store, s, st, events)
     st("panel", _sync_panel, store, s, api, world)
 

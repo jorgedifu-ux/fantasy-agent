@@ -6,12 +6,13 @@ import json
 import time
 from datetime import datetime, timezone
 
-from . import autopilot as ap, charts, confirm, fullnames, inbox, matches, notify, panel, tidy, wealth
+from . import autopilot as ap, charts, confirm, fullnames, inbox, matches, notify, panel, reval, tidy, wealth
 from .storage import Store
 
 HELP = (
     "🤖 <b>Qué puedes pedirme</b>\n\n"
     "<blockquote>/misiones · pone al día el panel fijado y borra lo demás (botón 🔄)\n"
+    "/ayer · lo que subió o bajó cada plantilla en la última actualización de valores\n"
     "/partidos · los partidos de la jornada: qué se ha jugado, qué falta y qué jugadores tiene cada uno\n"
     "/resumen · las novedades pendientes, ya\n"
     "/brecha · diferencia con el líder; /brecha aleix o /brecha pep para otro rival\n"
@@ -201,6 +202,16 @@ def resumen(settings, store: Store) -> None:
     notify.send_all(settings, text, html=True)
 
 
+def ayer(settings, store: Store, api, world) -> None:
+    """Lo que subió o bajó cada plantilla en la última actualización de valores, con los mayores movimientos de todos."""
+    data = reval.load(store) or reval.compute(world, api)
+    if not data:
+        notify.send_all(settings, "No he podido calcular la revalorización ahora mismo.")
+        return
+    text = panel.reval_section(data, detail=True)
+    notify.send_all(settings, text or "Sin datos de revalorización.", html=True)
+
+
 def partidos(settings, store: Store, api, world) -> None:
     d = matches.collect(world, api)
     if not d:
@@ -245,6 +256,8 @@ def run(settings, store: Store, api, world, text: str) -> bool:
         resumen(settings, store)
     elif cmd == "brecha":
         brecha(settings, store, api, world, arg)
+    elif cmd in ("ayer", "revalorizacion"):
+        ayer(settings, store, api, world)
     elif cmd in ("partidos", "enfrentamientos"):
         partidos(settings, store, api, world)
     elif cmd == "grafica":
