@@ -138,3 +138,25 @@ class NeededBids(unittest.TestCase):
 
     def test_without_rival_data_a_needed_position_goes_to_the_cap(self):
         self.assertEqual(ap.bid_amount(self.item(), 1.0, None, needed=True), round(5_000_000 * (1 + ap.MAX_OVERBID)))
+
+
+class SlotForAnUpgrade(unittest.TestCase):
+    """18/10: Nsongo (pagado 9,0M, valor 7,6M) ocupaba una plaza sin poder venderse; para un fichaje necesario se permite salir cerca del valor."""
+
+    def offer(self, money):
+        return Offer(id="o", money=money, from_manager="LaLiga", is_system=True)
+
+    def test_a_surplus_player_can_leave_below_cost_when_the_slot_is_needed(self):
+        p = pl("n", 4, 4.2, value=7_630_000)
+        d, why = ap.offer_decision(self.offer(int(7_630_000 * 0.98)), p, loss=0.0, free_slot=True, cost_basis=9_000_000)
+        self.assertEqual(d, "accept", why)
+
+    def test_without_that_need_it_is_still_not_sold_below_cost(self):
+        p = pl("n", 4, 4.2, value=7_630_000)
+        d, _ = ap.offer_decision(self.offer(int(7_630_000 * 0.98)), p, loss=0.0, cost_basis=9_000_000)
+        self.assertEqual(d, "hold")
+
+    def test_a_starter_is_not_sacrificed_for_a_slot(self):
+        p = pl("s", 4, 6.0, value=7_630_000)
+        d, _ = ap.offer_decision(self.offer(int(7_630_000 * 0.98)), p, loss=3.0, free_slot=True, cost_basis=9_000_000)
+        self.assertEqual(d, "hold")

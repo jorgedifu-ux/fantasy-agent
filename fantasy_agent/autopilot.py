@@ -943,7 +943,7 @@ def offer_decision(
         # una subida y mantener hasta que se frena rinde +72% de media (mediana +21%, ~19 días);
         # vender a los 7 días, solo +17%. Mientras sigue subiendo no se vende (las ofertas no pasan de ~1,13×).
         need, why = max(need, RISING_HOLD_MIN), f"sigue subiendo ({trend_d3:+.1f}% en 3 días): espero a que se frene"
-    if cost_basis and value and not cut_loss and not stalled and not leaving:
+    if cost_basis and value and not cut_loss and not stalled and not leaving and not (free_slot and loss < BENCH_LOSS):
         # Nunca por debajo de lo que costó, tampoco por riesgo de cláusula (decisión del
         # usuario, 4/10/2026: mejor que te paguen la cláusula que vender con pérdida). Solo
         # se sale con pérdida si está lesionado o cayendo (`cut_loss`).
