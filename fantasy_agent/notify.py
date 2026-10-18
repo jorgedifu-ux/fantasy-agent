@@ -155,6 +155,18 @@ def delete_message(settings: Settings, message_id: int) -> bool:
         return "message to delete not found" in text or "can't be deleted" in text or "message can't be deleted" in text
 
 
+def pinned_message_id(settings: Settings) -> int | None:
+    """Id del mensaje fijado ahora mismo en el chat (el panel), preguntándoselo a Telegram."""
+    if not telegram_enabled(settings):
+        return None
+    url = f"https://api.telegram.org/bot{settings.telegram_token}/getChat"
+    try:
+        resp = request_json("POST", url, json_body={"chat_id": settings.telegram_chat_id})
+        return ((resp or {}).get("result") or {}).get("pinned_message", {}).get("message_id")
+    except Exception:
+        return None
+
+
 def unpin_message(settings: Settings, message_id: int) -> None:
     if not telegram_enabled(settings):
         return

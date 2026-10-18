@@ -61,20 +61,43 @@ def sweep(store: Store, settings, now: float | None = None, delete=None) -> int:
     return deleted
 
 
-def purge(store: Store, settings, delete=None) -> int:
-    """Borra YA todo lo que el bot tiene apuntado (menos el panel fijado): lo de «actualizar y limpiar»."""
+RANGE_BACK = 150          # cuántos ids hacia atrás se barren al limpiar (Telegram solo deja borrar lo de menos de 48 h)
+
+
+def purge(store: Store, settings, delete=None, latest: int | None = None, pinned: int | None = None) -> int:
+    """«Actualizar y limpiar»: borra YA todo menos el panel fijado y lo sin leer (urgente/resumen). Primero lo que el bot tiene apuntado y luego un
+    barrido por los últimos `RANGE_BACK` ids del chat: así también se va lo que no estaba apuntado (mensajes de antes, o mandados desde otro sitio)
+    y tus propias órdenes. `latest` (último id del chat) se averigua mandando un mensaje de prueba, que también se borra."""
     delete = delete or (lambda mid: notify.delete_message(settings, mid))
     keep = keep_ids(store)
+    pin = pinned if pinned is not None else notify.pinned_message_id(settings)
+    if pin:
+        keep.add(int(pin))
     sent, notify.SENT_IDS[:] = list(notify.SENT_IDS), []
     track(store, [m for m in sent if m not in keep])
     items = [i for i in _load(store) if i["id"] not in keep]
-    left, deleted = [], 0
+    unread = {i["id"] for i in items if i.get("keep")}
+    keep |= unread
+    if latest is None:
+        try:
+            latest = notify.send_telegram(settings, "🧹")
+        except Exception:
+            latest = None
+        notify.SENT_IDS[:] = []
+    deleted = 0
+    tried: set[int] = set()
     for it in items:
-        if it.get("keep"):
-            left.append(it)
-        elif deleted < 100 and delete(it["id"]):
+        if it["id"] in keep:
+            continue
+        tried.add(it["id"])
+        if delete(it["id"]):
             deleted += 1
-        else:
-            left.append(it)
-    store.set(KEY, json.dumps(left[-MAX_TRACKED:]))
+    if latest:
+        for mid in range(int(latest), max(0, int(latest) - RANGE_BACK), -1):
+            if mid in keep or mid in tried:
+                continue
+            if delete(mid):
+                deleted += 1
+            time.sleep(0.03)        # sin machacar a Telegram
+    store.set(KEY, json.dumps([i for i in items if i["id"] in unread][-MAX_TRACKED:]))
     return deleted

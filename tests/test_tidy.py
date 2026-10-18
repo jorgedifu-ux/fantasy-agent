@@ -96,14 +96,23 @@ if __name__ == "__main__":
 
 
 class Purge(Base):
-    def test_purge_deletes_everything_tracked_but_the_panel(self):
-        self.store.set("panel_message_id", "1")
-        tidy.track(self.store, [2, 3], now=time.time())            # recientes: no han vencido
-        notify.SENT_IDS.extend([1, 4])                              # el panel y un mensaje de esta pasada
+    def test_purge_deletes_tracked_and_untracked_ids_but_not_the_pinned_panel(self):
+        self.store.set("panel_message_id", "50")
+        tidy.track(self.store, [58], now=time.time())
         gone = []
-        n = tidy.purge(self.store, SimpleNamespace(), delete=lambda mid: gone.append(mid) or True)
-        self.assertEqual((n, sorted(gone)), (3, [2, 3, 4]))
+        n = tidy.purge(self.store, SimpleNamespace(), delete=lambda mid: gone.append(mid) or True, latest=60, pinned=50)
+        self.assertNotIn(50, gone)
+        self.assertIn(58, gone)
+        self.assertIn(60, gone)           # el mensaje de prueba también
+        self.assertEqual(len(gone), len(set(gone)))
+        self.assertEqual(n, len(gone))
         self.assertEqual(json.loads(self.store.get("sent_msgs")), [])
+
+    def test_the_pinned_message_reported_by_telegram_is_respected_even_if_not_known(self):
+        gone = []
+        tidy.purge(self.store, SimpleNamespace(), delete=lambda mid: gone.append(mid) or True, latest=20, pinned=15)
+        self.assertNotIn(15, gone)
+        self.assertIn(16, gone)
 
 
 class PurgeKeepsUnread(Base):
@@ -111,8 +120,9 @@ class PurgeKeepsUnread(Base):
         tidy.track(self.store, [2], now=time.time())
         tidy.track(self.store, [3], now=time.time(), keep=True)
         gone = []
-        tidy.purge(self.store, SimpleNamespace(), delete=lambda mid: gone.append(mid) or True)
-        self.assertEqual(gone, [2])
+        tidy.purge(self.store, SimpleNamespace(), delete=lambda mid: gone.append(mid) or True, latest=3, pinned=1)
+        self.assertIn(2, gone)
+        self.assertNotIn(3, gone)
         self.assertEqual([i["id"] for i in json.loads(self.store.get("sent_msgs"))], [3])
 
     def test_the_ttl_sweep_still_deletes_them_when_due(self):
