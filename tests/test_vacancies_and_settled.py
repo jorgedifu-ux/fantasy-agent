@@ -28,13 +28,14 @@ def squad_slots(hours_for=None, hours=48):
 
 class Vacating(unittest.TestCase):
     def test_a_starter_whose_clause_opens_soon_counts_as_a_vacancy(self):
-        slots = squad_slots("d0", 40)
+        slots = squad_slots("d0", 20)
         self.assertEqual(ap.vacating_soon(slots, NOW), {"d0"})
+        self.assertEqual(ap.vacating_soon(squad_slots("d0", 40), NOW), set())      # a más de 30 h aún caben ofertas: no se da por vendido
 
     def test_far_away_or_expensive_clauses_do_not(self):
         self.assertEqual(ap.vacating_soon(squad_slots("d0", 200), NOW), set())
-        slots = squad_slots("d0", 40)
-        slots[1] = slot(slots[1].player, 40, ratio=1.3)            # cláusula alta: si la pagan, ganamos
+        slots = squad_slots("d0", 20)
+        slots[1] = slot(slots[1].player, 20, ratio=1.3)            # cláusula alta: si la pagan, ganamos
         self.assertEqual(ap.vacating_soon(slots, NOW), set())
 
     def test_a_sale_that_breaks_the_eleven_waits_for_the_replacement_within_five_days(self):
@@ -45,6 +46,22 @@ class Vacating(unittest.TestCase):
         self.assertIn("recambio", why)
         d2, _ = ap.offer_decision(offer, p, loss=4.0, breaks_xi=True, hours_to_deadline=200, exposed_in=20, clause=10_000_000)
         self.assertEqual(d2, "accept")                              # con tiempo de sobra se vende y se repone
+
+
+class PremiumNeedsARealHole(unittest.TestCase):
+    def test_a_high_premium_clause_is_not_paid_for_a_hole_that_may_never_open(self):
+        from fantasy_agent.models import SquadSlot as SS
+        mine = [pl("gk", 1, 6.0)] + [pl(f"d{i}", 2, 5.0) for i in range(4)] + [pl(f"m{i}", 3, 5.0) for i in range(4)] + [pl("f0", 4, 5.8), pl("f1", 4, 4.3)]
+        star = mine[-2]
+        cand = pl("fx", 4, 4.2, value=7_000_000)
+        mv = ap.Move("clause", cand, int(7_000_000 * 1.18), slot=SS(player=cand, owner_team_id="r", owner_name="r", clause=int(7_000_000 * 1.18),
+                                                                   clause_locked_until=None, player_team_id="ptfx"))
+        without = [p for p in mine if p.id != star.id]
+        # sin contar a quien se prevé vender, el hueco parece real y se pagaría la prima; contándolo, no
+        naive = ap.plan_acquisitions(without, [mv], 50_000_000)
+        careful = ap.plan_acquisitions(without, [mv], 50_000_000, vacated=[star])
+        self.assertTrue(naive)
+        self.assertEqual(careful, [])
 
 
 class Settled(unittest.TestCase):

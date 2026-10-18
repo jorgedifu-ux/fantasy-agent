@@ -596,7 +596,7 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
             m.rival_loss = ap.leader_loss(leader_players, m.player.id, world.recent_form)
         kept.append(m)
     moves = kept
-    plan = ap.plan_acquisitions(planning_mine, moves, budget, form=world.recent_form, max_squad=s.max_squad,
+    plan = ap.plan_acquisitions(planning_mine, moves, budget, vacated=[p for p in mine if p.id in vacating], form=world.recent_form, max_squad=s.max_squad,
                                 rivals=_rival_premium(store, api, world))
     # El portero de reserva va ANTES que las inversiones (protege el once). Si no hay plaza, se quita lo último del
     # plan y se avisa a `_resolve_offers` de que hay que liberar plazas (kv `slots_needed`).

@@ -610,6 +610,7 @@ PREMIUM_OVERRIDE_GAIN = 3.0
 def plan_acquisitions(
     mine: list[Player], moves: list[Move], budget: int, *,
     form: dict[str, float] | None = None, max_squad: int = 16, rivals: RivalPremium | None = None,
+    vacated: list[Player] | tuple = (),
 ) -> list[Move]:
     """Cartera de compras: en cada paso elige la que más puntos suma por recurso gastado (con
     penalización si alimenta al líder o es venganza), la añade a la plantilla simulada y
@@ -640,7 +641,11 @@ def plan_acquisitions(
             # Así no se paga un 19% de más (Johnny) por +0,6 pts/jornada.
             cost_m, value = cost / 1_000_000, m.player.market_value
             premium = max(0.0, cost / value - 1) if value else 0.0
-            if m.kind == "clause" and premium > MAX_CLAUSE_PREMIUM and gain < PREMIUM_OVERRIDE_GAIN and not m.bonus:
+            # La prima alta solo se justifica con una mejora REAL del once: contando como aún presentes a los que se prevé vender (`vacated`), que quizá no se
+            # vendan (18/10: Bil Nsongo a ×1,18 se compró por un hueco que dejaría Zabiri, que sigue en la plantilla).
+            real = roster + list(vacated)
+            real_gain = squad_value(real + [m.player], form) - squad_value(real, form) if vacated else gain
+            if m.kind == "clause" and premium > MAX_CLAUSE_PREMIUM and real_gain < PREMIUM_OVERRIDE_GAIN and not m.bonus:
                 continue   # prima alta sin una mejora real del once: se la come la prima (ver MAX_CLAUSE_PREMIUM)
             net_m = net_value_m(gain, cost, value, m.drift, m.rival_loss)
             if net_m <= 0:
@@ -803,6 +808,9 @@ def raise_plan(slot: SquadSlot, mine: list[Player], form: dict[str, float] | Non
 BREAKS_XI_HOLD_H = 120       # a menos de 5 días de la jornada, no se vende a quien dejaría el once ilegal: el recambio va primero
 
 
+VACATING_H = 30     # solo cuenta como vacante en el último ciclo de ofertas antes de abrirse (antes, 72 h: se compraba por huecos que quizá no llegaran)
+
+
 def vacating_soon(slots: list[SquadSlot], now: datetime, form: dict[str, float] | None = None) -> set[str]:
     """Titulares que se van a vender en cuanto llegue una oferta razonable porque su cláusula se abre en ≤ `AT_RISK_HOURS` y es atractiva para un rival: su sitio
     cuenta ya como vacante al planificar fichajes, para tener el recambio antes (no después) de que salgan."""
@@ -811,7 +819,7 @@ def vacating_soon(slots: list[SquadSlot], now: datetime, form: dict[str, float] 
     for sl in slots:
         p = sl.player
         h = hours_until_exposed(sl, now)
-        if h is None or h > AT_RISK_HOURS or not p.market_value or p.status.lower() in INJURED:
+        if h is None or h > VACATING_H or not p.market_value or p.status.lower() in INJURED:
             continue
         if sl.clause / p.market_value <= ATTRACTIVE_RATIO and sale_loss(mine, p.id, form) >= STARTER_LOSS:
             out.add(p.id)
