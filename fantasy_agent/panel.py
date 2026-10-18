@@ -3,6 +3,7 @@ sin que te llegue nada nuevo. Se actualiza como mucho cada 30 minutos y solo si 
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import re
 import time
@@ -51,8 +52,12 @@ def clean_name(name: str) -> str:
     return " ".join(out)
 
 
+def _visible_len(text: str) -> int:
+    return len(html.unescape(re.sub(r"<[^>]+>", "", text)))
+
+
 BUTTONS = [("📈 Brecha", "cmd:brecha"), ("📬 Resumen", "cmd:resumen"), ("🔄 Actualizar y limpiar", "cmd:misiones")]
-MAX_CHARS = 3900
+MAX_CHARS = 3950
 POS_LABEL = (("goalkeeper", "POR"), ("defender", "DEF"), ("midfield", "CEN"), ("striker", "DEL"))
 
 
@@ -256,10 +261,21 @@ def results_section(review_lines: list[str] | None) -> str | None:
     return head + "\n" + _fold(body)
 
 
+MEDALS = ("🥇", "🥈", "🥉")
+
+
+def _bar(n: int, total: int, on: str = "🟩", off: str = "⬜", width: int = 6) -> str:
+    """Barra de emojis: n de total, a `width` casillas."""
+    if total <= 0:
+        return off * width
+    k = max(0, min(width, round(n / total * width)))
+    return on * k + off * (width - k)
+
+
 def render(world, store: Store, *, hours_to_deadline: float | None, week: dict | None = None, now: datetime | None = None,
            jornada: dict | None = None, full: dict[str, str] | None = None, review: list[str] | None = None) -> str:
-    """Panel para leer en el móvil: una sección por tema, separadas por una línea en blanco y líneas cortas. Los datos (jornada, brecha, rivales, plantilla,
-    pendientes) van dentro, plegados: se consultan sin esperar al bot, tal y como se guardaron en la última actualización."""
+    """Panel visual para el móvil: medallas, barras de emojis y líneas cortas; el detalle va plegado. Los datos se consultan sin esperar al bot, tal y como se
+    guardaron en la última actualización."""
     now = now or datetime.now(timezone.utc)
     esc = notify.esc
     full = full or {}
@@ -269,38 +285,68 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
     sections: list[str] = [f"🎯 <b>MISIONES</b>\n<i>actualizado {DAYS[local.weekday()]} {local:%d/%m %H:%M}</i>"]
     names = {str(r.manager_id): r.manager_name for r in world.standing}
     me_id = next((str(r.manager_id) for r in world.standing if r.team_id == world.my_team_id), "")
-    top = max(world.standing, key=lambda r: r.points) if world.standing else None
     my_name = names.get(me_id, "")
+    ranking = sorted(world.standing, key=lambda r: -r.points)
+    top = ranking[0] if ranking else None
+    my = next((r for r in world.standing if r.team_id == world.my_team_id), None)
+    ser = wealth.series(store)
+    days = sorted(ser)
+
+    # --- clasificación (con el patrimonio plegado)
+    if ranking:
+        pods = [f"{MEDALS[i] if i < 3 else f'{i + 1}º'} {esc(short_name(r.manager_name, str(r.manager_id) == me_id))} <b>{r.points}</b>" for i, r in enumerate(ranking)]
+        rows = []
+        for r in ranking:
+            mid = str(r.manager_id)
+            cur = ser[days[-1]].get(mid) if days else None
+            d5 = (datetime.fromisoformat(days[-1]) - timedelta(days=5)).date().isoformat() if days else ""
+            prev = ser.get(d5, {}).get(mid)
+            who = esc(short_name(r.manager_name, mid == me_id))
+            rows.append(f"{who} — {r.points} pts" + (f" · {cur:.0f}M" + (f" ({cur - prev:+.0f} en 5 días)" if prev is not None else "") if cur is not None else ""))
+        if my and top and top.team_id != my.team_id:
+            rn = esc(short_name(top.manager_name))
+            rows += ["", f"<b>Brecha con {rn}</b>: {my.points - top.points:+d} pts"]
+            if days and me_id in ser[days[-1]] and str(top.manager_id) in ser[days[-1]]:
+                a, b = ser[days[-1]][me_id], ser[days[-1]][str(top.manager_id)]
+                rows.append(f"Patrimonio {a - b:+.0f}M · tienes el {a / b * 100:.0f}% del suyo")
+                hist = []
+                for off in (5, 10, 20):
+                    d0 = (datetime.fromisoformat(days[-1]) - timedelta(days=off)).date().isoformat()
+                    if d0 in ser and me_id in ser[d0] and str(top.manager_id) in ser[d0]:
+                        hist.append(f"hace {off} días {ser[d0][str(top.manager_id)] - ser[d0][me_id]:.0f}M")
+                if hist:
+                    rows.append("Diferencia de patrimonio: " + " · ".join(hist))
+        sections.append("🏆 <b>CLASIFICACIÓN</b>\n" + " · ".join(pods[:2]) + "\n" + " · ".join(pods[2:]) + "\n" + _fold(rows))
 
     # --- jornada en juego
     if jornada and jornada["rows"] is not None:
-        rivals_wk = " · ".join(f"{esc(short_name(n, n == my_name))} {p}" for n, p in jornada["managers"])
-        sections.append(f"⚽ <b>Jornada {jornada['week']}</b>{' · en juego' if jornada['live'] else ''}\n   llevas <b>{jornada['total']}</b> pts · {rivals_wk}\n"
-                        + _fold(jornada_lines(jornada, full)))
+        here = [r for r in jornada["rows"] if not r.get("gone")]
+        played = sum(1 for r in here if r["pts"] is not None or r.get("missed"))
+        others = " · ".join(f"{esc(short_name(n, n == my_name))} {p}" for n, p in jornada["managers"] if n != my_name)
+        sections.append(f"⚽ <b>JORNADA {jornada['week']}</b>{' · en juego' if jornada['live'] else ''}\n"
+                        f"{_bar(played, len(here))} {played} de {len(here)} han jugado\n"
+                        f"Llevas <b>{jornada['total']} pts</b>  <i>({others})</i>\n" + _fold(jornada_lines(jornada, full)))
 
     # --- próxima jornada y once
-    short = [f"{n} {('portero', 'defensa', 'centrocampista', 'delantero')[pos - 1]}" for pos, n in analysis.position_shortage(world.my_slots).items() if n > 0]
+    shortage = {pos: n for pos, n in analysis.position_shortage(world.my_slots).items() if n > 0}
     xi_ok = ap.complete_eleven(mine)
+    count = {pos: sum(1 for p in mine if p.position_id == pos) for pos in (1, 2, 3, 4)}
+    squad_line = " · ".join(f"{('🧤', '🛡️', '🧠', '⚽')[pos - 1]}{count[pos]}{'⚠️' if pos in shortage else ''}" for pos in (1, 2, 3, 4))
     nxt = world.outlook.next_first if world.outlook and world.outlook.next_first else None
-    lines = []
-    if hours_to_deadline is not None and hours_to_deadline > 0 and nxt:
-        lines.append(f"📋 <b>Próxima jornada</b>\n   empieza {_when(nxt)}")
-        if world.clause_freeze:
-            lines.append(f"   cláusulas congeladas desde {_when(world.clause_freeze[0])}")
-    else:
-        lines.append("📋 <b>Once</b>")
-    lines.append("   ✅ once legal" if xi_ok else "   ⚠️ <b>once incompleto</b>" + (f": falta {', '.join(short)}" if short else ""))
+    head = "📋 <b>PRÓXIMA JORNADA</b>" + (f" · {_when(nxt)}" if hours_to_deadline is not None and hours_to_deadline > 0 and nxt else "")
+    lines = [head, squad_line + ("   ✅ once legal" if xi_ok else "   ⚠️ <b>once incompleto</b>")]
+    if hours_to_deadline is not None and hours_to_deadline > 0 and world.clause_freeze:
+        lines.append(f"🧊 cláusulas congeladas desde {_when(world.clause_freeze[0])}")
     sections.append("\n".join(lines))
 
     # --- dinero y pujas
     bids = [b for b in store.unresolved_market_bids("buy") if not b.get("expires_at") or b["expires_at"] > time.time() - 600]
-    sections.append(f"💰 <b>Caja</b> {_m(world.my_cash)}\n   {len(world.my_slots)} jugadores · valen {_m(sum(p.market_value for p in mine))}")
+    money = f"💰 <b>CAJA {_m(world.my_cash)}</b>\n{len(world.my_slots)} jugadores · valen {_m(sum(p.market_value for p in mine))}"
     if bids:
         rows = [f"{esc(b['player_name'])} {_m(b['price'])}" + (f" · resuelve {datetime.fromtimestamp(b['expires_at']):%d/%m %H:%M}" if b.get("expires_at") else "")
                 for b in bids[:6]]
-        sections.append(f"🛒 <b>Pujas en curso</b> ({len(bids)})\n" + _fold(rows))
-    else:
-        sections.append("🛒 <b>Pujas en curso</b>\n   ninguna")
+        money += f"\n🛒 {len(bids)} puja(s) en curso\n" + _fold(rows)
+    sections.append(money)
 
     # --- proteger a los que se abren
     exposed, deliberate = [], []
@@ -317,11 +363,15 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
     if exposed:
         rows = [f"{nm(sl.player)} · " + ("ya abierta" if h == 0 else _when(now + timedelta(hours=h))) for h, sl in exposed[:5]]
         rows.append("Plan: vender con la oferta de las 20:53; si no llega, blindar (24 h) o subir la cláusula a ×1,20.")
-        sections.append(f"🛡️ <b>Se abren pronto</b> ({len(exposed)})\n" + _fold(rows))
+        short_rows = " · ".join(
+            f"{esc(clean_name(full.get(str(sl.player.id), sl.player.name)).split()[-1])} "
+            + ("ya" if not h else f"{DAYS[(now + timedelta(hours=h)).astimezone().weekday()]} {(now + timedelta(hours=h)).astimezone():%H:%M}")
+            for h, sl in exposed[:3])
+        sections.append(f"🛡️ <b>SE ABREN PRONTO</b> ({len(exposed)})\n{short_rows}\n" + _fold(rows))
     if deliberate:
         rows = [f"{nm(sl.player)} ×{_c(sl.clause / sl.player.market_value, 2)}" for sl in deliberate]
         rows.append("Si un rival la paga, ganamos dinero: ni se blinda ni se vende barato.")
-        sections.append("👑 <b>Cláusula alta a propósito</b>\n" + _fold(rows))
+        sections.append("👑 <b>CLÁUSULA ALTA A PROPÓSITO</b>\n" + _fold(rows))
 
     # --- bloqueo al líder
     leader = world.leader_team_id
@@ -331,42 +381,12 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
         free_from = max((sl.clause_locked_until for sl in locked), default=None)
         name = next((r.manager_name for r in world.standing if r.team_id == leader), "el líder")
         if not xi_ok:
-            state = "parado hasta completar nuestro once"
+            state = "⏸ en pausa: antes hay que completar nuestro once"
         elif free_from and world.clause_freeze and free_from > world.clause_freeze[0]:
-            state = f"no antes de la jornada siguiente\n   (su portero queda libre el {_when(free_from)})"
+            state = f"⏳ no antes de la jornada siguiente\n   (su portero queda libre el {_when(free_from)})"
         else:
-            state = f"posible en la próxima congelación\n   ({len(gks)} portero(s) suyo(s))"
-        sections.append(f"🎯 <b>Bloqueo a {esc(short_name(name))}</b>\n   {state}")
-
-    # --- brecha y rivales (datos guardados)
-    ser = wealth.series(store)
-    days = sorted(ser)
-    my = next((r for r in world.standing if r.team_id == world.my_team_id), None)
-    if my and top and top.team_id != my.team_id:
-        rn = esc(short_name(top.manager_name))
-        rows = [f"<b>Puntos</b>: tú {my.points} · {rn} {top.points}", f"Diferencia {my.points - top.points:+d}"]
-        if days and me_id in ser[days[-1]] and str(top.manager_id) in ser[days[-1]]:
-            a, b = ser[days[-1]][me_id], ser[days[-1]][str(top.manager_id)]
-            rows += ["", f"<b>Patrimonio</b>: tú {a:.0f}M · {rn} {b:.0f}M", f"Diferencia {a - b:+.0f}M · tienes el {a / b * 100:.0f}% del suyo"]
-            hist = []
-            for off in (5, 10, 20):
-                d0 = (datetime.fromisoformat(days[-1]) - timedelta(days=off)).date().isoformat()
-                if d0 in ser and me_id in ser[d0] and str(top.manager_id) in ser[d0]:
-                    hist.append(f"hace {off} días: {ser[d0][str(top.manager_id)] - ser[d0][me_id]:.0f}M")
-            if hist:
-                rows += ["", "<b>La diferencia de patrimonio era</b>", " · ".join(hist) + f" · hoy {b - a:.0f}M"]
-        sections.append(f"📈 <b>Brecha</b> {my.points - top.points:+d} pts\n" + _fold(rows))
-    if days and len(world.standing) > 1:
-        rows = []
-        for r in sorted(world.standing, key=lambda r: -r.points):
-            mid = str(r.manager_id)
-            cur = ser[days[-1]].get(mid)
-            d5 = (datetime.fromisoformat(days[-1]) - timedelta(days=5)).date().isoformat()
-            prev = ser.get(d5, {}).get(mid)
-            delta = f" ({cur - prev:+.0f})" if cur is not None and prev is not None else ""
-            rows.append(f"{esc(short_name(r.manager_name, mid == me_id))} — {r.points} pts · {cur:.0f}M{delta}" if cur is not None else
-                        f"{esc(short_name(r.manager_name, mid == me_id))} — {r.points} pts")
-        sections.append("🏆 <b>Todos</b> (puntos · patrimonio · cambio en 5 días)\n" + _fold(rows))
+            state = f"✅ posible en la próxima congelación ({len(gks)} portero(s) suyo(s))"
+        sections.append(f"🎯 <b>BLOQUEO A {esc(short_name(name).upper())}</b>\n{state}")
 
     # --- resultados de las operaciones
     res = results_section(review)
@@ -374,25 +394,28 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
         sections.append(res)
 
     # --- plantilla
-    sections.append(f"👥 <b>Plantilla</b> ({len(world.my_slots)})\n" + _fold(plantilla_lines(world, now, full)))
+    sections.append(f"👥 <b>PLANTILLA</b> ({len(world.my_slots)})\n" + _fold(plantilla_lines(world, now, full)))
 
     # --- novedades pendientes del resumen
     pend = inbox.pending(store)
     if pend:
-        sections.append(f"📬 <b>Pendientes del resumen</b> ({len(pend)})\n" + _fold([inbox._label(x["text"], 90) for x in pend[-8:]]))
+        sections.append(f"📬 <b>PENDIENTES DEL RESUMEN</b> ({len(pend)})\n" + _fold([inbox._label(x["text"], 90) for x in pend[-8:]]))
 
     # --- parón
     out = world.outlook
     if out and out.in_break and out.next_first:
-        sections.append(f"📅 <b>Parón</b> hasta el {out.next_first.astimezone():%d/%m}\n   inversión a crédito permitida (hasta el 20%)")
+        sections.append(f"📅 <b>PARÓN</b> hasta el {out.next_first.astimezone():%d/%m}\ninversión a crédito permitida (hasta el 20%)")
     elif out and out.next_break and (out.next_break[0] - now) <= timedelta(days=3):
         a, b = out.next_break
-        sections.append(f"📅 <b>Parón en {max(0, (a - now).days)} día(s)</b>\n   del {a.astimezone():%d/%m} al {b.astimezone():%d/%m}")
+        sections.append(f"📅 <b>PARÓN EN {max(0, (a - now).days)} DÍA(S)</b>\ndel {a.astimezone():%d/%m} al {b.astimezone():%d/%m}")
     sections.append("<i>Lo plegado se abre con un toque. Los botones los atiendo en cuanto estoy escuchando (a veces hasta 15 min).</i>")
     text = "\n\n".join(sections)
-    if len(text) > MAX_CHARS:      # Telegram corta a 4096: se quitan primero los pendientes y la plantilla plegada
-        text = "\n\n".join(s for s in sections if not s.startswith(("📬", "👥", "📊")))
-    return text[:4090]
+    for drop in (("📊",), ("📬",), ("👥",)):      # Telegram admite 4096 caracteres de texto (sin contar las etiquetas): si no cabe, se quita primero lo menos importante
+        if _visible_len(text) <= MAX_CHARS:
+            break
+        sections = [s for s in sections if not s.startswith(drop)]
+        text = "\n\n".join(sections)
+    return text
 
 
 def sync(store: Store, settings, text: str, force: bool = False) -> bool:

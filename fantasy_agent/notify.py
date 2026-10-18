@@ -76,7 +76,7 @@ def edit_message(
     if not telegram_enabled(settings):
         return False
     url = f"https://api.telegram.org/bot{settings.telegram_token}/editMessageText"
-    body = {"chat_id": settings.telegram_chat_id, "message_id": message_id, "text": text[:TELEGRAM_CHUNK]}
+    body = {"chat_id": settings.telegram_chat_id, "message_id": message_id, "text": text}      # el llamador cuida de no pasar de 4096 caracteres de texto
     if html:
         body["parse_mode"] = "HTML"
     if buttons:
