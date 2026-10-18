@@ -113,9 +113,25 @@ def reset_params() -> None:
     PARAMS.update(DEFAULTS)
 
 
-def xpts(p: Player, form: dict[str, float] | None = None) -> float:
-    """Puntos esperados por jornada: media de la temporada mezclada con la racha reciente.
-    Un jugador sin puntos (media 0) casi no juega: vale muy poco, no una media inventada."""
+START_PROB_FN = None          # pid -> probabilidad de ser titular (0-100) según la alineación probable de futbolfantasy | None
+START_BASE_PROB = 80          # un titular normal: las medias ya incluyen su rotación habitual, solo cuenta lo que se aparta de ahí
+START_FACTOR_MIN, START_FACTOR_MAX = 0.2, 1.15
+
+
+def set_start_probs(fn) -> None:
+    global START_PROB_FN
+    START_PROB_FN = fn
+
+
+def start_factor(prob_pct: float) -> float:
+    """Cuánto cambia la media de un jugador si hoy se le da `prob_pct`% de ser titular (80% = lo normal). Provisional: a revisar el 20/10."""
+    return round(max(START_FACTOR_MIN, min(START_FACTOR_MAX, prob_pct / START_BASE_PROB)), 3)
+
+
+def xpts(p: Player, form: dict[str, float] | None = None, *, start: bool = True) -> float:
+    """Puntos esperados por jornada: media de la temporada mezclada con la racha reciente, y la alineación probable de la próxima
+    jornada si se conoce (`start=False` para quien ya la multiplica aparte, como la alineación). Un jugador sin puntos (media 0)
+    casi no juega: vale muy poco, no una media inventada."""
     status = p.status.lower()
     if status in INJURED:
         return 0.0
@@ -125,6 +141,10 @@ def xpts(p: Player, form: dict[str, float] | None = None) -> float:
         base = 0.6 * base + 0.4 * recent
     if status in ("doubtful", "duda"):
         base *= 0.55
+    if start and START_PROB_FN is not None:
+        prob = START_PROB_FN(p.id)
+        if prob is not None:
+            base *= start_factor(prob)
     return round(base, 2)
 
 

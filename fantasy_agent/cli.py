@@ -7,10 +7,12 @@ import os
 import random
 import sys
 import time
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from . import analysis, auth, autopilot as ap, cohorts, confirm, digest, export, learn, lineup, models, notify, plan as plan_mod, service, siege
 from .api import FantasyAPI
+from . import futbolfantasy
 from .attendance import estimate_start_probability, estimate_titularidad
 from .config import load_settings
 from .storage import Store
@@ -1047,6 +1049,37 @@ def _squad_changes(store: Store, world) -> list[str]:
     return events
 
 
+def _ff_probs(store: Store, api: FantasyAPI, world) -> dict[str, dict]:
+    """Probabilidad de ser titular (alineación probable de futbolfantasy) de todos los jugadores que nos importan: la plantilla, las de los rivales
+    y el mercado. Se guarda en `kv.ff_probs` y se refresca cada 3 h (cada 45 min en las 30 h previas a la jornada, que es cuando cambia). Si la web
+    falla se sigue con lo guardado y se reintenta en 10 min."""
+    hours = _hours_to_deadline(world)
+    ttl = 45 * 60 if hours is not None and 0 < hours <= 30 else 3 * 3600
+    cached = json.loads(store.get("ff_probs") or "{}")
+    if cached and time.time() - cached.get("at", 0) < ttl:
+        return cached.get("p", {})
+    players = {sl.player.id: sl.player for sl in world.my_slots}
+    for sl in world.rival_slots:
+        players.setdefault(sl.player.id, sl.player)
+    for it in world.market:
+        players.setdefault(it.player.id, it.player)
+    try:
+        fresh = futbolfantasy.fetch_probable_lineups([p for p in players.values() if p.position_id in (1, 2, 3, 4)])
+    except Exception:
+        fresh = {}
+    if fresh:
+        store.set("ff_probs", json.dumps({"at": time.time(), "p": fresh}))
+        return fresh
+    store.set("ff_probs", json.dumps({"at": time.time() - ttl + 600, "p": cached.get("p", {})}))
+    return cached.get("p", {})
+
+
+def _setup_start_probs(store: Store, api: FantasyAPI, world) -> None:
+    """Instala en el piloto la alineación probable: `autopilot.xpts` la tiene en cuenta al fichar, vender y valorar (80% = lo normal)."""
+    probs = _ff_probs(store, api, world)
+    ap.set_start_probs(lambda pid: (probs.get(pid) or {}).get("start_probability"))
+
+
 def _apply_lineup(store: Store, api: FantasyAPI, world) -> str | None:
     """Guarda el mejor once (gratis y reversible hasta que empieza la jornada). La forma del
     cuerpo no está documentada: prueba las variantes de `autopilot.lineup_payload`, vuelve a
@@ -1061,14 +1094,21 @@ def _apply_lineup(store: Store, api: FantasyAPI, world) -> str | None:
     slots = [sl for sl in world.my_slots if sl.player.position_id in ap.FIELD_POSITIONS and sl.player_team_id]
     if not slots:
         return None
-    probs = estimate_start_probability(api, [sl.player for sl in slots])
+    ff = _ff_probs(store, api, world)       # alineación probable de futbolfantasy (en caché); lo que falte, por el historial de jornadas
+    probs = {sl.player.id: ff[sl.player.id] for sl in slots if sl.player.id in ff}
+    missing = [sl.player for sl in slots if sl.player.id not in probs]
+    if missing:
+        probs.update(estimate_start_probability(api, missing))
     cands = []
     for sl in slots:
-        prob = float(probs.get(sl.player.id, {}).get("start_probability", 70)) / 100
-        fx = world.fixtures.get(sl.player.team_id)
+        player = sl.player
+        if probs.get(player.id, {}).get("status") == "lesionado":
+            player = replace(player, status="injured")
+        prob = float(probs.get(player.id, {}).get("start_probability", 70)) / 100
+        fx = world.fixtures.get(player.team_id)
         factor = ap.fixture_factor(fx.home if fx else None, world.laliga_rank.get(fx.rival_id) if fx else None,
-                                   len(world.laliga_rank) or 20, sl.player.position_id)
-        cands.append(lineup.Candidate(sl.player, prob, round(ap.xpts(sl.player, world.recent_form) * prob * factor, 2)))
+                                   len(world.laliga_rank) or 20, player.position_id)
+        cands.append(lineup.Candidate(player, prob, round(ap.xpts(player, world.recent_form, start=False) * prob * factor, 2)))
     formation, eleven, total = lineup.best_eleven(cands)
     if not eleven or not formation:
         return None
@@ -1679,6 +1719,7 @@ def _watch_once(store: Store, s) -> str:
 
     world = _world(api, s, trends=True)  # sin datos no se puede hacer nada: si falla, falla la pasada
     st("cohortes", _setup_match_context, store, api, world)
+    st("alineación probable", _setup_start_probs, store, api, world)
     st("historial", _record_status_history, store, world)
     team_plan = st("plan", _sync_plan, store, s, world, default=plan_mod.Plan())
     st("patrimonio", _record_wealth, store, world)

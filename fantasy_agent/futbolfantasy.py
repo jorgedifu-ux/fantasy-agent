@@ -9,6 +9,7 @@ silencio (o con un aviso) y el llamador debe rellenar los huecos con `attendance
 from __future__ import annotations
 
 import re
+import time
 import unicodedata
 
 from .http import request_text
@@ -39,14 +40,47 @@ def _team_alias(team_name: str) -> str | None:
     return None
 
 
-def _find_match_urls(index_html: str, wanted_aliases: set[str]) -> dict[str, str]:
-    """alias de equipo -> URL del partido, para los equipos que nos interesan."""
+_MATCH_BLOCK = re.compile(
+    r'<a href="(https://www\.futbolfantasy\.com/partidos/[^"]+)"[^>]*data-tooltip="([^"]+)"[^>]*>.*?'
+    r'<div class="fecha">\s*(?:\w+\s+)?(\d{1,2})/(\d{1,2})\s*<br>\s*(\d{1,2}):(\d{2})h', re.S)
+
+
+def _madrid_now():
+    from datetime import datetime, timezone, timedelta
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("Europe/Madrid"))
+    except Exception:
+        return datetime.now(timezone(timedelta(hours=2)))
+
+
+def _find_match_urls(index_html: str, wanted: set[str], now=None) -> dict[str, str]:
+    """alias de equipo -> URL de su PRÓXIMO partido (el primero que aún no se ha jugado), para los equipos que nos interesan. La web lista
+    varias jornadas a la vez (18/10/2026: la J10 antes que la J9, y al Real Madrid le salía el Clásico de la semana siguiente en vez de
+    el Real Madrid–Sevilla de esa noche), así que se ordena por la fecha de cada partido."""
+    from datetime import datetime, timedelta
+    now = now or _madrid_now()
+    blocks = []
+    for url, tooltip, day, month, hour, minute in _MATCH_BLOCK.findall(index_html):
+        year = now.year
+        when = datetime(year, int(month), int(day), int(hour), int(minute), tzinfo=now.tzinfo)
+        if when < now - timedelta(days=200):
+            when = when.replace(year=year + 1)
+        if when >= now - timedelta(hours=3):          # los ya jugados no sirven
+            blocks.append((when, url, tooltip))
     out: dict[str, str] = {}
+    if blocks:
+        for _, url, tooltip in sorted(blocks):
+            for side in re.split(r"\s*-\s*", tooltip):
+                alias = _team_alias(side)
+                if alias in wanted and alias not in out:
+                    out[alias] = url
+        return out
     for m in re.finditer(r'href="(https://www\.futbolfantasy\.com/partidos/[^"]+)"[^>]*data-tooltip="([^"]+)"', index_html):
         url, tooltip = m.group(1), m.group(2)
         for side in re.split(r"\s*-\s*", tooltip):
             alias = _team_alias(side)
-            if alias in wanted_aliases and alias not in out:
+            if alias in wanted and alias not in out:
                 out[alias] = url
     return out
 
@@ -127,6 +161,7 @@ def fetch_probable_lineups(players: list[Player]) -> dict[str, dict]:
         if not url or url in seen_urls:
             continue
         seen_urls.add(url)
+        time.sleep(0.5)   # es una web de un tercero: sin prisas
         try:
             match_html = request_text(url)
         except Exception:
