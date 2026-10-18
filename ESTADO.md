@@ -22,7 +22,8 @@ quieres cambiar la estrategia.
 - **Telegram** (rediseñado el 18/10/2026): bot "Mi Fantasy Bot" (`@Vk_fantasia_bot`).
   - **Urgente, al momento** (🔴): lo que impide jugar la jornada (sin once, saldo negativo), que te clausulen a un jugador, fallos al guardar la alineación.
   - **Resumen agrupado** a las 9, 14, 19 y 22 h (solo si hay novedades) o con `/resumen`; el resto de avisos se acumula en la bandeja (`kv.inbox`), sin repetidos.
-  - **Panel de misiones**: UN mensaje fijado que se edita en el sitio (como mucho cada 30 min y solo si cambia): jornada y once, caja, pujas en curso, jugadores que se abren, bloqueo al líder, brecha, parón.
+  - **Panel de misiones**: UN mensaje fijado que se edita en el sitio (como mucho cada 10 min si cambia algo, y al menos cada 30 min: si lo borras vuelve solo; `/start` también lo recrea). Lleva los datos DENTRO, plegados (se abren con un toque, sin depender del bot, tal como se guardaron
+    en la última pasada): jornada en juego con puntos por jugador, próxima jornada y once, caja, pujas, jugadores que se abren, bloqueo, brecha, todos los mánagers (puntos, patrimonio y cambio en 5 días), plantilla y novedades pendientes del resumen. Botones: gráficas, jornada, resumen, actualizar.
   - **Consultas** (se contestan en la pasada siguiente, ≤15 min): `/misiones`, `/resumen`, `/brecha [aleix|pep]` (texto + 3 gráficas de QuickChart.io), `/jornada`, `/plantilla`, `/porque <jugador>` (lee `kv.decisions`), `/ayuda`. Solo hace caso a tu chat.
   - **Respuestas casi al instante**: tras cada pasada el mismo job se queda escuchando Telegram (4 min, o 11 si le has hablado en los últimos 45 min; nunca más de 13 min desde que empezó) y contesta en cuanto escribes (long-poll). Es el mismo job, no uno aparte, porque dos jobs con la misma
     caché de estado se pisarían al guardarla. Si escribes en frío puede tardar hasta 15 min en la primera respuesta.

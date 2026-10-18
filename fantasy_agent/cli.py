@@ -408,8 +408,7 @@ def _deliver(store: Store, s, st, events: list[str]) -> None:
 
 
 def _sync_panel(store: Store, s, api: FantasyAPI, world) -> None:
-    text = panel.render(world, store, hours_to_deadline=_hours_to_deadline(world), week=api.current_week())
-    panel.sync(store, s, text)
+    commands.refresh_panel(s, store, api, world)
 
 
 OUTBOX_MAX_CHARS = 12000
