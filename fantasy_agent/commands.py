@@ -91,21 +91,22 @@ def brecha(settings, store: Store, api, world, arg: str = "") -> None:
     """Brecha con un rival en texto visual (barras de emojis y una línea de evolución): se lee de un vistazo y no ocupa como una imagen."""
     names = _managers(world)
     me, rival = _my_manager_id(world), _pick_rival(world, arg)
-    rival_name = panel.short_name(names.get(rival, "Rival"))
+    rival_name = panel.full_manager(names.get(rival, "Rival"))
     my_row = next(r for r in world.standing if str(r.manager_id) == me)
     ri_row = next(r for r in world.standing if str(r.manager_id) == rival)
     ser = wealth.series(store)
     days = sorted(ser)
     pb = _bars([my_row.points, ri_row.points], ["🟦", "🟧"])
     rn = notify.esc(rival_name)
+    my_label = notify.esc(panel.full_manager(names.get(me, "Tú"), True))
     lines = [f"📈 <b>Brecha con {rn}</b>", "",
              "⚽ <b>Puntos</b>",
-             f"<blockquote>{pb[0]} Tú · {my_row.points}\n{pb[1]} {rn} · {ri_row.points}\nDiferencia: <b>{my_row.points - ri_row.points:+d}</b></blockquote>"]
+             f"<blockquote>{pb[0]} {my_label} · {my_row.points}\n{pb[1]} {rn} · {ri_row.points}\nDiferencia: <b>{my_row.points - ri_row.points:+d}</b></blockquote>"]
     if days:
         a, b = ser[days[-1]].get(me, 0), ser[days[-1]].get(rival, 0)
         wb = _bars([a, b], ["🟦", "🟧"])
         lines += ["", "💰 <b>Patrimonio</b>",
-                  f"<blockquote>{wb[0]} Tú · {a:.0f}M\n{wb[1]} {rn} · {b:.0f}M\nDiferencia: <b>{a - b:+.0f}M</b> · tienes el {a / b * 100:.0f}% del suyo</blockquote>"]
+                  f"<blockquote>{wb[0]} {my_label} · {a:.0f}M\n{wb[1]} {rn} · {b:.0f}M\nDiferencia: <b>{a - b:+.0f}M</b> · tienes el {a / b * 100:.0f}% del suyo</blockquote>"]
         hist = gap_lines(ser, me, rival)
         if hist:
             lines += ["", "🕓 <b>La diferencia de patrimonio, antes y ahora</b>", "<blockquote expandable>" + "\n".join(hist) + "</blockquote>"]
@@ -131,7 +132,7 @@ def grafica(settings, store: Store, api, world, arg: str = "") -> None:
     """Las dos imágenes (patrimonio y puntos por jornada), solo si las pides: ocupan mucho."""
     names = _managers(world)
     me, rival = _my_manager_id(world), _pick_rival(world, arg)
-    rival_name = panel.short_name(names.get(rival, "Rival"))
+    rival_name = panel.full_manager(names.get(rival, "Rival"))
     ser = wealth.series(store)
     if ser:
         days = sorted(ser)
@@ -213,7 +214,7 @@ def ayer(settings, store: Store, api, world) -> None:
 
 
 def partidos(settings, store: Store, api, world) -> None:
-    d = matches.collect(world, api)
+    d = matches.collect(world, api, store=store)
     if not d:
         notify.send_all(settings, "No he podido leer los partidos de la jornada ahora mismo.")
         return

@@ -42,9 +42,9 @@ class Reval(unittest.TestCase):
 
     def test_section_orders_from_most_to_least_and_uses_signs_with_commas(self):
         text = panel.reval_section(reval.compute(world(), FakeAPI()))
-        self.assertLess(text.index("Tú"), text.index("Josinho"))
-        self.assertIn("🥇 Tú · <b>+1,0M</b>", text)
-        self.assertIn("🥈 Josinho · <b>−0,4M</b> (−2,0%)", text)
+        self.assertLess(text.index("The Iberian One (tú)"), text.index("JosinhoPermanbucano"))
+        self.assertIn("🥇 The Iberian One (tú) · <b>+1,0M</b>", text)
+        self.assertIn("🥈 JosinhoPermanbucano · <b>−0,4M</b> (−2,0%)", text)
 
     def test_refresh_only_after_0020_and_once_per_day(self):
         import tempfile

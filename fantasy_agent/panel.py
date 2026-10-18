@@ -9,12 +9,20 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import analysis, autopilot as ap, inbox, models, notify, reval, service, wealth
+from . import analysis, autopilot as ap, inbox, models, notify, pts as pts_mod, reval, service, wealth
 from .storage import Store
 
 PANEL_ID_KEY = "panel_message_id"
 REFRESH_S = 10 * 60
 DAYS = ("lun", "mar", "mié", "jue", "vie", "sáb", "dom")
+
+
+def full_manager(name: str, me: bool = False) -> str:
+    """Nombre completo del mánager tal y como está en la liga («ALEIX VIDEL» → «Aleix Videl»); el tuyo, con «(tú)»."""
+    n = name.strip()
+    if n.isupper():
+        n = n.title()
+    return f"{n} (tú)" if me else n
 
 
 def short_name(name: str, me: bool = False) -> str:
@@ -32,6 +40,11 @@ def short_name(name: str, me: bool = False) -> str:
 def _when(dt: datetime) -> str:
     d = dt.astimezone()
     return f"{DAYS[d.weekday()]} {d:%d %H:%M}"
+
+
+def _p(n) -> str:
+    """«1 pt» / «10 pts»."""
+    return f"{n} pt" if n in (1, -1) else f"{n} pts"
 
 
 def _c(x: float, nd: int = 1) -> str:
@@ -72,7 +85,7 @@ def _departures(world, api, opening) -> dict[str, tuple[str, str]]:
         rows = service._all_activity(api, world.league_id, max_pages=2)
     except Exception:
         return {}
-    names = {str(r.manager_id): short_name(r.manager_name) for r in world.standing}
+    names = {str(r.manager_id): full_manager(r.manager_name) for r in world.standing}
     me = next((str(r.manager_id) for r in world.standing if r.team_id == world.my_team_id), "")
     out: dict[str, tuple[str, str]] = {}
     for a in rows:
@@ -116,7 +129,10 @@ def jornada_data(world, api, store: Store | None = None) -> dict | None:
 
     def points(pid: str):
         r = raw.get(pid, {})
-        return next((x.get("points") for x in (r.get("weekPoints") or []) if x.get("weekNumber") == cur), None)
+        from_list = next((x.get("points") for x in (r.get("weekPoints") or []) if x.get("weekNumber") == cur), None)
+        info = sched.get(str(r.get("teamId")))
+        started = not info or not info[0] or info[0] <= now            # sin calendario, se pregunta igualmente
+        return pts_mod.week_points(store, api, pid, cur, list_value=from_list, started=started)
 
     def match(pid: str, pts):
         """(hora, rival) del partido de la jornada si aún no se ha jugado; ('jugado', rival) si ya pasó sin puntos."""
@@ -173,7 +189,7 @@ def jornada_data(world, api, store: Store | None = None) -> dict | None:
     total = int(mine["points"]) if mine else sum(r["pts"] or 0 for r in rows)
     accounted = sum(r["pts"] or 0 for r in rows if r["gone"] is None or r["pts"] is not None)
     return {"week": cur, "live": bool(wk.get("isLive")), "total": total, "rows": rows, "bench": bench, "formation": form,
-            "missing": {k: want[k] - here[k] for k in want if want[k] - here[k] > 0}, "sold": max(0, total - accounted),
+            "missing": {k: want[k] - here[k] for k in want if want[k] - here[k] > 0}, "sold": max(0, total - accounted), "over": max(0, accounted - total),
             "managers": sorted(((x["team"]["manager"]["managerName"], int(x["points"])) for x in week_rows), key=lambda z: -z[1])}
 
 
@@ -190,7 +206,7 @@ def jornada_blocks(d: dict, full: dict[str, str] | None = None) -> dict[str, lis
     for pos in ("POR", "DEF", "CEN", "DEL"):
         for r in [r for r in here if r["pos"] == pos]:
             if r["pts"] is not None:
-                state = f"✅ <b>{r['pts']} pts</b>"
+                state = f"✅ <b>{_p(r['pts'])}</b>"
             elif r.get("missed"):
                 state = "➖ no jugó"
             else:
@@ -205,12 +221,14 @@ def jornada_blocks(d: dict, full: dict[str, str] | None = None) -> dict[str, lis
         fuera.append(f"{POS_ICON.get(b['pos'], '•')} {notify.esc(clean_name(full.get(str(b['pid']), b['name'])))} — media {_c(b['avg'] or 0)}{hurt}")
     ya_no = []
     for r in [r for r in d["rows"] if r.get("gone")]:
-        res = f"<b>{r['pts']} pts</b>" if r["pts"] is not None else "sin jugar"
+        res = f"<b>{_p(r['pts'])}</b>" if r["pts"] is not None else "sin jugar"
         ya_no.append(f"{POS_ICON.get(r['pos'], '•')} {nm(r)} — {res} · {notify.esc(r['gone'])}")
     if ya_no:
         ya_no.append("<i>Lo que puntuó antes de irse cuenta.</i>")
     if d["sold"] > 0:
         ya_no.append(f"<i>+ {d['sold']} pts más de jugadores que ya no están en tu once.</i>")
+    elif d.get("over", 0) > 0:
+        ya_no.append(f"<i>La suma de estos puntos pasa del total de la jornada en {d['over']}: alguno de los que se fueron no estaba en tu once.</i>")
     return {"once": once, "fuera": fuera, "ya_no": ya_no}
 
 
@@ -273,14 +291,14 @@ def reval_section(data: dict | None, detail: bool = False) -> str | None:
     ms = sorted(data["managers"].values(), key=lambda m: -m["delta"])
     lines = []
     for i, m in enumerate(ms):
-        who = notify.esc(short_name(m["name"], m["me"]))
+        who = notify.esc(full_manager(m["name"], m["me"]))
         pct = ("+" if m["pct"] >= 0 else "−") + f"{abs(m['pct']):.1f}".replace(".", ",") + "%"
         lines.append(f"{MEDALS[i] if i < 3 else f'{i + 1}º'} {who} · <b>{_sg(m['delta'])}</b> ({pct})")
     day = data.get("day", "")
     head = f"📈 <b>AYER</b> · lo que subió cada plantilla"
     rows = []
     for m in ms:
-        who = notify.esc(short_name(m["name"], m["me"]))
+        who = notify.esc(full_manager(m["name"], m["me"]))
         if not (detail or m["me"]):
             continue
         up = " · ".join(f"{notify.esc(clean_name(n))} {_sg(v)}" for n, v in m["up"])
@@ -326,8 +344,10 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
     days = sorted(ser)
 
     # --- clasificación: cada uno en su línea; lo plegado es OTRA información (el patrimonio y la brecha)
+    wk_pts = {n: p for n, p in (jornada or {}).get("managers", [])}
+    jr = lambda r: f"  <i>(+{wk_pts[r.manager_name]} en la jornada)</i>" if r.manager_name in wk_pts and jornada and jornada.get("live") else ""   # noqa: E731
     if ranking:
-        pods = [f"{MEDALS[i] if i < 3 else f'{i + 1}º'} {esc(short_name(r.manager_name, str(r.manager_id) == me_id))} · <b>{r.points} pts</b>" for i, r in enumerate(ranking)]
+        pods = [f"{MEDALS[i] if i < 3 else f'{i + 1}º'} {esc(full_manager(r.manager_name, str(r.manager_id) == me_id))} · <b>{r.points} pts</b>{jr(r)}" for i, r in enumerate(ranking)]
         rows = []
         for r in ranking:
             mid = str(r.manager_id)
@@ -336,9 +356,9 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
                 continue
             d5 = (datetime.fromisoformat(days[-1]) - timedelta(days=5)).date().isoformat()
             prev = ser.get(d5, {}).get(mid)
-            rows.append(f"💰 {esc(short_name(r.manager_name, mid == me_id))} — {cur:.0f}M" + (f" ({cur - prev:+.0f} en 5 días)" if prev is not None else ""))
+            rows.append(f"💰 {esc(full_manager(r.manager_name, mid == me_id))} — {cur:.0f}M" + (f" ({cur - prev:+.0f} en 5 días)" if prev is not None else ""))
         if my and top and top.team_id != my.team_id:
-            rn = esc(short_name(top.manager_name))
+            rn = esc(full_manager(top.manager_name))
             rows += ["", f"📈 <b>Brecha con {rn}</b>", f"Puntos {my.points - top.points:+d}"]
             if days and me_id in ser[days[-1]] and str(top.manager_id) in ser[days[-1]]:
                 a, b = ser[days[-1]][me_id], ser[days[-1]][str(top.manager_id)]
@@ -361,13 +381,12 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
     if jornada and jornada["rows"] is not None:
         here = [r for r in jornada["rows"] if not r.get("gone")]
         played = sum(1 for r in here if r["pts"] is not None or r.get("missed"))
-        others = " · ".join(f"{esc(short_name(n, n == my_name))} {p}" for n, p in jornada["managers"] if n != my_name)
         blocks = jornada_blocks(jornada, full)
         form = "-".join(str(x) for x in jornada.get("formation") or [])
         miss = sum((jornada.get("missing") or {}).values())
         sec = (f"⚽ <b>JORNADA {jornada['week']}</b>{' · en juego' if jornada['live'] else ''}\n"
                f"{_bar(played, len(here))} {played} de {len(here)} han jugado\n"
-               f"Llevas <b>{jornada['total']} pts</b>  <i>({others})</i>")
+               f"Llevas <b>{jornada['total']} pts</b>")
         if blocks["once"]:
             sec += f"\n\n🧩 <b>Tu once{f' ({form})' if form else ''}</b> · {len(here)} de {len(here) + miss}\n" + _fold(blocks["once"])
         if blocks["fuera"]:
@@ -430,7 +449,7 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
             state = f"⏳ no antes de la jornada siguiente\n   (su portero queda libre el {_when(free_from)})"
         else:
             state = f"✅ posible en la próxima congelación ({len(gks)} portero(s) suyo(s))"
-        sections.append(f"🎯 <b>BLOQUEO A {esc(short_name(name).upper())}</b>\n{state}")
+        sections.append(f"🎯 <b>BLOQUEO A</b> {esc(full_manager(name))}\n{state}")
 
     # --- resultados de las operaciones
     res = results_section(review)
