@@ -380,9 +380,31 @@ def _step(store: Store, errors: list[str], name: str, fn, *args, default=None, *
     except Exception as exc:
         store.log_error(name, traceback.format_exc())
         from .storage import redact
-        errors.append(redact(f"{name}: {exc}"))
-        print(redact(f"[{name}] error: {exc}"))
+        # Un corte pasajero de red (p. ej. «the read operation timed out» de Telegram, que sale casi todas las noches sobre las
+        # 03:15) se registra pero no avisa: no es un fallo del bot y el resto de la pasada se ha hecho.
+        if not _is_transient(exc):
+            errors.append(redact(f"{name}: {exc}"))
+        print(redact(f"[{name}] {'corte pasajero' if _is_transient(exc) else 'error'}: {exc}"))
         return default
+
+
+OUTBOX_MAX_CHARS = 12000
+
+
+def _send_or_queue(store: Store, s, text: str) -> None:
+    """Manda el parte de la pasada. Si Telegram falla (cortes pasajeros) NO se pierde: se guarda en `kv.outbox` y sale en la
+    siguiente pasada junto con lo nuevo."""
+    queued = store.get("outbox") or ""
+    full = (("⏪ <i>Reenvío: Telegram falló antes</i>\n\n" + queued + "\n\n" + text) if queued else text).strip()
+    if not full:
+        return
+    try:
+        notify.send_all(s, full, html=True)
+    except Exception:
+        store.set("outbox", (queued + "\n\n" + text).strip()[-OUTBOX_MAX_CHARS:])
+        raise
+    if queued:
+        store.set("outbox", "")
 
 
 def _is_transient(exc: BaseException) -> bool:
@@ -1729,8 +1751,8 @@ def _watch_once(store: Store, s) -> str:
     events += st("publicar datos", _publish_state, store, s, default=[])
     if errs and store.alert_is_new("step_errors:" + ",".join(sorted(e.split(":")[0] for e in errs)), ttl_hours=6):
         events.append("⚠️ Pasos con error en esta pasada (el resto se hizo): " + notify.esc("; ".join(errs))[:600])
-    if events:
-        st("enviar", notify.send_all, s, "🤖 <b>PILOTO AUTOMÁTICO</b>\n\n" + "\n\n".join(events), html=True)
+    if events or store.get("outbox"):
+        st("enviar", _send_or_queue, store, s, ("🤖 <b>PILOTO AUTOMÁTICO</b>\n\n" + "\n\n".join(events)) if events else "")
     if st("parte", digest.due, store, s, default=False):
         st("enviar parte", notify.send_all, s, service.situational_briefing(world, s))
         digest.mark_sent(store)
