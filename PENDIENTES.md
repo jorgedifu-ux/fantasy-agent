@@ -10,6 +10,12 @@
 - **Mar 27 20:53** queda libre Gulácsi, portero de Josinho → primera ventana real del bloqueo (J11).
 - **8–22/11** parón: crédito hasta el 20% solo para pujas.
 
+## 0) Hecho el 19/10 16:50 (manual, con OK del usuario)
+- **Diomande fichado por cláusula (80,14M, a Josinho)**: su blindaje de 24 h había expirado a las 16:16. Caja 3,7M, plantilla 13. Protegido 14 días.
+- Las ventas de la noche (Fofana, Herrero, Luismi, Abel, Salinas ≈72M) salieron de reglas independientes, no de ahorrar para él; el planificador lo daba por «inalcanzable» (presupuesto 95% de caja y tope de inversión 25%).
+- Abel: la pérdida se produjo al pagar su cláusula (×1,27) el domingo, no al venderlo; con Luismi y Nsongo, ≈2,9M.
+- **Pendiente derivado**: reconstruir la J10 sin caja (defensas: Hancko + Salinas + Rockson; vender si hace falta, p. ej. Zabiri 37M) y programar el modo «estrella» (sección B) para que el bot lo haga solo.
+
 ## A) Para la revisión del 20/10
 1. **Los que se abren** (Terrats vendido a 20,9M; faltan Fofana, Zabiri, Deossa, Ilaix): ¿ventas con la oferta diaria?, ¿cláusula a ×1,20 y su coste?, ¿alguien la pagó? Pendiente: comprobar que la API deja subir tanto (solo probado +10%).
 2. **Bitácora** (`kv.decisions`): que explique cada venta; comprobar «recambio previsto» y la forma con la jornada en curso (Deossa debe bajar al confirmarse sus puntos).
