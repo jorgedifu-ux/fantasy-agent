@@ -433,7 +433,7 @@ def _deliver(store: Store, s, st, events: list[str]) -> None:
             from . import tidy
             before = len(notify.SENT_IDS)
             st("enviar resumen", _send_or_queue, store, s, text)
-            tidy.track(store, notify.SENT_IDS[before:], keep=True)
+            tidy.track(store, notify.SENT_IDS[before:])       # el resumen sí se borra con «actualizar y limpiar» (queda en /resumen, 24 h)
 
 
 def _sync_panel(store: Store, s, api: FantasyAPI, world) -> None:

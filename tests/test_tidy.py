@@ -116,7 +116,7 @@ class Purge(Base):
 
 
 class PurgeKeepsUnread(Base):
-    def test_purge_leaves_urgent_and_digest_messages_that_were_not_read(self):
+    def test_purge_leaves_urgent_messages_that_were_not_read(self):
         tidy.track(self.store, [2], now=time.time())
         tidy.track(self.store, [3], now=time.time(), keep=True)
         gone = []

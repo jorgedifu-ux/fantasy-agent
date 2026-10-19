@@ -20,7 +20,7 @@ def _load(store: Store) -> list[dict]:
 
 
 def track(store: Store, ids: list[int], now: float | None = None, ttl_s: float = TTL_S, keep: bool = False) -> None:
-    """Apunta mensajes para borrarlos dentro de `ttl_s` segundos. `keep=True`: información sin leer (avisos urgentes, resumen) que «actualizar y limpiar»
+    """Apunta mensajes para borrarlos dentro de `ttl_s` segundos. `keep=True`: información sin leer (avisos urgentes) que «actualizar y limpiar»
     no borra; se borra por plazo."""
     if not ids:
         return
@@ -65,7 +65,7 @@ RANGE_BACK = 150          # cuántos ids hacia atrás se barren al limpiar (Tele
 
 
 def purge(store: Store, settings, delete=None, latest: int | None = None, pinned: int | None = None) -> int:
-    """«Actualizar y limpiar»: borra YA todo menos el panel fijado y lo sin leer (urgente/resumen). Primero lo que el bot tiene apuntado y luego un
+    """«Actualizar y limpiar»: borra YA todo menos el panel fijado y los avisos urgentes sin leer. Primero lo que el bot tiene apuntado y luego un
     barrido por los últimos `RANGE_BACK` ids del chat: así también se va lo que no estaba apuntado (mensajes de antes, o mandados desde otro sitio)
     y tus propias órdenes. `latest` (último id del chat) se averigua mandando un mensaje de prueba, que también se borra."""
     delete = delete or (lambda mid: notify.delete_message(settings, mid))
