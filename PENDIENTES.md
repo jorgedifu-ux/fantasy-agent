@@ -1,6 +1,6 @@
 # Pendientes — solo lo abierto
 
-> Actualizado el **18/10/2026**. Lo hecho y verificado está en `ESTADO.md`; la evidencia y las ideas antiguas, en `ARCHIVO_PENDIENTES.md`.
+> Actualizado el **22/10/2026**. Lo hecho y verificado está en `ESTADO.md`; la evidencia y las ideas antiguas, en `ARCHIVO_PENDIENTES.md`.
 > Orden de prioridades del bot (cerrado el 18/10): 1) once legal siempre · 2) no regalar un titular en subida a un rival · 3) puntos · 4) dinero.
 
 ## Calendario
@@ -15,6 +15,12 @@
 - Las ventas de la noche (Fofana, Herrero, Luismi, Abel, Salinas ≈72M) salieron de reglas independientes, no de ahorrar para él; el planificador lo daba por «inalcanzable» (presupuesto 95% de caja y tope de inversión 25%).
 - Abel: la pérdida se produjo al pagar su cláusula (×1,27) el domingo, no al venderlo; con Luismi y Nsongo, ≈2,9M.
 - **Pendiente derivado**: reconstruir la J10 sin caja (defensas: Hancko + Salinas + Rockson; vender si hace falta, p. ej. Zabiri 37M) y programar el modo «estrella» (sección B) para que el bot lo haga solo.
+
+## 0b) Revisión del 22/10 (datos de la nube de las 12:01)
+- Patrimonio **320,3M** (+32,9M en 7 días; caja 23,7M). Puntos 183 contra 396 de Josinho (brecha 213, era 222). Diomande ya +7,7M (87,8M).
+- Ventas buenas: Zabiri +11,1M, Fofana +7,1M. Operaciones cerradas: **por cláusula +47,2M (24), por puja −6,4M (17)**: las pujas pierden dinero de media; revisar antes de pujar más fuerte (A6).
+- **Soria sin blindaje (21/10)**: `shield_target` descartaba a quien tuviera la cláusula >×1,12 (Soria ×1,19, 7,4 pts/jornada). Arreglado: a un jugador clave (≥3 pts/jornada) se le blinda hasta ×1,25 (`KEY_SHIELD_RATIO`). Rivales: de 27 cláusulas pagadas por rivales, solo 4 por encima de ×1,12 y ninguna a un jugador de ≥20M por encima de ×1,15.
+- Nota: los puntos de una jornada cuentan para quien tenía al jugador en el once al empezar; un clausulazo tras el inicio no quita puntos de esa jornada, solo las siguientes. El hueco peligroso es entre el inicio de una jornada y la congelación de la siguiente.
 
 ## A) Para la revisión del 20/10
 1. **Los que se abren** (Terrats vendido a 20,9M; faltan Fofana, Zabiri, Deossa, Ilaix): ¿ventas con la oferta diaria?, ¿cláusula a ×1,20 y su coste?, ¿alguien la pagó? Pendiente: comprobar que la API deja subir tanto (solo probado +10%).

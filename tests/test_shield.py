@@ -1,5 +1,6 @@
 """Blindaje: solo se gasta en quien al irse nos quita puntos de verdad."""
 import unittest
+from unittest import mock
 
 from fantasy_agent import autopilot as ap
 from fantasy_agent.models import Player, SquadSlot
@@ -44,6 +45,19 @@ class ShieldTarget(unittest.TestCase):
         b = next(p for p in mine if p.id == "m3")
         target = ap.shield_target([sl(a, int(a.market_value * 1.0)), sl(b, int(b.market_value * 1.2))], mine)
         self.assertEqual(target.player.id, "m2")
+
+    def test_an_expensive_clause_still_gets_a_shield_when_he_is_a_key_player(self):
+        mine = squad()
+        gk = next(p for p in mine if p.id == "gk")
+        self.assertGreaterEqual(ap.sale_loss(mine, "gk"), ap.KEY_PLAYER_LOSS)
+        self.assertIsNotNone(ap.shield_target([sl(gk, int(gk.market_value * 1.19))], mine))
+        self.assertIsNone(ap.shield_target([sl(gk, int(gk.market_value * 1.30))], mine))
+
+    def test_an_expensive_clause_of_a_player_who_is_not_key_is_left_alone(self):
+        mine = squad()
+        d0 = next(p for p in mine if p.id == "d0")
+        with mock.patch.object(ap, "KEY_PLAYER_LOSS", 5.0):      # con este listón d0 (3,3 pts) ya no es «clave»
+            self.assertIsNone(ap.shield_target([sl(d0, int(d0.market_value * 1.19))], mine))
 
     def test_nobody_exposed_means_no_shield(self):
         self.assertIsNone(ap.shield_target([], squad()))

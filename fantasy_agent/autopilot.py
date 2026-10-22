@@ -741,6 +741,8 @@ def breaks_eleven(mine: list[Player], player_id: str) -> bool:
 
 
 SHIELD_MIN_LOSS = 2.0        # solo se gasta un blindaje (máx. 2 por jornada) en quien al irse nos quita ≥2 pts/jornada
+KEY_SHIELD_RATIO = 1.25      # a un jugador clave (≥ KEY_PLAYER_LOSS) se le blinda aunque su cláusula esté algo por encima de ×1,12: el dinero no compra
+                             # de vuelta sus puntos (22/10: Soria, ×1,19, 7,4 pts/jornada, sin portero equivalente en el mercado, y nadie lo blindó)
 
 
 def shield_target(exposed: list[SquadSlot], mine: list[Player], form: dict[str, float] | None = None) -> SquadSlot | None:
@@ -754,8 +756,8 @@ def shield_target(exposed: list[SquadSlot], mine: list[Player], form: dict[str, 
         if loss < SHIELD_MIN_LOSS:
             continue
         ratio = sl.clause / sl.player.market_value if sl.player.market_value else 1.0
-        if ratio > ATTRACTIVE_RATIO:
-            continue    # si un rival paga una cláusula tan por encima del valor, ganamos dinero: no se gasta blindaje
+        if ratio > (KEY_SHIELD_RATIO if loss >= KEY_PLAYER_LOSS else ATTRACTIVE_RATIO):
+            continue    # si un rival paga una cláusula tan por encima del valor, ganamos dinero: no se gasta blindaje (salvo en un clave, ver KEY_SHIELD_RATIO)
         score = loss / max(ratio, 1.0)
         if score > best_score:
             best, best_score = sl, score
