@@ -1,38 +1,33 @@
 # Pendientes — solo lo abierto
 
-> Actualizado el **22/10/2026**. Lo hecho y verificado está en `ESTADO.md`; la evidencia y las ideas antiguas, en `ARCHIVO_PENDIENTES.md`.
+> Actualizado el **24/10/2026**. Lo hecho y verificado está en `ESTADO.md`; la evidencia y las ideas antiguas, en `ARCHIVO_PENDIENTES.md`.
 > Orden de prioridades del bot (cerrado el 18/10): 1) once legal siempre · 2) no regalar un titular en subida a un rival · 3) puntos · 4) dinero.
 
 ## Calendario
-- **Lun 19 21:02** se abre Fofana · **mar 20 20:53** Zabiri · **mié 21 20:53** Deossa · **vie 23 21:03** Ilaix (el bot vende con la oferta de las 20:53 y, si no llega, blinda o sube la cláusula a ×1,20).
-- **Mar 20/10 03:00** cierra la J9 · **mar 20** revisión conjunta.
-- **Jue 22 21:00 → vie 23 21:00** congelación de cláusulas; **vie 23 21:00** empieza la J10 (hay que tener once legal: hoy faltan defensas).
-- **Mar 27 20:53** queda libre Gulácsi, portero de Josinho → primera ventana real del bloqueo (J11).
-- **8–22/11** parón: crédito hasta el 20% solo para pujas.
+- **Jue 29/10 21:00 → vie 30/10 21:00** congelación de cláusulas; **vie 30/10 21:00** empieza la J11 (Aitor Fdez y Gulácsi, porteros de Josinho, quedan libres; ver `siege`).
+- **Sáb 31/10 19:42** se abre la cláusula de Lamine Yamal (Josinho, 194,7M).
+- **5/11** probar `tick --dry-run` / `_delever` antes del parón; **8–22/11** parón: crédito hasta el 20% solo para pujas de inversión.
 
-## 0) Hecho el 19/10 16:50 (manual, con OK del usuario)
-- **Diomande fichado por cláusula (80,14M, a Josinho)**: su blindaje de 24 h había expirado a las 16:16. Caja 3,7M, plantilla 13. Protegido 14 días.
-- Las ventas de la noche (Fofana, Herrero, Luismi, Abel, Salinas ≈72M) salieron de reglas independientes, no de ahorrar para él; el planificador lo daba por «inalcanzable» (presupuesto 95% de caja y tope de inversión 25%).
-- Abel: la pérdida se produjo al pagar su cláusula (×1,27) el domingo, no al venderlo; con Luismi y Nsongo, ≈2,9M.
-- **Pendiente derivado**: reconstruir la J10 sin caja (defensas: Hancko + Salinas + Rockson; vender si hace falta, p. ej. Zabiri 37M) y programar el modo «estrella» (sección B) para que el bot lo haga solo.
+## 0) Revisión del 24/10 (datos de la nube de las 18:02) — decisiones tomadas
+- **Estado**: patrimonio **329,5M** (+34,9M en 7 días, +29,8% desde el 5/10; caja 58,9M, plantilla 270,7M). Puntos 200 contra 410 (brecha 210; J9: 37 contra 55). Sin los tres ceros de J5–J7 estaríamos a la par; ahora faltan ~11 pts/jornada.
+- **Los que se abrían** (A1, cerrado): Fofana 31,3M (+7,1M), Zabiri 39,1M (+11,1M), Deossa ×1,10, Ilaix 29,2M (+8,6M), Mayol ×1,09: todo vendido por encima de su valor con la oferta de las 20:53; nadie fue clausulado y no hizo falta subir cláusulas.
+- **Bitácora** (A2, cerrado): explica cada venta y cada «hold»; «recambio previsto» y forma con la jornada en curso funcionan.
+- **J10** (A3, cerrado): once legal con 14 plazas, portero suplente (Marrero) y 4 defensas.
+- **Umbrales** (A4, cerrado, sin cambios): 289 ofertas, mediana ×0,998, p90 ×1,08, máximo ×1,10; umbral óptimo ×1,042 frente a nuestro ×1,05 (diferencia irrelevante). El autoajuste propone bajar la «subida esperada» (0,25→0,227, 0,15→0,145, 0,08→0,065): diferencias dentro del ruido, no se aplica.
+- **Pujas** (A6): las 19 pujas cerradas desde el 26/9 suman −6,3M y las 27 por cláusula +57,0M, pero casi todas las pujas son anteriores a la prima p75 y a la escalera de tiempos; las compras «puntos» registradas desde entonces van +12,3%. Se mantiene la regla y se revisa con las pujas que lleguen.
+- **Bloqueo J11** (`siege`, 24/10): no viable. Nuestro portero Soria sería clausulable por Josinho, faltan plazas, certeza 55% < 60% y no compensa (~16M de beneficio frente a 17M de coste). Ver B.
+- **Crédito del parón** (A8, decidido): se mantiene el 20% (`LEVERAGE_PCT`) solo para pujas de inversión en subida ≥25% (neto a 14 días +28%, 82% aciertan) y se prueba `_delever` con `tick --dry-run` el 5/11.
+- **Revalorización a cero** (24/10): el panel «AYER» podía salir con todos a +0,0M si a las 00:20 solo parte de los jugadores tenía ya el valor del día nuevo. Arreglado: un día solo cuenta con ≥90% de los jugadores, un resultado a cero no se guarda y se recalcula cada 30 min. `reval` y `wealth_league` ya se exportan para poder verificarlo.
+- **Soria** (21/10): `shield_target` descartaba cláusulas >×1,12. Ahora a un jugador clave (≥3 pts/jornada) se le blinda hasta ×1,25 (`KEY_SHIELD_RATIO`). De 27 cláusulas pagadas por rivales solo 4 pasaron de ×1,12, ninguna en un jugador de ≥20M por encima de ×1,15.
+- **Diomande** (19/10): comprado a mano por cláusula (80,1M); hoy vale 91,8M (+11,7M). Lamine Yamal (Josinho, 194,7M, 14 pts/jornada) se abre el sáb 31/10 19:42, tras la congelación y la J11; fuera de alcance y sin tendencia.
+- Los puntos de una jornada cuentan para quien tenía al jugador en el once al empezar: un clausulazo tras el inicio solo quita las siguientes. El hueco peligroso va del inicio de una jornada a la congelación de la siguiente.
 
-## 0b) Revisión del 22/10 (datos de la nube de las 12:01)
-- Patrimonio **320,3M** (+32,9M en 7 días; caja 23,7M). Puntos 183 contra 396 de Josinho (brecha 213, era 222). Diomande ya +7,7M (87,8M).
-- Ventas buenas: Zabiri +11,1M, Fofana +7,1M. Operaciones cerradas: **por cláusula +47,2M (24), por puja −6,4M (17)**: las pujas pierden dinero de media; revisar antes de pujar más fuerte (A6).
-- **Soria sin blindaje (21/10)**: `shield_target` descartaba a quien tuviera la cláusula >×1,12 (Soria ×1,19, 7,4 pts/jornada). Arreglado: a un jugador clave (≥3 pts/jornada) se le blinda hasta ×1,25 (`KEY_SHIELD_RATIO`). Rivales: de 27 cláusulas pagadas por rivales, solo 4 por encima de ×1,12 y ninguna a un jugador de ≥20M por encima de ×1,15.
-- Nota: los puntos de una jornada cuentan para quien tenía al jugador en el once al empezar; un clausulazo tras el inicio no quita puntos de esa jornada, solo las siguientes. El hueco peligroso es entre el inicio de una jornada y la congelación de la siguiente.
+## A) Abierto
+1. **Permutas**: Giménez→Barrenetxea prometía +6,9M y lleva +0,8M; calibrar el cálculo y valorar más del mismo tipo.
+2. **Titulares de relleno**: tres de los once de J9 tenían 3,3–4,0 de media; ver cómo evitarlo (planificador).
+3. **Las dos peores ventas**: Gueye −7,1M y Lorenzo −2,5M; revisar si la regla de salida las provocó.
 
-## A) Para la revisión del 20/10
-1. **Los que se abren** (Terrats vendido a 20,9M; faltan Fofana, Zabiri, Deossa, Ilaix): ¿ventas con la oferta diaria?, ¿cláusula a ×1,20 y su coste?, ¿alguien la pagó? Pendiente: comprobar que la API deja subir tanto (solo probado +10%).
-2. **Bitácora** (`kv.decisions`): que explique cada venta; comprobar «recambio previsto» y la forma con la jornada en curso (Deossa debe bajar al confirmarse sus puntos).
-3. **Reconstruir J10**: 46M en caja; candidatos Navarro (27,5M, se abre lun 22:27) e Ibañez (18,8M, mar 20:53); no hay defensas/porteros buenos disponibles. Decidir qué compra el bot.
-4. **Umbrales** con J8–J10: venta 1,05×, «clave» 1,25×, rivales 1,30×, techo de puja +12%, factor de alineación probable (80% = titular normal, ×0,2–×1,15, provisional).
-5. **Permutas**: Giménez→Barrenetxea prometía +6,9M y lleva +0,8M: calibrar el cálculo; valorar más permutas del mismo tipo.
-6. **Pujas**: 9 pérdidas (el ganador pagó de media +10%); propuesta sin aplicar: pujar el p75 de los rivales (tope +12%) por objetivos de ≥3 pts. Decidir con ~15 pujas.
-7. **Titulares de relleno**: tres de los once de J9 tenían 3,3–4,0 de media; ver cómo evitarlo (planificador).
-8. **Crédito del parón** (8/11): dejar al 10%, subir al 20% o apagar; probar antes `tick --dry-run`/`_delever`.
-
-## B) Alcanzar a Josinho (brecha 217 pts, 29 jornadas)
+## B) Alcanzar a Josinho (brecha 210 pts el 24/10, 28 jornadas)
 - Palancas: no volver a puntuar 0 · más puntos por jornada · bloqueos de portero (`python3 -m fantasy_agent siege`; parado mientras nuestro once esté incompleto) · clausulazos a sus titulares cuando salga la cuenta.
 - Sin bloqueos y con media igual, ~3% de alcanzarlo; con 3 bloqueos y +3 pts/jornada, ~57% (modelo simple, revisar cada jornada).
 - Idea: **modo «ahorrar para una estrella»** (caso Diomande, +12,5% en 5 días que no pudimos comprar).
