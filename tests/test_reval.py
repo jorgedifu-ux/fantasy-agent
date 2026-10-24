@@ -66,3 +66,36 @@ class Reval(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HalfUpdated(unittest.TestCase):
+    """00:00-00:20: el día nuevo llega solo para unos pocos jugadores; antes salía «+0,0M» para todos."""
+
+    def api(self):
+        api = FakeAPI()
+        api.HIST = dict(FakeAPI.HIST)
+        api.HIST["1"] = FakeAPI.HIST["1"] + [("2026-10-19", 11.4e6)]       # solo uno de los tres jugadores tiene ya el día nuevo
+        return api
+
+    def test_a_day_with_few_players_updated_is_not_used(self):
+        d = reval.compute(world(), self.api())
+        self.assertEqual(d["day"], "2026-10-18")
+        self.assertAlmostEqual(d["managers"]["10"]["delta"], 1.0e6)
+
+    def test_all_zero_result_is_flagged_and_not_saved(self):
+        zero = {"managers": {"1": {"delta": 0.0}, "2": {"delta": 0.0}}}
+        self.assertTrue(reval.looks_wrong(zero))
+        self.assertFalse(reval.looks_wrong({"managers": {"1": {"delta": 0.0}, "2": {"delta": 3e5}}}))
+
+    def test_a_wrong_cached_value_is_recomputed_after_the_retry_time(self):
+        import tempfile, json, time
+        from datetime import datetime
+        from pathlib import Path
+        from fantasy_agent.storage import Store
+        with tempfile.TemporaryDirectory() as d:
+            st = Store(Path(d) / "s.db")
+            bad = {"day": "2026-10-18", "computed": "2026-10-18", "at": round(time.time()) - 3600,
+                   "managers": {"10": {"name": "x", "me": True, "value": 1, "delta": 0.0, "pct": 0.0, "days": [0.0], "up": [], "down": []}}}
+            st.set(reval.KEY, json.dumps(bad))
+            fresh = reval.refresh(st, world(), FakeAPI(), now=datetime(2026, 10, 18, 1, 0))
+            self.assertAlmostEqual(fresh["managers"]["10"]["delta"], 1.0e6)

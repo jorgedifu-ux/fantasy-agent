@@ -11,6 +11,8 @@ from .storage import Store
 
 KEY = "reval"
 DAYS_BACK = 5
+COVERAGE = 0.9          # fracción de jugadores que ha de tener valor un día para darlo por actualizado
+RETRY_S = 1800         # si lo guardado parece erróneo, se vuelve a calcular cada media hora
 
 
 def _series(history) -> list[tuple[str, float]]:
@@ -40,7 +42,13 @@ def compute(world, api) -> dict | None:
                     series[p.id] = _series(api.market_value_history(p.id))
                 except Exception:
                     series[p.id] = []
-    all_days = sorted({d for s in series.values() for d, _ in s})
+    # Un día solo cuenta si casi todos los jugadores ya tienen su valor (la actualización de las 00:00 llega escalonada: con unos pocos jugadores
+    # al día nuevo, los demás salían a 0 y el panel decía que nadie había ganado ni perdido nada).
+    have = [s for s in series.values() if s]
+    if not have:
+        return None
+    all_days = sorted({d for s in have for d, _ in s})
+    all_days = [d for d in all_days if sum(1 for s in have if any(x == d for x, _ in s)) >= COVERAGE * len(have)]
     if len(all_days) < 2:
         return None
     days = all_days[-(DAYS_BACK + 1):]
@@ -65,18 +73,30 @@ def compute(world, api) -> dict | None:
     return out
 
 
+def looks_wrong(data: dict | None) -> bool:
+    """Imposible en la práctica: ninguna plantilla se mueve ni un euro (valores a medio actualizar)."""
+    ms = (data or {}).get("managers") or {}
+    return bool(ms) and all(abs(m.get("delta", 0.0)) < 1 for m in ms.values())
+
+
 def refresh(store: Store, world, api, now: datetime | None = None) -> dict | None:
-    """Una vez al día, a partir de las 00:20 (los valores se actualizan a las 00:00): guarda la revalorización en `kv.reval`. Devuelve lo guardado."""
+    """Una vez al día, a partir de las 00:20 (los valores se actualizan a las 00:00): guarda la revalorización en `kv.reval`. Devuelve lo guardado.
+    Si lo guardado parece erróneo (`looks_wrong`) se recalcula cada `RETRY_S` segundos; un cálculo erróneo no se guarda."""
     now = now or datetime.now()
     cached = json.loads(store.get(KEY) or "null")
-    due = (now.hour, now.minute) >= (0, 20) and (not cached or cached.get("computed") != f"{now:%Y-%m-%d}")
+    stale = bool(cached) and cached.get("computed") != f"{now:%Y-%m-%d}"
+    retry = looks_wrong(cached) and time.time() - (cached.get("at") or 0) >= RETRY_S
+    due = (now.hour, now.minute) >= (0, 20) and (not cached or stale or retry)
     if due:
         data = compute(world, api)
-        if data:
+        if data and not looks_wrong(data):
             data["computed"] = f"{now:%Y-%m-%d}"
             data["at"] = round(time.time())
             store.set(KEY, json.dumps(data, ensure_ascii=False))
             return data
+        if cached and not stale:
+            cached["at"] = round(time.time())      # para no reintentar en cada pasada
+            store.set(KEY, json.dumps(cached, ensure_ascii=False))
     return cached
 
 
