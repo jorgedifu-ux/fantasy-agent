@@ -230,3 +230,35 @@ class LiquidityReach(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShieldAtOpen(unittest.TestCase):
+    """26/10 (Hancko): la cláusula se abre de madrugada y los rivales pagan en minutos; se blinda en el segundo de abrirse."""
+
+    def locked(self, p, minutes, clause=None):
+        s = sl(p, clause)
+        s.clause_locked_until = NOW + timedelta(minutes=minutes)
+        return s
+
+    def test_picks_the_player_who_opens_soon_and_deserves_it(self):
+        mine = squad()
+        star = next(p for p in mine if p.id == "m3")
+        got = ap.shield_at_open([self.locked(star, 10)], mine, None, NOW, 25 * 60)
+        self.assertEqual([x.player.id for x in got], ["m3"])
+
+    def test_ignores_those_opening_later_than_the_window_or_already_open(self):
+        mine = squad()
+        star = next(p for p in mine if p.id == "m3")
+        self.assertEqual(ap.shield_at_open([self.locked(star, 90)], mine, None, NOW, 25 * 60), [])
+        self.assertEqual(ap.shield_at_open([sl(star)], mine, None, NOW, 25 * 60), [])
+
+    def test_ignores_the_bench_player(self):
+        mine = squad()
+        mayol = next(p for p in mine if p.id == "mayol")
+        self.assertEqual(ap.shield_at_open([self.locked(mayol, 10, 1_200_000)], mine, None, NOW, 25 * 60), [])
+
+    def test_orders_by_opening_time(self):
+        mine = squad()
+        a, b = (next(p for p in mine if p.id == i) for i in ("m3", "d3"))
+        got = ap.shield_at_open([self.locked(a, 20), self.locked(b, 5)], mine, None, NOW, 25 * 60)
+        self.assertEqual([x.player.id for x in got], ["d3", "m3"])

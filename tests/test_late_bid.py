@@ -32,7 +32,7 @@ class FakeAPI:
 class LateBidTests(unittest.TestCase):
     def setUp(self):
         self.store = Store(Path(tempfile.mkdtemp()) / "t.db")
-        self.world = SimpleNamespace(league_id="L")
+        self.world = SimpleNamespace(league_id="L", my_slots=[], recent_form={}, clause_freeze=None)
         p = patch("fantasy_agent.cli.time.sleep")
         self.sleep = p.start()
         self.addCleanup(p.stop)

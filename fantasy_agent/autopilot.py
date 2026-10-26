@@ -764,6 +764,25 @@ def shield_target(exposed: list[SquadSlot], mine: list[Player], form: dict[str, 
     return best
 
 
+def opens_at(slot: SquadSlot) -> datetime | None:
+    """Cuándo se abre su cláusula (la última de las fechas de bloqueo/blindaje), o None si ya está abierta."""
+    return max((d for d in (slot.clause_locked_until, slot.shielded_until) if d), default=None)
+
+
+def shield_at_open(slots: list[SquadSlot], mine: list[Player], form: dict[str, float] | None, now: datetime, window_s: float) -> list[SquadSlot]:
+    """Jugadores que se abren dentro de `window_s` segundos y merecerían un blindaje (`shield_target`) en el segundo exacto de abrirse. Los rivales pagan
+    «casi siempre ×1,00 a las 0,1–2 h de abrirse», así que esperar al siguiente pase del bot (hasta ~15 min) es un riesgo real (26/10, Hancko)."""
+    out = []
+    for sl in slots:
+        h = hours_until_exposed(sl, now)
+        if h is None or h <= 0 or h * 3600 > window_s or not sl.player_team_id:
+            continue
+        if shield_target([sl], mine, form) is None:
+            continue
+        out.append(sl)
+    return sorted(out, key=lambda sl: opens_at(sl) or now)
+
+
 RAISE_TARGET_RATIO = 1.20    # cláusula de disuasión: los rivales han pagado hasta ~1,15x y nadie ha pagado 1,19-1,20x (Soria, Gueye)
 RAISE_MAX_COST_PCT = 0.12    # subirla cuesta la mitad de lo que sube (comprobado el 7/10): como mucho el 12% del valor del jugador
 RAISE_LEAD_H = 6.0           # solo en las últimas horas antes de que se abra (o ya abierta) y sin blindaje posible

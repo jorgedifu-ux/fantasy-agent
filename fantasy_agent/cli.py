@@ -891,10 +891,20 @@ def _timed_actions(store: Store, api: FantasyAPI, world, reserved: list[ap.Move]
             jobs.append((mv.item.expires - timedelta(seconds=ap.LATE_BID_LEAD_S), "bid", mv))
         elif mv.kind in ("clause", "invest_clause") and mv.unlock_at and 0 < (mv.unlock_at - now).total_seconds() <= SNIPE_WINDOW_S:
             jobs.append((mv.unlock_at, "clause", mv))
+    mine = [sl.player for sl in world.my_slots]
+    shields = ap.shield_at_open(world.my_slots, mine, world.recent_form, now, SNIPE_WINDOW_S)
+    frozen = lambda at: bool(world.clause_freeze and world.clause_freeze[0] <= at < world.clause_freeze[1])   # noqa: E731  congelada: nadie puede clausular
+    shields = [sl for sl in shields if not frozen(ap.opens_at(sl))]
+    if shields and _shield_quota(api, world, now) is not False:
+        for sl in shields:
+            jobs.append((ap.opens_at(sl), "shield", sl))
     events: list[str] = []
     for when, kind, mv in sorted(jobs, key=lambda j: j[0]):
         if kind == "clause":
             events += _snipe(store, api, world, [mv])
+            continue
+        if kind == "shield":
+            events += _shield_at_open(store, api, world, mv)
             continue
         wait = (when - datetime.now(timezone.utc)).total_seconds()
         if wait > SNIPE_WINDOW_S:
@@ -908,6 +918,35 @@ def _timed_actions(store: Store, api: FantasyAPI, world, reserved: list[ap.Move]
         if msg:
             events.append(msg)
     return events
+
+
+def _shield_at_open(store: Store, api: FantasyAPI, world, sl) -> list[str]:
+    """Blinda a `sl` en el segundo en que se abre su cláusula (gratis, 24 h). Se comprueba releyendo la plantilla (la API ha respondido 200 sin blindar)."""
+    name = notify.esc(sl.player.name)
+    wait = (ap.opens_at(sl) - datetime.now(timezone.utc)).total_seconds() + 1
+    if wait > 0:
+        time.sleep(wait)
+    info = dict(loss=ap.sale_loss([x.player for x in world.my_slots], sl.player.id, world.recent_form),
+                clause_ratio=round(sl.clause / sl.player.market_value, 3), al_segundo=True)
+    last_exc = None
+    for _ in range(4):
+        try:
+            api.check_shield(world.league_id, sl.player_team_id)
+            api.shield_player(world.league_id, sl.player_team_id)
+            last_exc = None
+            break
+        except Exception as exc:
+            last_exc = exc
+            time.sleep(3)      # «protected» durante el primer segundo tras abrirse: se reintenta
+    if last_exc is not None:
+        store.log_decision("blindaje", sl.player.name, "no", f"al abrirse: {last_exc}"[:200], **info)
+        return []
+    squad = models.parse_squad(api.team(world.league_id, world.my_team_id), world.my_team_id, "")
+    if not any(x.player_team_id == sl.player_team_id and x.shielded_until for x in squad):
+        store.log_decision("blindaje", sl.player.name, "sin efecto", "al abrirse: la API respondió bien pero no blindó", **info)
+        return []
+    store.log_decision("blindaje", sl.player.name, "sí", "blindado 24 h en el segundo en que se abrió su cláusula", **info)
+    return [f"🛡️ <b>BLINDADO al segundo</b>: {name} protegido 24 h nada más abrirse su cláusula (gratis, automático)."]
 
 
 def _snipe(store: Store, api: FantasyAPI, world, reserved: list[ap.Move]) -> list[str]:
