@@ -502,3 +502,7 @@ mejor que venderlos antes; subir la cláusula solo compensaría con subidas muy 
 - **Revalorización** (`reval.py`): un día solo cuenta si ≥90% de los jugadores ya tiene su valor; un resultado con todos los deltas a cero no se guarda y se recalcula cada 30 min. `reval` y `wealth_league` se exportan a la rama `data`.
 - **«Actualizar y limpiar»** borra también el resumen programado; solo los avisos urgentes sin leer se conservan.
 - Permutas: backtest del 26/10, siguen en sombra (ver PENDIENTES A1).
+- **Subir la cláusula propia sin tope del 20%** (26/10): Bil Nsongo de 9,0M a 12,0M (×1,34) pidiendo +3M; la API cobró 1,5M. Sigue sin saberse el máximo.
+- **Registro de estrellas** (`stars.py`, kv `star_log`, en sombra) desde el 26/10.
+- **Verificado**: los puntos de quien se vende después del inicio de la jornada cuentan para el once registrado.
+

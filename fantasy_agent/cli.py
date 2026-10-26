@@ -436,6 +436,15 @@ def _deliver(store: Store, s, st, events: list[str]) -> None:
             tidy.track(store, notify.SENT_IDS[before:])       # el resumen sí se borra con «actualizar y limpiar» (queda en /resumen, 24 h)
 
 
+def _log_stars(store: Store, world) -> None:
+    """Registro en sombra de las estrellas que se podían fichar (ver `stars`). No compra nada."""
+    from . import stars
+    cash = world.my_cash or 0
+    found = stars.candidates(world.market, world.rival_slots, world.trends, world.recent_form, datetime.now(timezone.utc), cash,
+                             cash + sum(sl.player.market_value for sl in world.my_slots))
+    stars.record(store, found)
+
+
 def _sync_panel(store: Store, s, api: FantasyAPI, world) -> None:
     commands.refresh_panel(s, store, api, world)
 
@@ -1892,6 +1901,7 @@ def _watch_once(store: Store, s) -> str:
 
     siege_events, siege_reserve = st("bloqueo", _siege_tick, store, s, api, world, default=([], 0))
     events += siege_events
+    st("estrellas (registro)", _log_stars, store, world)
     bought, reserved = st("compras", _acquire, store, s, api, world, extra_reserved=siege_reserve, default=([], []))
     events += bought
     if bought:

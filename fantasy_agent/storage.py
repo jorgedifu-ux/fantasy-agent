@@ -318,7 +318,7 @@ class Store:
         "player_status_history": ("player_id", "status", "recorded_at"),
     }
     EXPORT_KV = ("errors", "clause_raise_test", "swap_log", "cohort_table", "exit_since", "params", "params_history", "proposals", "siege_state", "siege_ids", "liquidity", "rival_premium",
-                 "sold_ids", "lineup_variant", "decisions", "reval", "wealth_league")
+                 "sold_ids", "lineup_variant", "decisions", "reval", "wealth_league", "star_log")
 
     def export_state(self) -> dict[str, Any]:
         out: dict[str, Any] = {"tables": {}, "kv": {}}
