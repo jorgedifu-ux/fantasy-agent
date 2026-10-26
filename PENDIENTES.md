@@ -22,10 +22,10 @@
 - **Diomande** (19/10): comprado a mano por cláusula (80,1M); hoy vale 91,8M (+11,7M). Lamine Yamal (Josinho, 194,7M, 14 pts/jornada) se abre el sáb 31/10 19:42, tras la congelación y la J11; fuera de alcance y sin tendencia.
 - Los puntos de una jornada cuentan para quien tenía al jugador en el once al empezar: un clausulazo tras el inicio solo quita las siguientes. El hueco peligroso va del inicio de una jornada a la congelación de la siguiente.
 
-## A) Abierto
-1. **Permutas**: Giménez→Barrenetxea prometía +6,9M y lleva +0,8M; calibrar el cálculo y valorar más del mismo tipo.
-2. **Titulares de relleno**: tres de los once de J9 tenían 3,3–4,0 de media; ver cómo evitarlo (planificador).
-3. **Las dos peores ventas**: Gueye −7,1M y Lorenzo −2,5M; revisar si la regla de salida las provocó.
+## A) Pequeñas — cerradas el 26/10
+1. **Permutas** (decidido: siguen en sombra, no se ejecutan). Backtest de las 14 propuestas únicas del `swap_log` a 7 días: prometían +92,9M y el valor realizó +16,7M (18%); las promesas gordas (Deossa→Castrín «+15,2M» sobre 11,6M de coste) son puntos × `POINT_VALUE_M`, no dinero, y no se comprueban. Ejecutar solo con una promesa en dinero ≥ 5% del coste y viendo dos semanas más de resultados.
+2. **Titulares de relleno** (cerrado): en la J9 faltaban defensas y caja; con caja y plantilla completa el planificador ya no los necesita. Se vigila con la bitácora.
+3. **Peores ventas** (cerrado): Gueye −7,1M, Lorenzo −2,5M, Dolan, Musso y Gayá son de septiembre y principios de octubre: pujas con prima alta y salida anterior a las reglas del 10/10 y 18/10. Nada que cambiar.
 
 ## B) Alcanzar a Josinho (brecha 210 pts el 24/10, 28 jornadas)
 - Palancas: no volver a puntuar 0 · más puntos por jornada · bloqueos de portero (`python3 -m fantasy_agent siege`; parado mientras nuestro once esté incompleto) · clausulazos a sus titulares cuando salga la cuenta.
@@ -33,6 +33,12 @@
 - Idea: **modo «ahorrar para una estrella»** (caso Diomande, +12,5% en 5 días que no pudimos comprar).
 - **Financiar clausulazos del líder vendiendo titulares que ya no suben** (hoy solo suplentes) y ejecutarlos justo antes de la congelación.
 - **Permutas con deuda** (diseño acordado, sin programar): deuda máx. 10% del valor de plantilla, >48 h de margen, una operación a la vez, saldo positivo antes de la jornada.
+
+## B2) Modo «ahorrar para una estrella» — datos del 26/10 (diseño abierto)
+- **Puntos por partido según precio** (todos los jugadores de LaLiga con media > 0): <3M 1,6 · 3–8M 3,0 · 8–15M 3,6 · 15–30M 4,6 · 30–60M 5,7 · **60–100M 6,6 (el peor tramo: ~39M por punto extra)** · **≥100M 11,5**. El salto está en los 5 de ≥100M: Raphinha 14,2 (171M), Yamal 12,7 (194M, Josinho, se abre sáb 31/10 19:42), Mbappé 12,0 (171M, Pep, se abre vie 6/11 21:53), Bellingham 9,3 (125M) y Güler 9,1 (115M).
+- Raphinha, Bellingham, Güler y casi todos los de media ≥ 7,4 **no tienen dueño en la liga**: solo se pueden pujar cuando LaLiga los pone en el mercado. Hoy está Á. Valles (portero, media 9,3, 55M, resuelve a las 20:53).
+- Diomande (97,5M, media 6,1) cae en el peor tramo por rendimiento: lo compensa la subida (+17M desde el 19/10), no sus puntos.
+- Pendiente: frecuencia con la que salen estrellas al mercado, cuánto hay que tener libre para pujar, y si compensa vender titulares para financiarlas (permuta con una estrella).
 
 ## C) Mejoras del modelo (con más datos)
 - **Efecto suplente** (suplentes baratos <4M cuando falta el titular): registrar casos en sombra con la alineación probable antes de programar.

@@ -495,3 +495,10 @@ mejor que venderlos antes; subir la cláusula solo compensaría con subidas muy 
 - `STRATEGY.md` — razonamiento estratégico. `CLAUDE.md` — normas de desarrollo.
 - `tests/` — sin red (`python3 -m unittest discover -s tests -v`).
 - `.env` — tus credenciales (nunca se sube a git).
+
+## Cambios del 24-26/10/2026
+- **Blindaje a jugadores clave con cláusula cara** (Soria, ×1,19): `KEY_SHIELD_RATIO = 1,25` para quien al irse nos quita ≥3 pts/jornada.
+- **Blindaje al segundo** (`autopilot.shield_at_open`, `cli._shield_at_open`): si la cláusula de un jugador que merece blindaje se abre dentro de los próximos 25 min, el job espera y blinda en el instante de abrirse (los rivales pagan a las 0,1–2 h). Se registra en la bitácora con `al_segundo`. Caso Hancko (27/10 01:32). No actúa si la apertura cae en la congelación o ya no quedan blindajes.
+- **Revalorización** (`reval.py`): un día solo cuenta si ≥90% de los jugadores ya tiene su valor; un resultado con todos los deltas a cero no se guarda y se recalcula cada 30 min. `reval` y `wealth_league` se exportan a la rama `data`.
+- **«Actualizar y limpiar»** borra también el resumen programado; solo los avisos urgentes sin leer se conservan.
+- Permutas: backtest del 26/10, siguen en sombra (ver PENDIENTES A1).
