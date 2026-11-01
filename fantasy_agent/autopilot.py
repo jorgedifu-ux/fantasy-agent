@@ -893,6 +893,16 @@ def is_stalled(trend_d1: float | None, trend_d7: float, value: int) -> bool:
     return trend_d1 is not None and value >= STALL_MIN_VALUE and trend_d7 > STALL_D7 and trend_d1 <= STALL_D1
 
 
+STAR_HOLD_MIN = 1.08            # oferta mínima por una estrella en subida cuando su protección acaba (las ofertas de la liga llegan a ×1,10; p90 ×1,08)
+STAR_MIN_VALUE = 40_000_000
+STAR_RISE_D7 = 8.0              # sube ≥8% en 7 días
+
+
+def is_star_hold(player: Player, loss: float, trend_d7: float) -> bool:
+    """Jugador clave (quitarlo baja el once ≥ KEY_PLAYER_LOSS), caro y subiendo fuerte: se conserva en lugar de venderlo por un margen pequeño."""
+    return loss >= KEY_PLAYER_LOSS and player.market_value >= STAR_MIN_VALUE and trend_d7 >= STAR_RISE_D7 and player.status.lower() not in INJURED
+
+
 def offer_decision(
     offer: Offer, player: Player, *, loss: float, cut_loss: bool = False, trend_d7: float = 0.0, trend_d3: float = 0.0,
     breaks_xi: bool = False, hours_to_deadline: float | None = None, exposed_in: float | None = None,
@@ -924,6 +934,10 @@ def offer_decision(
         cuando = "ya es clausulable" if exposed_in == 0 else f"su protección acaba en {exposed_in:.0f}h"
         why = f"{cuando}: solo lo vendo si la oferta supera lo que cobraría si me lo clausulan ({clause / 1e6:.2f}M)" if clause \
             else f"{cuando}: mejor venderlo que ver cómo se lo lleva un rival"
+        if is_star_hold(player, loss, trend_d7) and need < STAR_HOLD_MIN:
+            # Una estrella en subida no se suelta por un 1-3% sobre su cláusula (1/11/2026, Diomande): si lo clausulan cobramos lo mismo, y mientras tanto se
+            # blinda (al segundo de abrirse) y se sube la cláusula. Solo se vende con una oferta excepcional.
+            need, why = STAR_HOLD_MIN, f"estrella en subida (+{trend_d7:.0f}% en 7 días): solo la vendo con una oferta excepcional; {why}"
     elif injured:
         # Lesionado: no puntúa y su valor puede caer cuando se enfríe lo que hizo antes. Se cobra a
         # ~su valor (siempre sin bajar de lo pagado) en vez de esperar una subida que ya no usa.

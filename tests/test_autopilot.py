@@ -599,3 +599,31 @@ class InjuredSaleTests(unittest.TestCase):
     def test_injured_still_respects_the_cost(self):
         p = player("k", 2, 7.0, 10_000_000, status="injured")
         self.assertEqual(ap.offer_decision(self.offer(1.01), p, loss=0.0, injured=True, cost_basis=11_000_000)[0], "hold")
+
+
+class StarHold(unittest.TestCase):
+    """1/11/2026, Diomande: una estrella en subida no se vende por un 1-3% sobre lo que cobraríamos si la clausulan."""
+
+    def offer(self, ratio, value=110_000_000):
+        return Offer(id="o", money=round(value * ratio), from_manager="LaLiga", is_system=True)
+
+    def decide(self, ratio, **kw):
+        star = player("s", 4, 7.0, 110_000_000)
+        args = dict(loss=5.0, trend_d7=17.0, trend_d3=5.0, exposed_in=20.0, clause=110_000_000, rise_per_day=0.017)
+        args.update(kw)
+        return ap.offer_decision(self.offer(ratio), star, **args)[0]
+
+    def test_a_small_premium_is_not_enough_for_a_rising_star(self):
+        self.assertEqual(self.decide(1.03), "hold")
+
+    def test_an_exceptional_offer_is_accepted(self):
+        self.assertEqual(self.decide(1.09), "accept")
+
+    def test_a_star_that_is_not_rising_still_follows_the_normal_rule(self):
+        self.assertEqual(self.decide(1.03, trend_d7=1.0, trend_d3=0.0, rise_per_day=0.0), "accept")
+
+    def test_a_cheap_key_player_is_not_a_star(self):
+        cheap = player("c", 4, 7.0, 20_000_000)
+        d = ap.offer_decision(Offer(id="o", money=20_600_000, from_manager="LaLiga", is_system=True), cheap, loss=5.0, trend_d7=17.0,
+                              trend_d3=5.0, exposed_in=20.0, clause=20_000_000, rise_per_day=0.017)[0]
+        self.assertEqual(d, "accept")
