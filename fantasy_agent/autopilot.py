@@ -128,6 +128,11 @@ def start_factor(prob_pct: float) -> float:
     return round(max(START_FACTOR_MIN, min(START_FACTOR_MAX, prob_pct / START_BASE_PROB)), 3)
 
 
+FORM_WEIGHT = 0.15     # peso de la racha reciente (últimas jornadas) frente a la media de temporada. Backtest del 1/11/2026 (1.286 jugador-jornada): 0,40 daba
+                       # 7,1 pts a los «calientes» que luego hicieron 6,0 (la media de temporada acierta mejor, 5,8); con 0,15 el error medio es el mismo
+                       # (3,49 vs 3,49) pero se deja de pagar por rachas (Dituro: forma 12,7, media 5,8, J11: 0 pts)
+
+
 def xpts(p: Player, form: dict[str, float] | None = None, *, start: bool = True) -> float:
     """Puntos esperados por jornada: media de la temporada mezclada con la racha reciente, y la alineación probable de la próxima
     jornada si se conoce (`start=False` para quien ya la multiplica aparte, como la alineación). Un jugador sin puntos (media 0)
@@ -138,7 +143,7 @@ def xpts(p: Player, form: dict[str, float] | None = None, *, start: bool = True)
     base = p.avg_points if p.avg_points > 0 else 0.5
     recent = (form or {}).get(p.id)
     if recent is not None and p.avg_points > 0:
-        base = 0.6 * base + 0.4 * recent
+        base = (1 - FORM_WEIGHT) * base + FORM_WEIGHT * recent
     if status in ("doubtful", "duda"):
         base *= 0.55
     if start and START_PROB_FN is not None:

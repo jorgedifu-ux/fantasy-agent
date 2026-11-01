@@ -1,12 +1,19 @@
 # Pendientes — solo lo abierto
 
-> Actualizado el **24/10/2026**. Lo hecho y verificado está en `ESTADO.md`; la evidencia y las ideas antiguas, en `ARCHIVO_PENDIENTES.md`.
+> Actualizado el **1/11/2026**. Lo hecho y verificado está en `ESTADO.md`; la evidencia y las ideas antiguas, en `ARCHIVO_PENDIENTES.md`.
 > Orden de prioridades del bot (cerrado el 18/10): 1) once legal siempre · 2) no regalar un titular en subida a un rival · 3) puntos · 4) dinero.
 
 ## Calendario
 - **Jue 29/10 21:00 → vie 30/10 21:00** congelación de cláusulas; **vie 30/10 21:00** empieza la J11 (Aitor Fdez y Gulácsi, porteros de Josinho, quedan libres; ver `siege`).
 - **Sáb 31/10 19:42** se abre la cláusula de Lamine Yamal (Josinho, 194,7M).
 - **5/11** probar `tick --dry-run` / `_delever` antes del parón; **8–22/11** parón: crédito hasta el 20% solo para pujas de inversión.
+
+## 00) Revisión del 1/11 (J11 en juego: 30 pts contra 38; J10: 40 contra 59; brecha 247)
+- **Dinero**: patrimonio 329→? (caja 54M); hemos recortado a todos en dinero; en puntos no (Josinho 500, nosotros 253). Yamal le aporta ~11 pts/jornada.
+- **Qué falló en la J11**: (1) se vendieron titulares antes de empezar (Hancko +9 pts, Bryan +9, Soria +4, Ibañez 0, Agoumé 1) y el once registrado llevó rellenos (Belocian 0, Gayá 0, Requena 3); los refuerzos (Yoel Lago, Germán V.) llegaron el sábado, ya empezada la jornada, y solo suman desde la J12. (2) Los fichados por forma (Dituro 14→0, Pepelu 9→1, Germán 11→−1, Freeman 13→2, Javi R. 8→1) se desinflaron: la forma reciente pesaba demasiado. (3) Soria (media 6,6) se vendió porque el recambio recién comprado (Dituro, forma inflada) hacía que «perderlo» costara poco: círculo vicioso por la forma.
+- **Cambios hechos**: `FORM_WEIGHT` 0,40→0,15; estrella en subida no se vende por menos de ×1,08; lectura de ofertas con reintento. Ver ESTADO 1/11.
+- **Vigilar**: Diomande se abre lun 2/11 16:57; el blindaje al segundo lo cubre 24 h. Decidir si subir su cláusula (a ×1,3 cuesta ~16M) para cubrir el resto de la semana. Mbappé (Pep) se abre vie 6/11 20:53.
+- **Idea abierta**: exigir un margen mínimo (≥1,5 pts esperados) para sustituir a un titular, porque el error de predicción por jugador es ~1,2 pts: cada permuta con menos margen es ruido más rozamiento.
 
 ## 0) Revisión del 24/10 (datos de la nube de las 18:02) — decisiones tomadas
 - **Estado**: patrimonio **329,5M** (+34,9M en 7 días, +29,8% desde el 5/10; caja 58,9M, plantilla 270,7M). Puntos 200 contra 410 (brecha 210; J9: 37 contra 55). Sin los tres ceros de J5–J7 estaríamos a la par; ahora faltan ~11 pts/jornada.

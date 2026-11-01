@@ -1068,10 +1068,19 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
             my_manager = next((r.manager_id for r in world.standing if r.team_id == world.my_team_id), "")
             paid = service.purchase_prices(api, world.league_id, my_manager)
         name, pid = notify.esc(sl.player.name), sl.player.id
-        try:
-            offers = models.parse_player_offers(api.player_team_offers(world.league_id, sl.player_team_id))
-        except Exception as exc:
-            events.append(f"❌ No he podido leer las ofertas por <b>{name}</b>: {notify.esc(str(exc))}")
+        offers, read_exc = None, None
+        for attempt in range(2):     # un corte pasajero de la API (5xx, timeout) se reintenta una vez y, si persiste, se salta sin avisar: el pase siguiente (15 min) lo vuelve a leer
+            try:
+                offers = models.parse_player_offers(api.player_team_offers(world.league_id, sl.player_team_id))
+                break
+            except Exception as exc:
+                read_exc = exc
+                if not _is_transient(exc):
+                    break
+                time.sleep(3)
+        if offers is None:
+            if not _is_transient(read_exc) and store.alert_is_new(f"offers_read:{pid}", ttl_hours=6):
+                events.append(f"❌ No he podido leer las ofertas por <b>{name}</b>: {notify.esc(str(read_exc))}")
             continue
         mult = ap.ask_multiplier(pid, now)
         for o in offers:

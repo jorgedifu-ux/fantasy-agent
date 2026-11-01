@@ -506,3 +506,8 @@ mejor que venderlos antes; subir la cláusula solo compensaría con subidas muy 
 - **Registro de estrellas** (`stars.py`, kv `star_log`, en sombra) desde el 26/10.
 - **Verificado**: los puntos de quien se vende después del inicio de la jornada cuentan para el once registrado.
 
+## Cambios del 1/11/2026
+- **Peso de la forma reciente 0,40 → 0,15** (`autopilot.FORM_WEIGHT`). Backtest con 1.286 jugador-jornada (J4–J10): los «calientes» (últimas 3 ≥ media + 2,5) se predecían a 7,1 y hicieron 6,0; la media de temporada decía 5,8. Error medio igual (3,49), pero la forma sobrevalora. Efecto visible: Dituro (forma 12,7, media 5,8) pasa de 8,5 esperados a ~6,7; hizo 0 en la J11. Entre los de ≥80M las medias se sostienen (8,9 → 8,4 en J9–J11): las estrellas no se desinflan más que el resto. El 15% de arriba por predicción rinde ~−2 pts menos de lo esperado en cualquier modelo (selección de extremos).
+- **Estrella en subida** (`is_star_hold`, `STAR_HOLD_MIN = 1,08`): un jugador clave (≥3 pts/jornada), de ≥40M y subiendo ≥8% en 7 días no se vende por menos de ×1,08 su valor cuando su protección acaba (antes bastaba un 1,5–3% sobre lo que cobraríamos si lo clausulan: el bot iba a vender a Diomande esa noche).
+- **Error «no he podido leer las ofertas por X»** (Freeman): un corte pasajero de la API se reintenta una vez y se salta sin avisar; los errores no pasajeros avisan una vez cada 6 h.
+
