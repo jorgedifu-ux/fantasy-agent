@@ -249,6 +249,16 @@ def bid_moves(market: list[MarketItem], skip_player_ids: frozenset[str] = frozen
 # hay ninguna pasada en esa ventana (cron caído), se puja igualmente: mejor pronto que nunca.
 LATE_BID_WINDOW_S = 25 * 60
 LATE_BID_LEAD_S = 150
+FINAL_LINEUP_LEAD_S = 120       # el once definitivo se guarda a 2 min del primer partido (6/11: Huijsen, ganado a las 20:53, no entró en el once de las 21:00)
+FINAL_LINEUP_WINDOW_S = 25 * 60
+
+
+def final_lineup_wait(seconds_to_kickoff: float | None, window_s: float = FINAL_LINEUP_WINDOW_S, lead_s: float = FINAL_LINEUP_LEAD_S) -> float | None:
+    """Segundos que hay que esperar (dentro de este mismo job) para guardar el once definitivo a `lead_s` del primer partido, o None si aún falta más de
+    `window_s` o el partido ya ha empezado (con la jornada en juego el once no se toca)."""
+    if seconds_to_kickoff is None or seconds_to_kickoff <= 0 or seconds_to_kickoff > window_s:
+        return None
+    return max(0.0, seconds_to_kickoff - lead_s)
 BID_FALLBACK_S = 0  # 0 = sin puja anticipada; ver `bid_timing`
 
 

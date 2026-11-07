@@ -1207,14 +1207,14 @@ def _squad_changes(store: Store, world) -> list[str]:
     return events
 
 
-def _ff_probs(store: Store, api: FantasyAPI, world) -> dict[str, dict]:
+def _ff_probs(store: Store, api: FantasyAPI, world, force: bool = False) -> dict[str, dict]:
     """Probabilidad de ser titular (alineación probable de futbolfantasy) de todos los jugadores que nos importan: la plantilla, las de los rivales
     y el mercado. Se guarda en `kv.ff_probs` y se refresca cada 3 h (cada 45 min en las 30 h previas a la jornada, que es cuando cambia). Si la web
     falla se sigue con lo guardado y se reintenta en 10 min."""
     hours = _hours_to_deadline(world)
-    ttl = 45 * 60 if hours is not None and 0 < hours <= 30 else 3 * 3600
+    ttl = 10 * 60 if hours is not None and 0 < hours <= 1.5 else 45 * 60 if hours is not None and 0 < hours <= 30 else 3 * 3600   # a 90 min del primer partido salen las alineaciones reales
     cached = json.loads(store.get("ff_probs") or "{}")
-    if cached and time.time() - cached.get("at", 0) < ttl:
+    if cached and not force and time.time() - cached.get("at", 0) < ttl:
         return cached.get("p", {})
     players = {sl.player.id: sl.player for sl in world.my_slots}
     for sl in world.rival_slots:
@@ -1245,6 +1245,23 @@ def _remember_xi(store: Store, api: FantasyAPI, eleven) -> None:
         store.set("xi_snapshot", json.dumps({"week": week, "ids": [{"pid": c.player.id, "name": c.player.name} for c in eleven]}, ensure_ascii=False))
     except Exception:
         pass
+
+
+def _final_lineup(store: Store, s, api: FantasyAPI, world) -> list[str]:
+    """Revisión final del once: si el primer partido de la jornada es dentro de ≤25 min, espera a que falten 2 min, vuelve a leer la plantilla (lo que
+    hayan resuelto las pujas de las 20:53) y las alineaciones probables sin caché, y guarda el once (`_apply_lineup`). Así se saca del once a quien no vaya a ser
+    titular (alineaciones oficiales a ~1 h del partido) y se mete a quien se acaba de fichar."""
+    kickoff = world.clause_freeze[1] if world.clause_freeze else None
+    wait = ap.final_lineup_wait((kickoff - datetime.now(timezone.utc)).total_seconds() if kickoff else None)
+    if wait is None:
+        return []
+    if wait > 0:
+        time.sleep(wait)
+    fresh = _world(api, s, trends=False)
+    _ff_probs(store, api, fresh, force=True)
+    store.set("lineup_retry_after", "0")
+    msg = _apply_lineup(store, api, fresh)
+    return [f"⏱️ Once revisado a 2 min del primer partido: {msg}"] if msg else []
 
 
 def _apply_lineup(store: Store, api: FantasyAPI, world) -> str | None:
@@ -1967,7 +1984,8 @@ def _watch_once(store: Store, s) -> str:
     st("panel", _sync_panel, store, s, api, world)
 
     sniped = st("bloqueo (ejecución)", _siege_go, store, s, api, world, default=[]) + \
-        st("al segundo", _timed_actions, store, api, world, reserved, default=[])
+        st("al segundo", _timed_actions, store, api, world, reserved, default=[]) + \
+        st("once final", _final_lineup, store, s, api, world, default=[])
     if sniped:
         _deliver(store, s, st, sniped)
     _LAST_CTX.update(api=api, world=world)

@@ -186,9 +186,9 @@ def fetch_probable_lineups(players: list[Player]) -> dict[str, dict]:
             if row["prob"] is not None:
                 prob = row["prob"]
             elif row["once"] == "titular":
-                prob = 85
+                prob = 97       # sin porcentaje y marcado titular/suplente: es la sección «Alineaciones confirmadas» (el once oficial, ~1 h antes del partido)
             elif row["once"] == "suplente":
-                prob = 25
+                prob = 3
             else:
                 prob = 50
             lesionado = row["lesion"] not in ("-1", "", None)

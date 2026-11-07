@@ -58,3 +58,17 @@ class LateBidTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FinalLineupWait(unittest.TestCase):
+    def test_waits_until_two_minutes_before_kickoff(self):
+        self.assertEqual(ap.final_lineup_wait(14 * 60), 12 * 60)
+
+    def test_acts_now_when_less_than_two_minutes_are_left(self):
+        self.assertEqual(ap.final_lineup_wait(90), 0.0)
+
+    def test_nothing_when_far_away_or_already_started(self):
+        self.assertIsNone(ap.final_lineup_wait(40 * 60))
+        self.assertIsNone(ap.final_lineup_wait(0))
+        self.assertIsNone(ap.final_lineup_wait(-30))
+        self.assertIsNone(ap.final_lineup_wait(None))
