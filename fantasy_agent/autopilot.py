@@ -760,14 +760,28 @@ KEY_SHIELD_RATIO = 1.25      # a un jugador clave (≥ KEY_PLAYER_LOSS) se le bl
                              # de vuelta sus puntos (22/10: Soria, ×1,19, 7,4 pts/jornada, sin portero equivalente en el mercado, y nadie lo blindó)
 
 
-SHIELD_RISE_PER_DAY = 0.01       # un jugador que sube ≥1% al día también merece blindaje (su subida se la llevaría el rival que lo clausule)
-SHIELD_RISE_MIN_VALUE = 8_000_000
-SHIELD_RISE_DAYS = 5             # días de subida que se protegen al puntuar un blindaje
+# Cuánto sigue subiendo (a 5 días) lo que ya sube. 1/11/2026, 30.570 jugador-día de 361 jugadores (valores diarios): si la subida media de los últimos 3 días es
+# <0,5%/día no hay inercia (+0,6%); 0,5–1% → +2,9% (64% suben); 1–2% → +5,7% (83%); 2–3% → +10,0% (94%); ≥3% → +23% (98%). En % sube menos cuanto más caro es
+# (con ≥1%/día: 2–8M +16%, 8–20M +12%, 20–50M +9,7%, 50–100M +6,9%, ≥100M +5,7%) pero en € sube más (0,8M, 1,7M, 3,2M, 4,5M, 7,3M).
+DRIFT_5D = ((0.005, 0.006), (0.01, 0.029), (0.02, 0.057), (0.03, 0.10), (1.0, 0.15))      # (subida diaria máx., % esperado a 5 días); ≥3%/día se limita a 15% (por prudencia)
+TIER_MULT = ((8e6, 1.5), (20e6, 1.2), (50e6, 0.95), (100e6, 0.65), (1e12, 0.55))      # (valor máx., multiplicador del % según lo caro que es)
+
+
+def expected_5d_gain(value: int, rise_per_day: float) -> float:
+    """€ (en M€) que se espera que siga subiendo un jugador en los próximos 5 días, según lo que sube ahora (media diaria de los últimos 3 días, fracción)."""
+    if value <= 0 or rise_per_day <= 0:
+        return 0.0
+    pct = next(p for limit, p in DRIFT_5D if rise_per_day < limit)
+    mult = next(m for limit, m in TIER_MULT if value < limit)
+    return value * pct * mult / 1e6
+
+
+SHIELD_RISE_MIN_GAIN_M = 1.0     # un blindaje es gratis pero solo hay 2 por jornada: se gasta en quien se espera que suba ≥1M€ en 5 días (o quite puntos)
 
 
 def shield_value(loss: float, rise_per_day: float, value: int) -> float:
-    """Lo que se protege con un blindaje, en M€: puntos que se perderían (× valor del punto × horizonte) más la subida que seguirá teniendo en unos días."""
-    return loss * POINT_VALUE_M * GAIN_HORIZON + max(0.0, rise_per_day) * value / 1e6 * SHIELD_RISE_DAYS
+    """Lo que se protege con un blindaje, en M€: puntos que se perderían (× valor del punto × horizonte) más lo que se espera que siga subiendo en 5 días."""
+    return loss * POINT_VALUE_M * GAIN_HORIZON + expected_5d_gain(value, rise_per_day)
 
 
 def shield_target(exposed: list[SquadSlot], mine: list[Player], form: dict[str, float] | None = None,
@@ -780,7 +794,7 @@ def shield_target(exposed: list[SquadSlot], mine: list[Player], form: dict[str, 
     for sl in exposed:
         loss = sale_loss(mine, sl.player.id, form)
         rise = (rises or {}).get(sl.player.id, 0.0)
-        rising = rise >= SHIELD_RISE_PER_DAY and sl.player.market_value >= SHIELD_RISE_MIN_VALUE
+        rising = expected_5d_gain(sl.player.market_value, rise) >= SHIELD_RISE_MIN_GAIN_M
         if loss < SHIELD_MIN_LOSS and not rising:
             continue
         ratio = sl.clause / sl.player.market_value if sl.player.market_value else 1.0
@@ -923,13 +937,13 @@ def is_stalled(trend_d1: float | None, trend_d7: float, value: int) -> bool:
 
 
 STAR_HOLD_MIN = 1.08            # oferta mínima por una estrella en subida cuando su protección acaba (las ofertas de la liga llegan a ×1,10; p90 ×1,08)
-STAR_MIN_VALUE = 40_000_000
-STAR_RISE_D7 = 8.0              # sube ≥8% en 7 días
+STAR_HOLD_GAIN_M = 2.0          # estrella en subida = jugador clave que se espera que suba ≥2M€ en 5 días (progresivo: un 2%/día en 40M ya lo es; un 1%/día en 5M no)
 
 
-def is_star_hold(player: Player, loss: float, trend_d7: float) -> bool:
-    """Jugador clave (quitarlo baja el once ≥ KEY_PLAYER_LOSS), caro y subiendo fuerte: se conserva en lugar de venderlo por un margen pequeño."""
-    return loss >= KEY_PLAYER_LOSS and player.market_value >= STAR_MIN_VALUE and trend_d7 >= STAR_RISE_D7 and player.status.lower() not in INJURED
+def is_star_hold(player: Player, loss: float, rise_per_day: float) -> bool:
+    """Jugador clave (quitarlo baja el once ≥ KEY_PLAYER_LOSS) que sigue subiendo lo bastante en € (`expected_5d_gain`): se conserva en lugar de venderlo por
+    un margen pequeño. Es en euros y no en %: el 4% de un jugador de 150M (6M) vale más que el 8% de uno de 40M (3,2M), y los caros suben menos en %."""
+    return loss >= KEY_PLAYER_LOSS and expected_5d_gain(player.market_value, rise_per_day) >= STAR_HOLD_GAIN_M and player.status.lower() not in INJURED
 
 
 def offer_decision(
@@ -963,10 +977,10 @@ def offer_decision(
         cuando = "ya es clausulable" if exposed_in == 0 else f"su protección acaba en {exposed_in:.0f}h"
         why = f"{cuando}: solo lo vendo si la oferta supera lo que cobraría si me lo clausulan ({clause / 1e6:.2f}M)" if clause \
             else f"{cuando}: mejor venderlo que ver cómo se lo lleva un rival"
-        if is_star_hold(player, loss, trend_d7) and need < STAR_HOLD_MIN:
+        if is_star_hold(player, loss, rise_per_day) and need < STAR_HOLD_MIN:
             # Una estrella en subida no se suelta por un 1-3% sobre su cláusula (1/11/2026, Diomande): si lo clausulan cobramos lo mismo, y mientras tanto se
             # blinda (al segundo de abrirse) y se sube la cláusula. Solo se vende con una oferta excepcional.
-            need, why = STAR_HOLD_MIN, f"estrella en subida (+{trend_d7:.0f}% en 7 días): solo la vendo con una oferta excepcional; {why}"
+            need, why = STAR_HOLD_MIN, f"estrella en subida (+{trend_d7:.0f}% en 7 días, ~{expected_5d_gain(value, rise_per_day):.1f}M€ más a 5 días): solo la vendo con una oferta excepcional; {why}"
     elif injured:
         # Lesionado: no puntúa y su valor puede caer cuando se enfríe lo que hizo antes. Se cobra a
         # ~su valor (siempre sin bajar de lo pagado) en vez de esperar una subida que ya no usa.

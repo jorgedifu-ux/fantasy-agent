@@ -289,3 +289,25 @@ class ShieldRisingPlayer(unittest.TestCase):
         riser = pl("rise", 3, 2.0, 13_500_000)
         got = ap.shield_target([sl(riser), sl(star)], mine + [riser], None, {"rise": 0.03})
         self.assertEqual(got.player.id, "m3")
+
+
+class ExpectedGain(unittest.TestCase):
+    """Subida esperada a 5 días: en % baja con el precio, en € sube (datos del 1/11/2026)."""
+
+    def test_no_momentum_below_half_a_percent_per_day(self):
+        self.assertLess(ap.expected_5d_gain(30_000_000, 0.003), 0.3)
+        self.assertEqual(ap.expected_5d_gain(30_000_000, 0.0), 0.0)
+
+    def test_more_momentum_more_gain(self):
+        v = 30_000_000
+        self.assertLess(ap.expected_5d_gain(v, 0.007), ap.expected_5d_gain(v, 0.015))
+        self.assertLess(ap.expected_5d_gain(v, 0.015), ap.expected_5d_gain(v, 0.025))
+
+    def test_expensive_players_rise_less_in_percent_but_more_in_euros(self):
+        cheap, dear = 10_000_000, 150_000_000
+        r = 0.015
+        self.assertGreater(ap.expected_5d_gain(cheap, r) / 10, ap.expected_5d_gain(dear, r) / 150)     # en %
+        self.assertGreater(ap.expected_5d_gain(dear, r), ap.expected_5d_gain(cheap, r))                # en €
+
+    def test_freeman_case(self):
+        self.assertAlmostEqual(ap.expected_5d_gain(13_540_000, 0.027), 1.62, places=1)
