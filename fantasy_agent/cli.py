@@ -1220,12 +1220,12 @@ def _squad_changes(store: Store, world) -> list[str]:
     return events
 
 
-def _ff_probs(store: Store, api: FantasyAPI, world, force: bool = False) -> dict[str, dict]:
+def _ff_probs(store: Store, api: FantasyAPI, world, force: bool = False, live: bool = False) -> dict[str, dict]:
     """Probabilidad de ser titular (alineación probable de futbolfantasy) de todos los jugadores que nos importan: la plantilla, las de los rivales
     y el mercado. Se guarda en `kv.ff_probs` y se refresca cada 3 h (cada 45 min en las 30 h previas a la jornada, que es cuando cambia). Si la web
     falla se sigue con lo guardado y se reintenta en 10 min."""
     hours = _hours_to_deadline(world)
-    ttl = 10 * 60 if hours is not None and 0 < hours <= 1.5 else 45 * 60 if hours is not None and 0 < hours <= 30 else 3 * 3600   # a 90 min del primer partido salen las alineaciones reales
+    ttl = 10 * 60 if live or (hours is not None and 0 < hours <= 1.5) else 45 * 60 if hours is not None and 0 < hours <= 30 else 3 * 3600   # a 90 min del primer partido salen las alineaciones reales
     cached = json.loads(store.get("ff_probs") or "{}")
     if cached and not force and time.time() - cached.get("at", 0) < ttl:
         return cached.get("p", {})
@@ -1260,6 +1260,23 @@ def _remember_xi(store: Store, api: FantasyAPI, eleven) -> None:
         pass
 
 
+LIVE_MIN_GAIN = 0.8      # pts esperados que ha de ganar un cambio de once con la jornada en juego
+
+
+def _started_teams(api: FantasyAPI, week: int) -> set[str] | None:
+    """Equipos cuyo partido de la jornada `week` ya ha empezado (sus jugadores ya no se pueden mover). None si no se puede saber."""
+    try:
+        now = datetime.now(timezone.utc)
+        out: set[str] = set()
+        for m in api.calendar(week) or []:
+            when = models.parse_dt(m.get("matchDate") or m.get("date"))
+            if m.get("matchState") == 7 or (when and when <= now):
+                out.update({str(m.get("localId")), str(m.get("visitorId"))})
+        return out
+    except Exception:
+        return None
+
+
 def _final_lineup(store: Store, s, api: FantasyAPI, world) -> list[str]:
     """Revisión final del once: si el primer partido de la jornada es dentro de ≤25 min, espera a que falten 2 min, vuelve a leer la plantilla (lo que
     hayan resuelto las pujas de las 20:53) y las alineaciones probables sin caché, y guarda el once (`_apply_lineup`). Así se saca del once a quien no vaya a ser
@@ -1281,9 +1298,17 @@ def _apply_lineup(store: Store, api: FantasyAPI, world) -> str | None:
     """Guarda el mejor once (gratis y reversible hasta que empieza la jornada). La forma del
     cuerpo no está documentada: prueba las variantes de `autopilot.lineup_payload`, vuelve a
     leer la alineación y solo da por buena la que de verdad se ha guardado (y la recuerda)."""
+    started: set[str] = set()
+    is_live = False
     try:
-        if (api.current_week() or {}).get("isLive"):
-            return None  # jornada en juego: no tocar
+        wk = api.current_week() or {}
+        if wk.get("isLive"):
+            is_live = True
+            # 8/11/2026 (comprobado con una permuta Guedes↔Cepeda y vuelta atrás): la API acepta cambios del once con la jornada en juego mientras el partido del
+            # jugador no haya empezado. Se pueden usar las alineaciones confirmadas de cada partido (~1 h antes) y no solo las del primero.
+            started = _started_teams(api, int(wk.get("weekNumber") or 0))
+            if started is None:
+                return None
     except Exception:
         pass
     if time.time() < float(store.get("lineup_retry_after") or 0):
@@ -1291,7 +1316,7 @@ def _apply_lineup(store: Store, api: FantasyAPI, world) -> str | None:
     slots = [sl for sl in world.my_slots if sl.player.position_id in ap.FIELD_POSITIONS and sl.player_team_id]
     if not slots:
         return None
-    ff = _ff_probs(store, api, world)       # alineación probable de futbolfantasy (en caché); lo que falte, por el historial de jornadas
+    ff = _ff_probs(store, api, world, live=is_live)       # alineación probable de futbolfantasy (en caché); lo que falte, por el historial de jornadas
     probs = {sl.player.id: ff[sl.player.id] for sl in slots if sl.player.id in ff}
     missing = [sl.player for sl in slots if sl.player.id not in probs]
     if missing:
@@ -1306,9 +1331,23 @@ def _apply_lineup(store: Store, api: FantasyAPI, world) -> str | None:
         factor = ap.fixture_factor(fx.home if fx else None, world.laliga_rank.get(fx.rival_id) if fx else None,
                                    len(world.laliga_rank) or 20, player.position_id)
         cands.append(lineup.Candidate(player, prob, round(ap.xpts(player, world.recent_form, start=False) * prob * factor, 2)))
+    in_xi_now: set[str] = set()
+    if started:
+        in_xi_now = ap.lineup_ids(api.lineup(world.my_team_id))
+        ptid0 = {sl.player.id: sl.player_team_id for sl in slots}
+        locked_in = {c.player.id for c in cands if c.player.team_id in started and ptid0[c.player.id] in in_xi_now}
+        # quien ya ha jugado no se mueve: si estaba en el once se queda (prima enorme) y si no, no puede entrar
+        cands = [replace(c, xpts=c.xpts + 1000) if c.player.id in locked_in else c for c in cands if c.player.team_id not in started or c.player.id in locked_in]
     formation, eleven, total = lineup.best_eleven(cands)
     if not eleven or not formation:
         return None
+    if started:
+        if not locked_in <= {c.player.id for c in eleven}:
+            return None      # ninguna formación permite mantener a los que ya han jugado: no se toca
+        cur_total = sum(c.xpts for c in cands if ptid0[c.player.id] in in_xi_now)
+        if total - cur_total < LIVE_MIN_GAIN:
+            return None      # con la jornada en juego solo se toca si el cambio compensa (un 0,2 de ventaja del modelo es ruido)
+        total = round(total - 1000 * len(locked_in), 1)
     ptid = {sl.player.id: sl.player_team_id for sl in slots}
     ids_by_pos = {pos: [ptid[c.player.id] for c in eleven if c.player.position_id == pos] for pos in ap.FIELD_POSITIONS}
     desired = {ptid[c.player.id] for c in eleven}
