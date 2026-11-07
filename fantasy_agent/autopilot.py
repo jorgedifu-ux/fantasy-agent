@@ -965,6 +965,7 @@ def is_stalled(trend_d1: float | None, trend_d7: float, value: int) -> bool:
     return trend_d1 is not None and value >= STALL_MIN_VALUE and trend_d7 > STALL_D7 and trend_d1 <= STALL_D1
 
 
+DEAD_WEIGHT_MIN = 0.97        # oferta mínima por un suplente sin puntos, de cláusula inalcanzable, cuyo valor baja
 STAR_HOLD_MIN = 1.08            # oferta mínima por una estrella en subida cuando su protección acaba (las ofertas de la liga llegan a ×1,10; p90 ×1,08)
 STAR_HOLD_GAIN_M = 2.0          # estrella en subida = jugador clave que se espera que suba ≥2M€ en 5 días (progresivo: un 2%/día en 40M ya lo es; un 1%/día en 5M no)
 
@@ -998,6 +999,13 @@ def offer_decision(
         return "hold", ("venderlo ahora te dejaría sin once legal y aún no hay recambio: primero el recambio (mientras, se protege "
                         "con blindaje o subiendo su cláusula)")
     key = loss >= KEY_PLAYER_LOSS
+    if loss < BENCH_LOSS and clause and value and clause / value > ATTRACTIVE_RATIO and trend_d7 < 0 and trend_d3 <= 0 and not injured:
+        # Peso muerto (8/11, Rafita): no puntúa, su cláusula (×1,19) está por encima de lo que nadie paga —así que «que me paguen la cláusula» no va a pasar— y su
+        # valor baja (lo que baja sigue bajando: −6% a los 5 días en 30.570 jugador-día). La regla de no vender por debajo de lo pagado (4/10) supone que un rival
+        # pagará esa cláusula; aquí no, y solo deja un hueco parado y pérdidas que crecen. Se vende a la primera oferta ≥ ×0,97.
+        why = (f"peso muerto: no puntúa, su cláusula ({clause / value:.2f}×) está por encima de lo que se paga y el valor baja "
+               f"({trend_d7:+.0f}% en 7 días): salgo a ≥×{DEAD_WEIGHT_MIN:.2f}")
+        return ("accept", f"{why}: x{ratio:.2f} el valor") if ratio >= DEAD_WEIGHT_MIN else ("hold", f"x{ratio:.2f} el valor, exijo x{DEAD_WEIGHT_MIN:.2f} ({why})")
     stalled = is_stalled(trend_d1, trend_d7, value) and not key and not no_sell
     leaving = exit_mode and not key and not no_sell and not stalled
     at_risk = exposed_in is not None and exposed_in <= AT_RISK_HOURS

@@ -632,3 +632,22 @@ class StarHold(unittest.TestCase):
 class StarHoldNeedsShield(StarHold):
     def test_without_shields_left_a_star_is_sold_at_the_normal_threshold(self):
         self.assertEqual(self.decide(1.03, shield_left=False), "accept")
+
+
+class DeadWeight(unittest.TestCase):
+    """8/11, Rafita: suplente sin puntos, cláusula ×1,19 (nadie la paga) y valor bajando; no se queda esperando recuperar lo pagado."""
+
+    def decide(self, ratio, **kw):
+        p = player("r", 2, 3.6, 6_950_000)
+        args = dict(loss=0.0, trend_d7=-4.6, trend_d3=-1.0, exposed_in=0.0, clause=8_300_000, cost_basis=8_300_000)
+        args.update(kw)
+        return ap.offer_decision(Offer(id="o", money=round(6_950_000 * ratio), from_manager="LaLiga", is_system=True), p, **args)[0]
+
+    def test_sells_at_a_small_discount(self):
+        self.assertEqual(self.decide(0.98), "accept")
+        self.assertEqual(self.decide(0.95), "hold")
+
+    def test_not_if_he_is_rising_or_has_an_attractive_clause_or_matters(self):
+        self.assertEqual(self.decide(0.98, trend_d7=6.0, trend_d3=2.0), "hold")
+        self.assertEqual(self.decide(0.98, clause=7_300_000), "hold")          # ×1,05: un rival podría pagarla
+        self.assertEqual(self.decide(0.98, loss=2.0), "hold")
