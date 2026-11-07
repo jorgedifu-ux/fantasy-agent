@@ -262,6 +262,24 @@ def purchase_prices(api: FantasyAPI, league_id: str, my_manager_id: str, pages: 
     return out
 
 
+def purchase_ages(api: FantasyAPI, league_id: str, my_manager_id: str, pages: int = 3) -> dict[str, float]:
+    """Días desde que compraste a cada jugador (puja o cláusula; la compra más reciente), según la actividad de la liga."""
+    out: dict[str, float] = {}
+    now = datetime.now(timezone.utc)
+    for page in range(pages):
+        try:
+            items = models.as_list(api.activity(league_id, page), "activity", "elements")
+        except Exception:
+            break
+        for a in items:
+            if models.to_int(models.pick(a, "activityTypeId")) in (1, 31) and str(models.pick(a, "user1Id")) == my_manager_id:
+                pid = str(models.pick(a, "playerMasterId", default=""))
+                when = models.parse_dt(models.pick(a, "createdAt"))
+                if pid and when and pid not in out:
+                    out[pid] = (now - when).total_seconds() / 86400
+    return out
+
+
 def trade_history(api: FantasyAPI, league_id: str, manager_id: str) -> tuple[list[dict], dict[str, dict]]:
     """Operaciones de un mánager según `/activity`: (cerradas, abiertas). Una operación es una
     compra (puja ganada o cláusula pagada) emparejada con su salida (venta, o cláusula que sufre)."""

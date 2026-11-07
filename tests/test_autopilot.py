@@ -651,3 +651,17 @@ class DeadWeight(unittest.TestCase):
         self.assertEqual(self.decide(0.98, trend_d7=6.0, trend_d3=2.0), "hold")
         self.assertEqual(self.decide(0.98, clause=7_300_000), "hold")          # ×1,05: un rival podría pagarla
         self.assertEqual(self.decide(0.98, loss=2.0), "hold")
+
+
+class StuckDeadWeight(unittest.TestCase):
+    """8/11: Rafita llevaba 19 días por debajo de lo pagado, sin puntos y con una cláusula que nadie paga."""
+
+    def offer(self, value, ratio):
+        return Offer(id="o", money=round(value * ratio), from_manager="LaLiga", is_system=True)
+
+    def test_flat_underwater_bench_player_stuck_for_a_week_leaves(self):
+        p = player("r", 2, 3.6, 6_950_000)
+        args = dict(loss=0.0, exposed_in=0.0, clause=8_300_000, cost_basis=8_300_000, trend_d7=0.5, trend_d3=0.0)
+        self.assertEqual(ap.offer_decision(self.offer(6_950_000, 0.98), p, held_days=19, **args)[0], "accept")
+        self.assertEqual(ap.offer_decision(self.offer(6_950_000, 0.98), p, held_days=2, **args)[0], "hold")
+        self.assertEqual(ap.offer_decision(self.offer(6_950_000, 0.98), p, held_days=19, **dict(args, trend_d7=8.0, trend_d3=3.0))[0], "hold")

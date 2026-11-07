@@ -1106,6 +1106,7 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
     sold = set(json.loads(store.get("sold_ids") or "[]"))
     events: list[str] = []
     paid: dict[str, int] | None = None  # lo que pagué por cada uno: se consulta solo si hay ofertas
+    ages: dict[str, float] = {}         # días desde que compré a cada uno
     exit_since: dict[str, float] = json.loads(store.get("exit_since") or "{}")
     need_slots = json.loads(store.get("slots_needed") or "{}")
     n_slots = int(need_slots.get("n", 0)) if time.time() - need_slots.get("at", 0) < 6 * 3600 else 0
@@ -1121,6 +1122,7 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
         if paid is None:
             my_manager = next((r.manager_id for r in world.standing if r.team_id == world.my_team_id), "")
             paid = service.purchase_prices(api, world.league_id, my_manager)
+            ages = service.purchase_ages(api, world.league_id, my_manager)
         name, pid = notify.esc(sl.player.name), sl.player.id
         offers, read_exc = None, None
         for attempt in range(2):     # un corte pasajero de la API (5xx, timeout) se reintenta una vez y, si persiste, se salta sin avisar: el pase siguiente (15 min) lo vuelve a leer
@@ -1169,7 +1171,7 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
                 exposed_in=ap.hours_until_exposed(sl, now), squad_full=len(world.my_slots) >= s.max_squad,
                 cost_basis=None if in_siege else paid.get(pid),
                 injured=sl.player.status.lower() in ap.INJURED, clause=sl.clause, reserve_keeper=reserve_keeper,
-                free_slot=free_slot, trend_d1=trend.d1, exit_mode=exit_flag, exit_late=exit_late,
+                free_slot=free_slot, trend_d1=trend.d1, exit_mode=exit_flag, exit_late=exit_late, held_days=ages.get(pid),
                 rise_per_day=max(0.0, trend.d3) / 3 / 100, shield_left=_shield_left_cached(api, world, now),
             )
             if store.alert_is_new(f"dec:{o.id}:{decision}", ttl_hours=36):
