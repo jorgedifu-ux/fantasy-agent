@@ -784,6 +784,19 @@ def shield_value(loss: float, rise_per_day: float, value: int) -> float:
     return loss * POINT_VALUE_M * GAIN_HORIZON + expected_5d_gain(value, rise_per_day)
 
 
+def shield_score(sl: SquadSlot, mine: list[Player], form: dict[str, float] | None = None, rises: dict[str, float] | None = None) -> float:
+    """Cuánto merece un blindaje (M€ protegidos por € de cláusula sobre su valor); 0 si no lo merece (ver `shield_target`)."""
+    loss = sale_loss(mine, sl.player.id, form)
+    rise = (rises or {}).get(sl.player.id, 0.0)
+    rising = expected_5d_gain(sl.player.market_value, rise) >= SHIELD_RISE_MIN_GAIN_M
+    if loss < SHIELD_MIN_LOSS and not rising:
+        return 0.0
+    ratio = sl.clause / sl.player.market_value if sl.player.market_value else 1.0
+    if ratio > (KEY_SHIELD_RATIO if loss >= KEY_PLAYER_LOSS else ATTRACTIVE_RATIO):
+        return 0.0    # si un rival paga una cláusula tan por encima del valor, ganamos dinero: no se gasta blindaje (salvo en un clave, ver KEY_SHIELD_RATIO)
+    return shield_value(loss, rise if rising else 0.0, sl.player.market_value) / max(ratio, 1.0)
+
+
 def shield_target(exposed: list[SquadSlot], mine: list[Player], form: dict[str, float] | None = None,
                   rises: dict[str, float] | None = None) -> SquadSlot | None:
     """A quién blindar de entre los que ya se pueden clausular. Que nos clausulen no es perder dinero (cobramos la cláusula, que es ≥ el valor): lo que
@@ -792,18 +805,34 @@ def shield_target(exposed: list[SquadSlot], mine: list[Player], form: dict[str, 
     € de cláusula sobre su valor. Si nadie lo merece, no se gasta el blindaje."""
     best, best_score = None, 0.0
     for sl in exposed:
-        loss = sale_loss(mine, sl.player.id, form)
-        rise = (rises or {}).get(sl.player.id, 0.0)
-        rising = expected_5d_gain(sl.player.market_value, rise) >= SHIELD_RISE_MIN_GAIN_M
-        if loss < SHIELD_MIN_LOSS and not rising:
-            continue
-        ratio = sl.clause / sl.player.market_value if sl.player.market_value else 1.0
-        if ratio > (KEY_SHIELD_RATIO if loss >= KEY_PLAYER_LOSS else ATTRACTIVE_RATIO):
-            continue    # si un rival paga una cláusula tan por encima del valor, ganamos dinero: no se gasta blindaje (salvo en un clave, ver KEY_SHIELD_RATIO)
-        score = shield_value(loss, rise if rising else 0.0, sl.player.market_value) / max(ratio, 1.0)
+        score = shield_score(sl, mine, form, rises)
         if score > best_score:
             best, best_score = sl, score
     return best
+
+
+SHIELD_HORIZON_H = 14 * 24      # a la hora de repartir los 2 blindajes de la jornada se miran los que se abren en las próximas 2 semanas
+
+
+def shield_worth_it(sl: SquadSlot, slots: list[SquadSlot], mine: list[Player], form: dict[str, float] | None, rises: dict[str, float] | None,
+                    now: datetime, remaining: int) -> bool:
+    """¿Merece `sl` uno de los `remaining` blindajes que quedan, comparado con los que aún se van a abrir en las próximas 2 semanas? Solo hay 2 por jornada
+    y duran 24 h: el reparto es por valor (puntos y dinero), no por orden de aparición (8/11: Pepelu y Pubill se habrían llevado los dos antes que Dituro)."""
+    if remaining <= 0:
+        return False
+    mine_score = shield_score(sl, mine, form, rises)
+    if mine_score <= 0:
+        return False
+    better = 0
+    for other in slots:
+        if other.player.id == sl.player.id:
+            continue
+        h = hours_until_exposed(other, now)
+        if h is None or h > SHIELD_HORIZON_H or (other.shielded_until and other.shielded_until > now):
+            continue
+        if shield_score(other, mine, form, rises) > mine_score:
+            better += 1
+    return better < remaining
 
 
 def opens_at(slot: SquadSlot) -> datetime | None:

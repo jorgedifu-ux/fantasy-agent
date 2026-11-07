@@ -8,6 +8,9 @@
 - **Sáb 31/10 19:42** se abre la cláusula de Lamine Yamal (Josinho, 194,7M).
 - **5/11** probar `tick --dry-run` / `_delever` antes del parón; **8–22/11** parón: crédito hasta el 20% solo para pujas de inversión.
 
+## 00000) REVISIÓN CONTINUA DEL MODELO (a petición del usuario, 8/11): repetir con cada jornada que pase y más datos, para TODO
+Reejecutar y comparar con lo anotado en ESTADO (8/11): (1) predicción de puntos: media vs forma (`FORM_WEIGHT`), encogimiento por valor, efecto del rival (goles a favor del rival en sus últimos 5 partidos: −1,1 pts frente a ataques fuertes), casa/fuera (hoy sin efecto), P(≥60 min); (2) inercia de la subida a 5 días por tramo (`DRIFT_5D`, `TIER_MULT`); (3) ofertas de LaLiga (umbral ×1,05, mediana ×0,997); (4) pujas vs cláusulas (resultado por origen); (5) umbrales de blindaje, estrella en subida (2M€) y oferta mínima ×1,08; (6) cuánto se paga de más en cláusulas y pujas; (7) calidad del once elegido frente al mejor posible; (8) `star_log` (frecuencia de estrellas en el mercado) y `exposure_log` (qué cláusulas se pagan según múltiplo, tendencia y blindaje: base para decidir si subir cláusulas compensa); (9) modo inversión (resultado de las compras con origen «inversión»). Cada revisión se anota aquí con fecha y se cambia una cosa cada vez.
+
 ## 0000) Para el 20/11 (J13) — anotado a petición del usuario
 - **Comprobar el once final.** El bot debe esperar hasta las 20:58 (2 min antes del primer partido, 21:00), releer la plantilla y guardar el once. Mirar en la bitácora y en el chat que salió el aviso «⏱️ Once revisado a 2 min del primer partido».
 - **Comprobar las alineaciones confirmadas.** futbolfantasy publica ~1 h antes quién es titular y quién suplente (sección «Alineaciones confirmadas»). Hay que ver que el bot lo lee bien: un jugador confirmado suplente debe salir del once y otro entrar. Hasta ahora no se ha visto esa página en un partido de LaLiga antes de empezar.
@@ -18,6 +21,7 @@
 - **Modo inversión** (decidido por el usuario el 7/11: se activa ya, sin esperar al parón, y se mantiene el crédito al 20%): 60% del saldo libre y hasta ~80M de crédito desde que el siguiente primer partido queda a ≥7 días (`cli._invest_mode`). Sin historial real (0 compras con origen «inversión»): revisar cada día los resultados.
 - Una sola portera de verdad (Dituro, pérdida 6,4 pts) y suplente de 0,6M; su cláusula se abre el jue 12/11 (blindaje al segundo). Comprar un portero de reserva antes del 20/11.
 - Margen mínimo (≥1,5 pts esperados) para sustituir a un titular: sigue pendiente de decidir.
+- **Estudio: ¿compensa subir la cláusula de un jugador clave?** (pedido por el usuario el 8/11, con Yamal/Josinho y Mbappé/Pep como referencia; coste = la mitad de lo subido, sin tope). Falta saber con qué probabilidad paga un rival según el múltiplo; `exposure_log` lo irá midiendo (≥2 semanas). Dato suelto: Josinho pagó ×1,34 por Nsongo (12M, subida nuestra) el 4/11.
 
 ## 00) Revisión del 1/11 (J11 en juego: 30 pts contra 38; J10: 40 contra 59; brecha 247)
 - **Dinero**: patrimonio 384,3M (+54,8M en 7 días, +51% desde el 5/10; caja 54,2M, plantilla 330,1M); hemos recortado a todos en dinero; en puntos no (Josinho 500, nosotros 253). Yamal le aporta ~11 pts/jornada.

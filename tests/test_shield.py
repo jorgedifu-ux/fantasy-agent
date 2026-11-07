@@ -311,3 +311,41 @@ class ExpectedGain(unittest.TestCase):
 
     def test_freeman_case(self):
         self.assertAlmostEqual(ap.expected_5d_gain(13_540_000, 0.027), 1.62, places=1)
+
+
+class ShieldAllocation(unittest.TestCase):
+    """8/11: con 2 blindajes para ~11 jugadores que se abren, se reparten por valor y no por orden de aparición."""
+
+    def setUp(self):
+        self.mine = squad()
+        self.star = next(p for p in self.mine if p.id == "m3")           # titular de peso
+        self.mid = next(p for p in self.mine if p.id == "m1")
+        self.small = pl("rise", 3, 2.0, 13_500_000)
+        self.mine = self.mine + [self.small]
+        self.rises = {"rise": 0.03}
+
+    def slots(self):
+        a, b, c = sl(self.star), sl(self.mid), sl(self.small)
+        a.clause_locked_until = NOW + timedelta(days=4)
+        b.clause_locked_until = NOW + timedelta(days=3)
+        c.clause_locked_until = NOW + timedelta(hours=1)
+        return a, b, c
+
+    def test_the_cheap_riser_gives_way_when_one_shield_is_left_and_better_ones_are_coming(self):
+        a, b, c = self.slots()
+        self.assertFalse(ap.shield_worth_it(c, [a, b, c], self.mine, None, self.rises, NOW, 1))
+        self.assertTrue(ap.shield_worth_it(a, [a, b, c], self.mine, None, self.rises, NOW, 1))
+
+    def test_with_two_shields_the_top_two_get_them(self):
+        a, b, c = self.slots()
+        worth = [ap.shield_worth_it(x, [a, b, c], self.mine, None, self.rises, NOW, 2) for x in (a, b, c)]
+        self.assertEqual(sum(worth), 2)
+        self.assertTrue(worth[0])
+
+    def test_nothing_without_shields_left(self):
+        a, b, c = self.slots()
+        self.assertFalse(ap.shield_worth_it(a, [a, b, c], self.mine, None, self.rises, NOW, 0))
+
+    def test_the_riser_gets_it_if_no_better_player_is_coming(self):
+        a, b, c = self.slots()
+        self.assertTrue(ap.shield_worth_it(c, [c], self.mine, None, self.rises, NOW, 1))

@@ -236,6 +236,21 @@ def _rises(world) -> dict[str, float]:
     return {pid: max(0.0, tr.d3) / 3 / 100 for pid, (_, tr) in world.trends.items()}
 
 
+def _shields_left(api: FantasyAPI, world, now: datetime) -> int:
+    """Blindajes que quedan en la ventana actual (2 por equipo desde que acaba una jornada hasta que acaba la siguiente). 0 si la API dice «límite alcanzado»."""
+    quota = _shield_quota(api, world, now)
+    if quota is False:
+        return 0
+    try:
+        my_manager = next((r.manager_id for r in world.standing if r.team_id == world.my_team_id), "")
+        out = world.outlook
+        start = out.prev_last if out and out.prev_last and out.prev_last <= now else (out.prev_last - timedelta(days=7) if out and out.prev_last else now - timedelta(days=4))
+        used = service.shields_used_since(api, world.league_id, my_manager, start)
+    except Exception:
+        used = 0
+    return max(1 if quota else 0, 2 - used)
+
+
 def _shield_quota(api: FantasyAPI, world, now: datetime) -> bool | None:
     """¿Quedan blindajes en esta jornada? Dos por equipo, desde que acaba una jornada hasta que acaba la siguiente (LaLiga, doble
     blindaje: 24 h cada uno). Se pregunta a `check_shield` con un jugador nuestro ya expuesto (200 = quedan; 400 «limit reached» = no;
@@ -273,6 +288,12 @@ def _auto_shield(store: Store, s, api: FantasyAPI, world) -> tuple[str | None, s
     name = notify.esc(target.player.name)
     info = dict(loss=ap.sale_loss([sl.player for sl in world.my_slots], target.player.id, world.recent_form),
                 clause_ratio=round(target.clause / target.player.market_value, 3))
+    mine_p = [sl.player for sl in world.my_slots]
+    left = _shields_left(api, world, now)
+    if not ap.shield_worth_it(target, world.my_slots, mine_p, world.recent_form, _rises(world), now, left):
+        if store.alert_is_new(f"shield_reserve:{target.player.id}", ttl_hours=12):
+            store.log_decision("blindaje", target.player.name, "reservado", f"quedan {left} blindaje(s) y se abren antes jugadores que valen más: se guardan para ellos", **info)
+        return None, ""
     try:
         api.check_shield(world.league_id, target.player_team_id)
     except Exception as exc:
@@ -447,6 +468,12 @@ def _invest_mode(world) -> bool:
     haber empezado a las 21:00 del viernes y esperaba a que acabara la J12."""
     hours = world.outlook.hours_to_next if world.outlook else None
     return bool(world.outlook and world.outlook.in_break) or (hours is not None and hours >= ap.LEVER_OPEN_H)
+
+
+def _log_exposure(store: Store, world) -> None:
+    """Registro en sombra de las cláusulas abiertas de la liga (ver `exposure`)."""
+    from . import exposure
+    exposure.snapshot(store, world, datetime.now(timezone.utc), _rises(world))
 
 
 def _log_stars(store: Store, world) -> None:
@@ -917,6 +944,9 @@ def _timed_actions(store: Store, api: FantasyAPI, world, reserved: list[ap.Move]
     shields = ap.shield_at_open(world.my_slots, mine, world.recent_form, now, SNIPE_WINDOW_S, _rises(world))
     frozen = lambda at: bool(world.clause_freeze and world.clause_freeze[0] <= at < world.clause_freeze[1])   # noqa: E731  congelada: nadie puede clausular
     shields = [sl for sl in shields if not frozen(ap.opens_at(sl))]
+    if shields:
+        left = _shields_left(api, world, now)
+        shields = [sl for sl in shields if ap.shield_worth_it(sl, world.my_slots, mine, world.recent_form, _rises(world), now, left)]
     if shields and _shield_quota(api, world, now) is not False:
         for sl in shields:
             jobs.append((ap.opens_at(sl), "shield", sl))
@@ -1980,6 +2010,7 @@ def _watch_once(store: Store, s) -> str:
     siege_events, siege_reserve = st("bloqueo", _siege_tick, store, s, api, world, default=([], 0))
     events += siege_events
     st("estrellas (registro)", _log_stars, store, world)
+    st("exposición (registro)", _log_exposure, store, world)
     bought, reserved = st("compras", _acquire, store, s, api, world, extra_reserved=siege_reserve, default=([], []))
     events += bought
     if bought:
