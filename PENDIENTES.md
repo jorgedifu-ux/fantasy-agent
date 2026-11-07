@@ -8,6 +8,12 @@
 - **Sáb 31/10 19:42** se abre la cláusula de Lamine Yamal (Josinho, 194,7M).
 - **5/11** probar `tick --dry-run` / `_delever` antes del parón; **8–22/11** parón: crédito hasta el 20% solo para pujas de inversión.
 
+## 000) Del 7/11 (J12 en juego; patrimonio 428,1M, +57M en 7 días; J11 ganada 63–53 a Josinho)
+- Hecho: once final a 2 min del primer partido; alineaciones confirmadas leídas como 97%/3%. **Verificar el 20/11** (J13) en la bitácora y el chat que a las 20:58 el bot relee y guarda el once.
+- **Decidir antes del parón (empieza el 8/11 al acabar la J12)**: el modo inversión no tiene historial (0 compras con origen «inversión»). Con `in_break` pasa al 60% del saldo libre y hasta 80,8M de crédito. Opciones: dejarlo, bajar el crédito al 10% o desactivarlo (`LEVERAGE_PCT`).
+- Una sola portera de verdad (Dituro, pérdida 6,4 pts) y suplente de 0,6M; su cláusula se abre el jue 12/11 (blindaje al segundo). Comprar un portero de reserva antes del 20/11.
+- Margen mínimo (≥1,5 pts esperados) para sustituir a un titular: sigue pendiente de decidir.
+
 ## 00) Revisión del 1/11 (J11 en juego: 30 pts contra 38; J10: 40 contra 59; brecha 247)
 - **Dinero**: patrimonio 384,3M (+54,8M en 7 días, +51% desde el 5/10; caja 54,2M, plantilla 330,1M); hemos recortado a todos en dinero; en puntos no (Josinho 500, nosotros 253). Yamal le aporta ~11 pts/jornada.
 - **Qué falló en la J11**: (1) se vendieron titulares antes de empezar (Hancko +9 pts, Bryan +9, Soria +4, Ibañez 0, Agoumé 1) y el once registrado llevó rellenos (Belocian 0, Gayá 0, Requena 3); los refuerzos (Yoel Lago, Germán V.) llegaron el sábado, ya empezada la jornada, y solo suman desde la J12. (2) Los fichados por forma (Dituro 14→0, Pepelu 9→1, Germán 11→−1, Freeman 13→2, Javi R. 8→1) se desinflaron: la forma reciente pesaba demasiado. (3) Soria (media 6,6) se vendió porque el recambio recién comprado (Dituro, forma inflada) hacía que «perderlo» costara poco: círculo vicioso por la forma.

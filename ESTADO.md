@@ -511,3 +511,8 @@ mejor que venderlos antes; subir la cláusula solo compensaría con subidas muy 
 - **Estrella en subida** (`is_star_hold`, `STAR_HOLD_MIN = 1,08`): un jugador clave (≥3 pts/jornada), de ≥40M y subiendo ≥8% en 7 días no se vende por menos de ×1,08 su valor cuando su protección acaba (antes bastaba un 1,5–3% sobre lo que cobraríamos si lo clausulan: el bot iba a vender a Diomande esa noche).
 - **Error «no he podido leer las ofertas por X»** (Freeman): un corte pasajero de la API se reintenta una vez y se salta sin avisar; los errores no pasajeros avisan una vez cada 6 h.
 
+## Cambios del 7/11/2026
+- **Once final** (`cli._final_lineup`, `autopilot.final_lineup_wait`): el 6/11 la puja por Huijsen se resolvió a las 20:53, el siguiente pase del bot fue a las 21:01 (jornada ya en juego) y no pudo meterlo en el once. Ahora, si el primer partido es dentro de ≤25 min, el job espera hasta 2 min antes, relee la plantilla (lo que resolvió el mercado) y las alineaciones sin caché, y guarda el once. La caché de alineaciones probables baja a 10 min en la última hora y media.
+- **Alineaciones confirmadas**: futbolfantasy publica «Alineaciones confirmadas» (jugadores marcados titular/suplente sin porcentaje, ~1 h antes). Se leen como 97% / 3% (antes 85% / 25%). No se ha podido ver una página real antes de un partido de LaLiga: comprobar el 20/11 con el log del primer partido.
+- Diomande se vendió el 1/11 a 121,5M (×1,09; fichado a 80,1M el 19/10) con la regla de «oferta excepcional ≥ ×1,08». Hancko se recompró el 2/11 a 60,3M tras venderlo a 52,9M el 27/10 (−7,4M de ida y vuelta, el caso que motivó la regla de estrella en subida).
+
