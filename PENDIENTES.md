@@ -8,9 +8,14 @@
 - **Sáb 31/10 19:42** se abre la cláusula de Lamine Yamal (Josinho, 194,7M).
 - **5/11** probar `tick --dry-run` / `_delever` antes del parón; **8–22/11** parón: crédito hasta el 20% solo para pujas de inversión.
 
+## 0000) Para el 20/11 (J13) — anotado a petición del usuario
+- **Comprobar el once final.** El bot debe esperar hasta las 20:58 (2 min antes del primer partido, 21:00), releer la plantilla y guardar el once. Mirar en la bitácora y en el chat que salió el aviso «⏱️ Once revisado a 2 min del primer partido».
+- **Comprobar las alineaciones confirmadas.** futbolfantasy publica ~1 h antes quién es titular y quién suplente (sección «Alineaciones confirmadas»). Hay que ver que el bot lo lee bien: un jugador confirmado suplente debe salir del once y otro entrar. Hasta ahora no se ha visto esa página en un partido de LaLiga antes de empezar.
+- Solo vale para el primer partido: una vez empezada la jornada el once no se toca.
+
 ## 000) Del 7/11 (J12 en juego; patrimonio 428,1M, +57M en 7 días; J11 ganada 63–53 a Josinho)
 - Hecho: once final a 2 min del primer partido; alineaciones confirmadas leídas como 97%/3%. **Verificar el 20/11** (J13) en la bitácora y el chat que a las 20:58 el bot relee y guarda el once.
-- **Decidir antes del parón (empieza el 8/11 al acabar la J12)**: el modo inversión no tiene historial (0 compras con origen «inversión»). Con `in_break` pasa al 60% del saldo libre y hasta 80,8M de crédito. Opciones: dejarlo, bajar el crédito al 10% o desactivarlo (`LEVERAGE_PCT`).
+- **Modo inversión** (decidido por el usuario el 7/11: se activa ya, sin esperar al parón, y se mantiene el crédito al 20%): 60% del saldo libre y hasta ~80M de crédito desde que el siguiente primer partido queda a ≥7 días (`cli._invest_mode`). Sin historial real (0 compras con origen «inversión»): revisar cada día los resultados.
 - Una sola portera de verdad (Dituro, pérdida 6,4 pts) y suplente de 0,6M; su cláusula se abre el jue 12/11 (blindaje al segundo). Comprar un portero de reserva antes del 20/11.
 - Margen mínimo (≥1,5 pts esperados) para sustituir a un titular: sigue pendiente de decidir.
 

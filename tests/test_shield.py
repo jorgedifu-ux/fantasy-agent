@@ -262,3 +262,30 @@ class ShieldAtOpen(unittest.TestCase):
         a, b = (next(p for p in mine if p.id == i) for i in ("m3", "d3"))
         got = ap.shield_at_open([self.locked(a, 20), self.locked(b, 5)], mine, None, NOW, 25 * 60)
         self.assertEqual([x.player.id for x in got], ["d3", "m3"])
+
+
+class ShieldRisingPlayer(unittest.TestCase):
+    """7/11 (Freeman): un jugador que sube con fuerza se blinda aunque quitarlo apenas cueste puntos; la subida se la llevaría quien lo clausule."""
+
+    def test_a_cheap_riser_is_shielded_even_if_he_is_replaceable(self):
+        mine = squad()
+        mayol = next(p for p in mine if p.id == "mayol")
+        riser = pl("rise", 3, 2.0, 13_500_000)
+        mine = mine + [riser]
+        self.assertIsNone(ap.shield_target([sl(riser)], mine, None))                              # sin subida: no merece blindaje
+        got = ap.shield_target([sl(riser)], mine, None, {"rise": 0.03})                           # +3% al día
+        self.assertEqual(got.player.id, "rise")
+
+    def test_a_slow_riser_or_a_tiny_player_is_not(self):
+        mine = squad()
+        riser = pl("rise", 3, 2.0, 13_500_000)
+        tiny = pl("tiny", 3, 2.0, 1_000_000)
+        self.assertIsNone(ap.shield_target([sl(riser)], mine + [riser], None, {"rise": 0.004}))
+        self.assertIsNone(ap.shield_target([sl(tiny)], mine + [tiny], None, {"tiny": 0.2}))
+
+    def test_a_starter_still_wins_over_a_small_riser(self):
+        mine = squad()
+        star = next(p for p in mine if p.id == "m3")
+        riser = pl("rise", 3, 2.0, 13_500_000)
+        got = ap.shield_target([sl(riser), sl(star)], mine + [riser], None, {"rise": 0.03})
+        self.assertEqual(got.player.id, "m3")

@@ -32,7 +32,7 @@ class FakeAPI:
 class LateBidTests(unittest.TestCase):
     def setUp(self):
         self.store = Store(Path(tempfile.mkdtemp()) / "t.db")
-        self.world = SimpleNamespace(league_id="L", my_slots=[], recent_form={}, clause_freeze=None)
+        self.world = SimpleNamespace(league_id="L", my_slots=[], recent_form={}, clause_freeze=None, trends={})
         p = patch("fantasy_agent.cli.time.sleep")
         self.sleep = p.start()
         self.addCleanup(p.stop)
@@ -72,3 +72,19 @@ class FinalLineupWait(unittest.TestCase):
         self.assertIsNone(ap.final_lineup_wait(0))
         self.assertIsNone(ap.final_lineup_wait(-30))
         self.assertIsNone(ap.final_lineup_wait(None))
+
+
+class InvestMode(unittest.TestCase):
+    def world(self, hours, in_break=False):
+        from fantasy_agent.service import Outlook
+        o = Outlook(next_first=None, prev_last=None, in_break=in_break)
+        o.__class__ = type("O", (Outlook,), {"hours_to_next": property(lambda self: hours)})
+        return SimpleNamespace(outlook=o)
+
+    def test_on_in_a_break_or_when_the_next_matchday_is_a_week_away(self):
+        self.assertTrue(cli._invest_mode(self.world(100, in_break=True)))
+        self.assertTrue(cli._invest_mode(self.world(309)))
+
+    def test_off_close_to_a_matchday(self):
+        self.assertFalse(cli._invest_mode(self.world(100)))
+        self.assertFalse(cli._invest_mode(SimpleNamespace(outlook=None)))

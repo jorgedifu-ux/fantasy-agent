@@ -760,20 +760,33 @@ KEY_SHIELD_RATIO = 1.25      # a un jugador clave (≥ KEY_PLAYER_LOSS) se le bl
                              # de vuelta sus puntos (22/10: Soria, ×1,19, 7,4 pts/jornada, sin portero equivalente en el mercado, y nadie lo blindó)
 
 
-def shield_target(exposed: list[SquadSlot], mine: list[Player], form: dict[str, float] | None = None) -> SquadSlot | None:
-    """A quién blindar de entre los que ya se pueden clausular. Que nos clausulen nunca es perder dinero
-    (cobramos la cláusula, que es ≥ el valor): lo que duele es perder puntos. Por eso solo se blinda a quien
-    nos quitaría puntos de verdad (`SHIELD_MIN_LOSS`), y de ellos al que más duele y más barato resulta
-    clausular (pts perdidos / cláusula sobre valor). Si nadie lo merece, no se gasta el blindaje."""
+SHIELD_RISE_PER_DAY = 0.01       # un jugador que sube ≥1% al día también merece blindaje (su subida se la llevaría el rival que lo clausule)
+SHIELD_RISE_MIN_VALUE = 8_000_000
+SHIELD_RISE_DAYS = 5             # días de subida que se protegen al puntuar un blindaje
+
+
+def shield_value(loss: float, rise_per_day: float, value: int) -> float:
+    """Lo que se protege con un blindaje, en M€: puntos que se perderían (× valor del punto × horizonte) más la subida que seguirá teniendo en unos días."""
+    return loss * POINT_VALUE_M * GAIN_HORIZON + max(0.0, rise_per_day) * value / 1e6 * SHIELD_RISE_DAYS
+
+
+def shield_target(exposed: list[SquadSlot], mine: list[Player], form: dict[str, float] | None = None,
+                  rises: dict[str, float] | None = None) -> SquadSlot | None:
+    """A quién blindar de entre los que ya se pueden clausular. Que nos clausulen no es perder dinero (cobramos la cláusula, que es ≥ el valor): lo que
+    duele es perder puntos y, en un jugador que sube (`rises`: pid -> fracción al día), perder lo que le queda de subida, que se llevaría el rival
+    (7/11: Freeman, +100% en dos semanas, quedó sin blindaje porque solo se miraban los puntos). Se blinda a quien más se protege por cada
+    € de cláusula sobre su valor. Si nadie lo merece, no se gasta el blindaje."""
     best, best_score = None, 0.0
     for sl in exposed:
         loss = sale_loss(mine, sl.player.id, form)
-        if loss < SHIELD_MIN_LOSS:
+        rise = (rises or {}).get(sl.player.id, 0.0)
+        rising = rise >= SHIELD_RISE_PER_DAY and sl.player.market_value >= SHIELD_RISE_MIN_VALUE
+        if loss < SHIELD_MIN_LOSS and not rising:
             continue
         ratio = sl.clause / sl.player.market_value if sl.player.market_value else 1.0
         if ratio > (KEY_SHIELD_RATIO if loss >= KEY_PLAYER_LOSS else ATTRACTIVE_RATIO):
             continue    # si un rival paga una cláusula tan por encima del valor, ganamos dinero: no se gasta blindaje (salvo en un clave, ver KEY_SHIELD_RATIO)
-        score = loss / max(ratio, 1.0)
+        score = shield_value(loss, rise if rising else 0.0, sl.player.market_value) / max(ratio, 1.0)
         if score > best_score:
             best, best_score = sl, score
     return best
@@ -784,7 +797,8 @@ def opens_at(slot: SquadSlot) -> datetime | None:
     return max((d for d in (slot.clause_locked_until, slot.shielded_until) if d), default=None)
 
 
-def shield_at_open(slots: list[SquadSlot], mine: list[Player], form: dict[str, float] | None, now: datetime, window_s: float) -> list[SquadSlot]:
+def shield_at_open(slots: list[SquadSlot], mine: list[Player], form: dict[str, float] | None, now: datetime, window_s: float,
+                   rises: dict[str, float] | None = None) -> list[SquadSlot]:
     """Jugadores que se abren dentro de `window_s` segundos y merecerían un blindaje (`shield_target`) en el segundo exacto de abrirse. Los rivales pagan
     «casi siempre ×1,00 a las 0,1–2 h de abrirse», así que esperar al siguiente pase del bot (hasta ~15 min) es un riesgo real (26/10, Hancko)."""
     out = []
@@ -792,7 +806,7 @@ def shield_at_open(slots: list[SquadSlot], mine: list[Player], form: dict[str, f
         h = hours_until_exposed(sl, now)
         if h is None or h <= 0 or h * 3600 > window_s or not sl.player_team_id:
             continue
-        if shield_target([sl], mine, form) is None:
+        if shield_target([sl], mine, form, rises) is None:
             continue
         out.append(sl)
     return sorted(out, key=lambda sl: opens_at(sl) or now)

@@ -231,6 +231,11 @@ def _sync_plan(store: Store, s, world) -> plan_mod.Plan:
     return plan_mod.load_plan(store)
 
 
+def _rises(world) -> dict[str, float]:
+    """Subida diaria (fracción) de cada jugador según su tendencia de 3 días."""
+    return {pid: max(0.0, tr.d3) / 3 / 100 for pid, (_, tr) in world.trends.items()}
+
+
 def _shield_quota(api: FantasyAPI, world, now: datetime) -> bool | None:
     """¿Quedan blindajes en esta jornada? Dos por equipo, desde que acaba una jornada hasta que acaba la siguiente (LaLiga, doble
     blindaje: 24 h cada uno). Se pregunta a `check_shield` con un jugador nuestro ya expuesto (200 = quedan; 400 «limit reached» = no;
@@ -262,7 +267,7 @@ def _auto_shield(store: Store, s, api: FantasyAPI, world) -> tuple[str | None, s
     exposed = [sl for sl in world.my_slots if ap.hours_until_exposed(sl, now) == 0]
     if not exposed:
         return None, ""
-    target = ap.shield_target(exposed, [sl.player for sl in world.my_slots], world.recent_form)
+    target = ap.shield_target(exposed, [sl.player for sl in world.my_slots], world.recent_form, _rises(world))
     if target is None:
         return None, ""  # nadie que al irse nos quite puntos de verdad: no se gasta el blindaje
     name = notify.esc(target.player.name)
@@ -434,6 +439,14 @@ def _deliver(store: Store, s, st, events: list[str]) -> None:
             before = len(notify.SENT_IDS)
             st("enviar resumen", _send_or_queue, store, s, text)
             tidy.track(store, notify.SENT_IDS[before:])       # el resumen sí se borra con «actualizar y limpiar» (queda en /resumen, 24 h)
+
+
+def _invest_mode(world) -> bool:
+    """Modo inversión (`INVEST_FRACTION_BREAK` del saldo libre): en un parón, y también desde que empieza la última jornada antes de uno (el once ya está
+    guardado y el siguiente primer partido queda a ≥7 días, `autopilot.LEVER_OPEN_H`, que es cuando también se abre el crédito). 7/11: el modo debía
+    haber empezado a las 21:00 del viernes y esperaba a que acabara la J12."""
+    hours = world.outlook.hours_to_next if world.outlook else None
+    return bool(world.outlook and world.outlook.in_break) or (hours is not None and hours >= ap.LEVER_OPEN_H)
 
 
 def _log_stars(store: Store, world) -> None:
@@ -663,7 +676,7 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
     events: list[str] = []
     spent = sum(m.cost for m in plan)
     invest_budget = int((budget - spent) * ap.PARAMS["invest_mult"] * (
-        ap.INVEST_FRACTION_BREAK if world.outlook.in_break else ap.INVEST_FRACTION_NORMAL))
+        ap.INVEST_FRACTION_BREAK if _invest_mode(world) else ap.INVEST_FRACTION_NORMAL))
     slots_left = s.max_squad - len(mine) - len(plan)
     taken = frozenset(pl.id for pl in mine) | {m.player.id for m in plan}
     candidates = (ap.invest_moves(world.market, trends, skip_player_ids=taken, form=world.recent_form)
@@ -901,7 +914,7 @@ def _timed_actions(store: Store, api: FantasyAPI, world, reserved: list[ap.Move]
         elif mv.kind in ("clause", "invest_clause") and mv.unlock_at and 0 < (mv.unlock_at - now).total_seconds() <= SNIPE_WINDOW_S:
             jobs.append((mv.unlock_at, "clause", mv))
     mine = [sl.player for sl in world.my_slots]
-    shields = ap.shield_at_open(world.my_slots, mine, world.recent_form, now, SNIPE_WINDOW_S)
+    shields = ap.shield_at_open(world.my_slots, mine, world.recent_form, now, SNIPE_WINDOW_S, _rises(world))
     frozen = lambda at: bool(world.clause_freeze and world.clause_freeze[0] <= at < world.clause_freeze[1])   # noqa: E731  congelada: nadie puede clausular
     shields = [sl for sl in shields if not frozen(ap.opens_at(sl))]
     if shields and _shield_quota(api, world, now) is not False:
@@ -1952,9 +1965,9 @@ def _watch_once(store: Store, s) -> str:
     if lineup_msg:
         events.append(lineup_msg)
     out = world.outlook
-    if out.in_break and store.alert_is_new(f"break_on:{out.next_first:%Y%m%d}", ttl_hours=24 * 30):
+    if _invest_mode(world) and out.next_first and store.alert_is_new(f"break_on:{out.next_first:%Y%m%d}", ttl_hours=24 * 30):
         events.append(
-            f"📅 <b>Parón en curso</b> hasta el {out.next_first.astimezone():%d/%m %H:%M}: no hay once que "
+            f"📅 <b>Modo inversión</b> hasta el {out.next_first.astimezone():%d/%m %H:%M} (parón o jornada sin tiempo de reaccionar): no hay once que "
             f"puntuar, así que dedico el {int(ap.INVEST_FRACTION_BREAK * 100)}% del saldo libre a inversión "
             f"(jugadores en subida sostenida que se revenden)."
         )
