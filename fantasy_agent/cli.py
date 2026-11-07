@@ -251,6 +251,17 @@ def _shields_left(api: FantasyAPI, world, now: datetime) -> int:
     return max(1 if quota else 0, 2 - used)
 
 
+_SHIELD_LEFT_CACHE: dict = {}
+
+
+def _shield_left_cached(api: FantasyAPI, world, now: datetime) -> bool:
+    """¿Queda algún blindaje? (una consulta por pase, para `offer_decision`)."""
+    key = id(world)
+    if _SHIELD_LEFT_CACHE.get("k") != key:
+        _SHIELD_LEFT_CACHE.update(k=key, v=_shields_left(api, world, now) > 0)
+    return bool(_SHIELD_LEFT_CACHE["v"])
+
+
 def _shield_quota(api: FantasyAPI, world, now: datetime) -> bool | None:
     """¿Quedan blindajes en esta jornada? Dos por equipo, desde que acaba una jornada hasta que acaba la siguiente (LaLiga, doble
     blindaje: 24 h cada uno). Se pregunta a `check_shield` con un jugador nuestro ya expuesto (200 = quedan; 400 «limit reached» = no;
@@ -1159,7 +1170,7 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
                 cost_basis=None if in_siege else paid.get(pid),
                 injured=sl.player.status.lower() in ap.INJURED, clause=sl.clause, reserve_keeper=reserve_keeper,
                 free_slot=free_slot, trend_d1=trend.d1, exit_mode=exit_flag, exit_late=exit_late,
-                rise_per_day=max(0.0, trend.d3) / 3 / 100,
+                rise_per_day=max(0.0, trend.d3) / 3 / 100, shield_left=_shield_left_cached(api, world, now),
             )
             if store.alert_is_new(f"dec:{o.id}:{decision}", ttl_hours=36):
                 store.log_decision("oferta", sl.player.name, decision, why, ratio=round(o.money / sl.player.market_value, 3),

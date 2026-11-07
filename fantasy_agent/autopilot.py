@@ -980,7 +980,7 @@ def offer_decision(
     breaks_xi: bool = False, hours_to_deadline: float | None = None, exposed_in: float | None = None,
     squad_full: bool = False, cost_basis: int | None = None, no_sell: bool = False, liquidity: bool = False,
     injured: bool = False, clause: int = 0, reserve_keeper: bool = False, free_slot: bool = False,
-    trend_d1: float | None = None, exit_mode: bool = False, exit_late: bool = False, rise_per_day: float = 0.0,
+    trend_d1: float | None = None, exit_mode: bool = False, exit_late: bool = False, rise_per_day: float = 0.0, shield_left: bool = True,
 ) -> tuple[str, str]:
     """("accept" | "reject" | "hold", motivo). "hold" = no hacer nada y dejar que caduque.
     `no_sell`: jugador de una operación en curso (bloqueo al líder): no se vende todavía."""
@@ -1006,9 +1006,10 @@ def offer_decision(
         cuando = "ya es clausulable" if exposed_in == 0 else f"su protección acaba en {exposed_in:.0f}h"
         why = f"{cuando}: solo lo vendo si la oferta supera lo que cobraría si me lo clausulan ({clause / 1e6:.2f}M)" if clause \
             else f"{cuando}: mejor venderlo que ver cómo se lo lleva un rival"
-        if is_star_hold(player, loss, rise_per_day) and need < STAR_HOLD_MIN:
+        if shield_left and is_star_hold(player, loss, rise_per_day) and need < STAR_HOLD_MIN:
             # Una estrella en subida no se suelta por un 1-3% sobre su cláusula (1/11/2026, Diomande): si lo clausulan cobramos lo mismo, y mientras tanto se
-            # blinda (al segundo de abrirse) y se sube la cláusula. Solo se vende con una oferta excepcional.
+            # blinda (al segundo de abrirse) y se sube la cláusula. Solo se vende con una oferta excepcional. Sin blindajes (`shield_left` False) no se retiene: el usuario
+            # prefiere vender a LaLiga antes que regalar el jugador a un rival (8/11).
             need, why = STAR_HOLD_MIN, f"estrella en subida (+{trend_d7:.0f}% en 7 días, ~{expected_5d_gain(value, rise_per_day):.1f}M€ más a 5 días): solo la vendo con una oferta excepcional; {why}"
     elif injured:
         # Lesionado: no puntúa y su valor puede caer cuando se enfríe lo que hizo antes. Se cobra a

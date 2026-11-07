@@ -627,3 +627,8 @@ class StarHold(unittest.TestCase):
         d = ap.offer_decision(Offer(id="o", money=20_600_000, from_manager="LaLiga", is_system=True), cheap, loss=5.0, trend_d7=17.0,
                               trend_d3=5.0, exposed_in=20.0, clause=20_000_000, rise_per_day=0.017)[0]
         self.assertEqual(d, "accept")
+
+
+class StarHoldNeedsShield(StarHold):
+    def test_without_shields_left_a_star_is_sold_at_the_normal_threshold(self):
+        self.assertEqual(self.decide(1.03, shield_left=False), "accept")
