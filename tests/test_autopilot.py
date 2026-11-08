@@ -665,3 +665,21 @@ class StuckDeadWeight(unittest.TestCase):
         self.assertEqual(ap.offer_decision(self.offer(6_950_000, 0.98), p, held_days=19, **args)[0], "accept")
         self.assertEqual(ap.offer_decision(self.offer(6_950_000, 0.98), p, held_days=2, **args)[0], "hold")
         self.assertEqual(ap.offer_decision(self.offer(6_950_000, 0.98), p, held_days=19, **dict(args, trend_d7=8.0, trend_d3=3.0))[0], "hold")
+
+
+class FarFromDeadline(unittest.TestCase):
+    """8/11 (Javi Rueda): lejos de la jornada no se paga una prima alta por cubrir un hueco; cerca, con una mejora real, sí."""
+
+    def moves(self):
+        squad = eleven()[1:]                                    # falta el portero: cualquier portero suma muchísimo
+        gk = player("newgk", 1, 5.0, value=5_000_000)
+        mv = ap.clause_moves([rival_slot(gk, clause=int(5_000_000 * 1.14))], NOW)
+        return squad, mv
+
+    def test_a_14_percent_premium_is_accepted_close_to_the_deadline(self):
+        squad, mv = self.moves()
+        self.assertEqual([m.player.id for m in ap.plan_acquisitions(squad, mv, 20_000_000, max_squad=23)], ["newgk"])
+
+    def test_and_rejected_when_far_from_the_deadline(self):
+        squad, mv = self.moves()
+        self.assertEqual(ap.plan_acquisitions(squad, mv, 20_000_000, max_squad=23, strict_premium=True), [])

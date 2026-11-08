@@ -499,6 +499,7 @@ class RivalPremium:
     p75: float
 
 
+NEAR_DEADLINE_H = 72            # con más de 3 días por delante no hay prisa por tapar huecos: sin prima alta ni jugadores a la baja para cubrir una posición (8/11: Javi Rueda, ×1,14, cayendo)
 EMERGENCY_H = 36     # solo a ≤36 h de la jornada se paga una cláusula con prima alta para cubrir una posición; antes, se espera a las pujas del mercado (cada día a las 20:53)
 
 
@@ -633,7 +634,7 @@ PREMIUM_OVERRIDE_GAIN = 3.0
 def plan_acquisitions(
     mine: list[Player], moves: list[Move], budget: int, *,
     form: dict[str, float] | None = None, max_squad: int = 16, rivals: RivalPremium | None = None,
-    vacated: list[Player] | tuple = (), needed_positions: frozenset[int] = frozenset(),
+    vacated: list[Player] | tuple = (), needed_positions: frozenset[int] = frozenset(), strict_premium: bool = False,
 ) -> list[Move]:
     """Cartera de compras: en cada paso elige la que más puntos suma por recurso gastado (con
     penalización si alimenta al líder o es venganza), la añade a la plantilla simulada y
@@ -668,7 +669,7 @@ def plan_acquisitions(
             # vendan (18/10: Bil Nsongo a ×1,18 se compró por un hueco que dejaría Zabiri, que sigue en la plantilla).
             real = roster + list(vacated)
             real_gain = squad_value(real + [m.player], form) - squad_value(real, form) if vacated else gain
-            if m.kind == "clause" and premium > MAX_CLAUSE_PREMIUM and real_gain < PREMIUM_OVERRIDE_GAIN and not m.bonus:
+            if m.kind == "clause" and premium > MAX_CLAUSE_PREMIUM and (real_gain < PREMIUM_OVERRIDE_GAIN or strict_premium) and not m.bonus:
                 continue   # prima alta sin una mejora real del once: se la come la prima (ver MAX_CLAUSE_PREMIUM)
             net_m = net_value_m(gain, cost, value, m.drift, m.rival_loss)
             if net_m <= 0:

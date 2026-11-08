@@ -762,8 +762,13 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
     now = datetime.now(timezone.utc)
     committed, incoming = _committed_bids(store, world, api)
     budget = int((world.my_cash or 0) * (1 - s.budget_reserve_pct)) - committed - extra_reserved
+    star_saved = json.loads(store.get("star_plan") or "null")
+    if star_saved:           # hay un plan de estrella vigente: su dinero no se toca (ni crédito: dejaría la caja corta cuando llegue el momento de pagar la cláusula)
+        budget -= int(star_saved["price"] * 1.01) + 2_000_000
     credit = ap.credit_room(sum(sl.player.market_value for sl in world.my_slots), (world.my_cash or 0) - committed - extra_reserved,
                             _hours_to_deadline(world), s.leverage_pct)
+    if star_saved:
+        credit = 0
     if budget <= 0 and credit <= 0:
         return [], []
     budget = max(0, budget)
@@ -793,7 +798,8 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
                 trends[m.player.id] = analysis.trend_from_history(models.parse_value_history(api.market_value_history(m.player.id)))
             except Exception:
                 pass
-    short = set(short_pos)
+    far = hours_left is None or hours_left > ap.NEAR_DEADLINE_H
+    short = set() if far else set(short_pos)
     leader_players = [sl.player for sl in world.rival_slots if sl.owner_team_id == world.leader_team_id]
     kept = []
     for m in moves:
@@ -806,7 +812,7 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
         kept.append(m)
     moves = kept
     star_cost = star_mv.cost if star_mv else 0
-    plan = ap.plan_acquisitions(planning_mine, moves, max(0, budget - star_cost), vacated=[p for p in mine if p.id in vacating], needed_positions=short_pos, form=world.recent_form, max_squad=s.max_squad,
+    plan = ap.plan_acquisitions(planning_mine, moves, max(0, budget - star_cost), vacated=[p for p in mine if p.id in vacating], needed_positions=frozenset() if far else short_pos, strict_premium=far, form=world.recent_form, max_squad=s.max_squad,
                                 rivals=_rival_premium(store, api, world))
     if star_mv:
         plan = [star_mv] + plan
@@ -2115,11 +2121,11 @@ def _watch_once(store: Store, s) -> str:
     events += siege_events
     st("estrellas (registro)", _log_stars, store, world)
     st("exposición (registro)", _log_exposure, store, world)
+    events += st("modo estrella", _star_mode, store, s, api, world, default=[])
     bought, reserved = st("compras", _acquire, store, s, api, world, extra_reserved=siege_reserve, default=([], []))
     events += bought
     if bought:
         world = _world(api, s, trends=True)
-    events += st("modo estrella", _star_mode, store, s, api, world, default=[])
 
     hours = _hours_to_deadline(world)
     if any(analysis.position_shortage(world.my_slots).values()) and hours is not None and hours <= s.lineup_lock_hours:
