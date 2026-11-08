@@ -45,7 +45,7 @@ class Settings:
     lineup_lock_hours: int
     debt_ceiling_pct: float
     debt_min_hours_lead: float
-    max_squad: int = 16
+    max_squad: int = 23
     leverage_pct: float = 0.20  # LEVERAGE_PCT: crédito para PUJAS de inversión en parones largos (× valor de plantilla; 0,20 = el tope del juego); 0 = apagado
     autotune: str = "shadow"   # AUTOTUNE: shadow (por defecto: calcula y guarda propuestas, NO aplica) | on (aplica) | off
     export_data: bool = True   # EXPORT_DATA=0 deja de publicar el estado en la rama `data` (ver export.py)
@@ -81,7 +81,7 @@ def load_settings() -> Settings:
         lineup_lock_hours=int(os.environ.get("LINEUP_LOCK_HOURS", "24")),
         debt_ceiling_pct=float(os.environ.get("DEBT_CEILING_PCT", "0.20")),
         debt_min_hours_lead=float(os.environ.get("DEBT_MIN_HOURS_LEAD", "36")),
-        max_squad=int(os.environ.get("MAX_SQUAD", "16")),
+        max_squad=int(os.environ.get("MAX_SQUAD", "23")),
         leverage_pct=float(os.environ.get("LEVERAGE_PCT", "0.20")),
         autotune={"1": "on", "on": "on", "0": "off", "off": "off"}.get(os.environ.get("AUTOTUNE", "shadow").lower(), "shadow"),
         export_data=os.environ.get("EXPORT_DATA", "1") != "0",

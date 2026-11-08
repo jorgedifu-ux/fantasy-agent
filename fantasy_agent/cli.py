@@ -721,6 +721,9 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
                   + ap.clause_invest_moves(world.rival_slots, trends, now, freeze=world.clause_freeze, avoid_team_ids=avoid,
                                            skip_player_ids=taken, form=world.recent_form,
                                            leader_team_id=world.leader_team_id or "")) if trends else []
+    if candidates and slots_left <= 0 and store.alert_is_new(f"slots_blocked:{datetime.now():%Y%m%d}:{candidates[0].player.id}", ttl_hours=24):
+        store.log_decision("plazas", ", ".join(m.player.name for m in candidates[:3])[:80], "sin plaza",
+                           f"{len(candidates)} inversión(es) en subida no caben: plantilla {len(mine)} + {len(plan)} fichajes de {s.max_squad}")
     if (invest_budget > 0 or credit > 0) and slots_left > 0 and candidates:
         plan += ap.plan_investments_with_credit(candidates, invest_budget, credit, slots_left)
     # Rotación de capital: si hay inversiones buenas que no se han podido pagar (o no caben en la
