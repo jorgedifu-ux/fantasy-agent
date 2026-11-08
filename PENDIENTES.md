@@ -1,105 +1,91 @@
 # Pendientes — solo lo abierto
 
-> Actualizado el **1/11/2026**. Lo hecho y verificado está en `ESTADO.md`; la evidencia y las ideas antiguas, en `ARCHIVO_PENDIENTES.md`.
-> Orden de prioridades del bot (cerrado el 18/10): 1) once legal siempre · 2) no regalar un titular en subida a un rival · 3) puntos · 4) dinero.
+> Actualizado el **8/11/2026**. Lo hecho y verificado está en `ESTADO.md`; las revisiones y estudios antiguos, íntegros, en `ARCHIVO_PENDIENTES.md`.
+> **Prioridades del bot** (cerradas el 18/10; mandan sobre cualquier regla): 1) once legal siempre · 2) no regalar a un rival un jugador que sube y puntúa · 3) puntos · 4) dinero. **La liga se gana a puntos**: el dinero es un medio.
 
-## Calendario
-- **Jue 29/10 21:00 → vie 30/10 21:00** congelación de cláusulas; **vie 30/10 21:00** empieza la J11 (Aitor Fdez y Gulácsi, porteros de Josinho, quedan libres; ver `siege`).
-- **Sáb 31/10 19:42** se abre la cláusula de Lamine Yamal (Josinho, 194,7M).
-- **5/11** probar `tick --dry-run` / `_delever` antes del parón; **8–22/11** parón: crédito hasta el 20% solo para pujas de inversión.
+## 1. Dónde estamos (8/11)
+- **Dinero**: patrimonio ~434M (caja 35M, plantilla ~400M); +57M en 7 días, +70% desde el 5/10. Hemos recortado a todos en dinero.
+- **Puntos**: 300 contra 539 de Josinho (brecha ~239, J12 a medias). La J11 la ganamos 63–53 (primera vez). Con 26 jornadas por delante hay que puntuar unos 9 más por jornada que él: la palanca es tener estrellas y no regalar puntos.
+- **Calendario**: la J12 acaba hoy a las 21:00; **parón sin partidos hasta la J13 (vie 20/11)**.
+- **Qué hace el bot ahora** (para situarse): vende con la oferta diaria de las 20:53 · blinda (gratis, 24 h, 2 por jornada) a quien más se pierde en puntos o en subida, al segundo de abrirse su cláusula · **modo inversión** (desde que el siguiente partido queda a ≥7 días: 60% del saldo libre en jugadores que suben y hasta ~80M de crédito para pujas) · **modo estrella** (cada día mira si fichar a una estrella por cláusula mejora el once ≥3 pts/jornada; si sí, vende lo necesario y la compra solo) · plantilla de hasta **23** (el juego permite 24) · guarda el once definitivo a 2 min del primer partido.
 
-## 00000) REVISIÓN CONTINUA DEL MODELO (a petición del usuario, 8/11): repetir con cada jornada que pase y más datos, para TODO
-Reejecutar y comparar con lo anotado en ESTADO (8/11): (1) predicción de puntos: media vs forma (`FORM_WEIGHT`), encogimiento por valor, efecto del rival (goles a favor del rival en sus últimos 5 partidos: −1,1 pts frente a ataques fuertes), casa/fuera (hoy sin efecto), P(≥60 min); (2) inercia de la subida a 5 días por tramo (`DRIFT_5D`, `TIER_MULT`); (3) ofertas de LaLiga (umbral ×1,05, mediana ×0,997); (4) pujas vs cláusulas (resultado por origen); (5) umbrales de blindaje, estrella en subida (2M€) y oferta mínima ×1,08; (6) cuánto se paga de más en cláusulas y pujas; (7) calidad del once elegido frente al mejor posible; (8) `star_log` (frecuencia de estrellas en el mercado) y `exposure_log` (qué cláusulas se pagan según múltiplo, tendencia y blindaje: base para decidir si subir cláusulas compensa); (9) modo inversión (resultado de las compras con origen «inversión»). Cada revisión se anota aquí con fecha y se cambia una cosa cada vez.
+## 2. Calendario de lo que viene
+| Cuándo | Qué |
+|---|---|
+| Dom 8/11 20:53 | Ofertas de LaLiga del día; acaba la J12 (21:00). Primer día completo con modo inversión y modo estrella. |
+| Jue 12/11 | Se abre la cláusula de **Dituro**, nuestro único portero de verdad (quitarlo cuesta 6,4 pts): debe blindarse al segundo. |
+| Mar 17/11 ~21:00 | El bot empieza a devolver el crédito (vende desde 72 h antes de la J13): hay que estar en saldo positivo al empezar la jornada o se puntúa 0. |
+| Jue 19/11 21:00 → vie 20/11 21:00 | Congelación de cláusulas. |
+| **Vie 20/11 21:00** | **J13.** Comprobar el once final de las 20:58 (ver sección 3). |
+| 14/06/2027 | Caduca el token de cron-job.org. |
 
-## 0000001) Modo estrella: ¿cuándo compensa? (estudio del 8/11, 12 jornadas: repetir con más datos)
-- Prueba: con cada presupuesto se monta el mejor once 4-4-2 usando solo la media anterior (precios de hoy) y se mide lo que puntuó en las 2 jornadas siguientes (4 pruebas). **Hasta ~350M el mejor once no lleva estrellas (obligar a una resta ~3 pts); a 450M lleva siempre una; a 600M, dos.** Nuestro patrimonio es ~430M: justo en el umbral.
-- Hoy comprar a Mbappé (181M) vendiendo cuatro titulares deja el once esperado en 67,1 frente a 67,8 (o 63,3 si rinde 9): no compensa. Sí compensará cuando el patrimonio suba (~480–500M) o si se rehace el once entero con el mercado.
-- Propuesta (pendiente del OK del usuario): el modo estrella monta cada día el mejor once posible con el patrimonio total (descontando ~5% de fricción por compras/ventas) y compra la estrella solo si mejora ≥3 pts/jornada, vendiendo lo que haga falta (opción B). Registro actual: `star_log`.
+## 3. Comprobaciones con fecha (qué mirar y dónde)
+- **9/11 · Rafita**: se vendió a mano el 8/11 (7,22M, ×1,04, oferta viva) porque la regla «peso muerto» la aceptaba y el bot no lo hizo en las ejecuciones de la noche. **Averiguar por qué** mirando `kv.decisions` en la próxima publicación de datos (`python3 -m fantasy_agent pull`).
+- **9/11 · Primer informe de los modos nuevos**: compras con origen «inversión» (resultado y crédito usado, `review --cloud`), decisiones «estrella» y «plazas» (`kv.decisions`). Sin historial real todavía: revisar cada día.
+- **12/11 · Dituro**: ¿blindado al segundo (decisión «blindaje … al segundo» en la bitácora)? Si no quedan blindajes, decidir si subir su cláusula.
+- **17–19/11 · Crédito**: saldo ≥ 0 antes de la J13; probar con `tick --dry-run` el mismo 17/11.
+- **20/11 · Once final** (primera vez real): a las 20:58 debe salir el aviso «⏱️ Once revisado a 2 min del primer partido»; si ganamos un jugador a las 20:53, tiene que estar en el once.
+- **20/11 · Alineaciones confirmadas**: futbolfantasy publica ~1 h antes quién es titular y quién suplente («Alineaciones confirmadas»); el bot las lee como 97%/3%. Hay que ver con un partido real que un confirmado-suplente sale del once. Solo sirve para el primer partido: con la jornada empezada el once no se toca (se puntúa con el del primer pitido).
 
-## 000001) Plazas libres y tamaño de plantilla (reflexión pedida por el usuario el 8/11, a partir de Cepeda)
-- Cepeda: comprado por cláusula a Pep el 7/11 15:01 (3,57M) y vendido el 8/11 00:31 (3,62M, +0,04M) a la primera oferta, probablemente por la regla «plantilla llena → liberar sitio» (el bot cuenta 16 como llena y tenemos 17–18). Sin coste real, pero es un vaivén.
-- `MAX_SQUAD=16` es un objetivo del bot, no el límite del juego: una guía lo da como **24** (sin confirmar; mirar en las reglas de la app). Hay que decidir si el 16 sigue teniendo sentido ahora que el modo inversión necesita plazas (varias compras a la vez) y que empieza a haber dinero: opciones (a) mantener 16 como disciplina (pocos suplentes parados), (b) subirlo a ~20 y reservar 2 plazas libres para inversiones/estrellas, (c) plazas libres según caja.
-- Medir en unos días: cuántas compras se pierden por falta de plaza y cuántos suplentes se venden «para hacer sitio».
+## 4. Decisiones que esperan al usuario
+- **Margen mínimo para sustituir a un titular** (propuesta: ≥1,5 pts esperados). Motivo: el error de predicción por jugador ronda 1,2 pts; cada cambio con menos margen es ruido más rozamiento (comprar a ×1,0 y vender a ×0,95–1,0).
+- **Subir la cláusula de un jugador clave** (sin tope; cuesta la mitad de lo subido). Falta saber con qué probabilidad paga un rival según el múltiplo: `exposure_log` lo mide; decidir con ≥2 semanas de datos. Dato suelto: Josinho pagó ×1,34 por Nsongo (12M, subida nuestra) el 4/11.
+- **Disparo extra de las 20:32** en cron-job.org (opcional): da margen al once final si GitHub retrasa el pase de las 20:46.
 
-## 00001) Mejorar la elección del once (anotado el 8/11; revisar en unos días con más jornadas)
-- Hoy el rival cuenta por su posición en la tabla (los 4 primeros: ×0,80; el resto, ajuste lineal, `autopilot.fixture_factor`). El usuario duda de que «los primeros cuatro» sea la mejor forma de medirlo.
-- Alternativas a comparar con backtest: goles a favor del rival en sus últimos 5 partidos (con 12 jornadas: titulares 4,0 pts frente a ataques fuertes y 5,2 frente a flojos), goles en contra por posición del jugador (defensas frente a delanteros), puntos que concede cada rival a cada posición, y mezclas. Medir con el once elegido en plantillas aleatorias (ver ESTADO 8/11) y con nuestras alineaciones reales.
-- Solo se decide el once del pitido inicial del primer partido (con la jornada en juego no se puede cambiar).
+## 5. Datos que el bot va recogiendo (estudios en marcha)
+| Registro (`kv`) | Qué guarda | Para qué |
+|---|---|---|
+| `star_log` | Estrellas visibles (mercado o cláusula abierta; media ≥7,5, ≥15M) con forma, tendencia, precio y si podíamos pagarla | Frecuencia y precio de las estrellas; afinar el modo estrella |
+| `exposure_log` | Cada día, cláusulas abiertas o recién blindadas de toda la liga (múltiplo, subida, blindaje) | Probabilidad de que se pague una cláusula según múltiplo → ¿compensa subirla? |
+| `decisions` | Cada venta/hold, blindaje, plan estrella, «sin plaza» | Explicar y auditar cualquier decisión |
+| `swap_log` | Permutas propuestas (solo avisa, no ejecuta) | Backtest: prometían +92,9M, realizaron +16,7M (18%); ejecutar solo con promesa en dinero ≥5% del coste |
 
-## 0000) Para el 20/11 (J13) — anotado a petición del usuario
-- **Comprobar el once final.** El bot debe esperar hasta las 20:58 (2 min antes del primer partido, 21:00), releer la plantilla y guardar el once. Mirar en la bitácora y en el chat que salió el aviso «⏱️ Once revisado a 2 min del primer partido».
-- **Comprobar las alineaciones confirmadas.** futbolfantasy publica ~1 h antes quién es titular y quién suplente (sección «Alineaciones confirmadas»). Hay que ver que el bot lo lee bien: un jugador confirmado suplente debe salir del once y otro entrar. Hasta ahora no se ha visto esa página en un partido de LaLiga antes de empezar.
-- Solo vale para el primer partido: una vez empezada la jornada el once no se toca.
+## 6. Revisión continua del modelo (a petición del usuario: repetir con cada jornada y más datos, para TODO)
+Cambiar **una cosa cada vez** y anotar aquí fecha y resultado. Valor de referencia del 8/11 (12 jornadas):
 
-## 000) Del 7/11 (J12 en juego; patrimonio 428,1M, +57M en 7 días; J11 ganada 63–53 a Josinho)
-- Hecho: once final a 2 min del primer partido; alineaciones confirmadas leídas como 97%/3%. **Verificar el 20/11** (J13) en la bitácora y el chat que a las 20:58 el bot relee y guarda el once.
-- **Modo inversión** (decidido por el usuario el 7/11: se activa ya, sin esperar al parón, y se mantiene el crédito al 20%): 60% del saldo libre y hasta ~80M de crédito desde que el siguiente primer partido queda a ≥7 días (`cli._invest_mode`). Sin historial real (0 compras con origen «inversión»): revisar cada día los resultados.
-- Una sola portera de verdad (Dituro, pérdida 6,4 pts) y suplente de 0,6M; su cláusula se abre el jue 12/11 (blindaje al segundo). Comprar un portero de reserva antes del 20/11.
-- Margen mínimo (≥1,5 pts esperados) para sustituir a un titular: sigue pendiente de decidir.
-- **Estudio: ¿compensa subir la cláusula de un jugador clave?** (pedido por el usuario el 8/11, con Yamal/Josinho y Mbappé/Pep como referencia; coste = la mitad de lo subido, sin tope). Falta saber con qué probabilidad paga un rival según el múltiplo; `exposure_log` lo irá midiendo (≥2 semanas). Dato suelto: Josinho pagó ×1,34 por Nsongo (12M, subida nuestra) el 4/11.
+| Tema | Ahora | Referencia 8/11 | Qué mirar |
+|---|---|---|---|
+| Predicción de puntos | `FORM_WEIGHT` 0,15 (antes 0,40) | Media y mezcla acierta igual (MAE ~3,5); la forma sobrevalora a los «calientes» (7,1 pred. → 6,0 real) | Reentrenar con más jornadas; encogimiento por valor |
+| Rival en el once | Posición en la tabla (top-4 ×0,80) | Titulares: 4,0 pts ante ataques fuertes vs 5,2 ante flojos; casa/fuera sin efecto | Goles a favor del rival (últimos 5), puntos que concede por posición |
+| Quién juega | Prob. de futbolfantasy; confirmados 97%/3% | Titular fijo juega ≥60' el 76% de las veces; rotación 54%; suplente 16% | Backtest de probabilidades |
+| Inercia de la subida | `DRIFT_5D`, `TIER_MULT` | +1–2%/día → +5,7% a 5 días (83% suben); ≥3% → +23%; los caros suben menos en % pero más en € | Recalibrar tablas |
+| Ofertas de LaLiga | Umbral ×1,05 | Mediana ×0,997, p90 ×1,077, máx ×1,10 (485 ofertas); óptimo ×1,04 | Umbral y oferta mínima por estrella (×1,08) |
+| Compras | Pujas con prima p75, cláusulas ≤×1,12 | Cláusulas +57M; pujas −6,3M (casi todas antiguas) | Resultado por origen con cada tanda de compras |
+| Blindaje y estrella en subida | Se miden en euros (`expected_5d_gain`): blindar ≥1M€; estrella ≥2M€ | Hancko, Diomande y Freeman acertados en orden de magnitud | Umbrales de 1M€ y 2M€ |
+| Once elegido | Mejor 4-4-2/… por puntos esperados | Todos los modelos ~49–50 pts en plantillas aleatorias; el mejor posible, 57 | Más información (quién juega) mejora más que más modelo |
+| Modo inversión | 60% del saldo libre + crédito 20% | Ligas: ≥25% en 7 días → +28% a 14 días (82% aciertan) | Resultado real de las compras «inversión» |
+| Modo estrella | Umbral +3 pts/jornada, fricción 5% | Con ~400M el mejor once ya lleva una estrella; con ~600M, dos | Umbrales con más jornadas |
 
-## 00) Revisión del 1/11 (J11 en juego: 30 pts contra 38; J10: 40 contra 59; brecha 247)
-- **Dinero**: patrimonio 384,3M (+54,8M en 7 días, +51% desde el 5/10; caja 54,2M, plantilla 330,1M); hemos recortado a todos en dinero; en puntos no (Josinho 500, nosotros 253). Yamal le aporta ~11 pts/jornada.
-- **Qué falló en la J11**: (1) se vendieron titulares antes de empezar (Hancko +9 pts, Bryan +9, Soria +4, Ibañez 0, Agoumé 1) y el once registrado llevó rellenos (Belocian 0, Gayá 0, Requena 3); los refuerzos (Yoel Lago, Germán V.) llegaron el sábado, ya empezada la jornada, y solo suman desde la J12. (2) Los fichados por forma (Dituro 14→0, Pepelu 9→1, Germán 11→−1, Freeman 13→2, Javi R. 8→1) se desinflaron: la forma reciente pesaba demasiado. (3) Soria (media 6,6) se vendió porque el recambio recién comprado (Dituro, forma inflada) hacía que «perderlo» costara poco: círculo vicioso por la forma.
-- **Cambios hechos**: `FORM_WEIGHT` 0,40→0,15; estrella en subida no se vende por menos de ×1,08; lectura de ofertas con reintento. Ver ESTADO 1/11.
-- **Vigilar**: Diomande se abre lun 2/11 16:57; el blindaje al segundo lo cubre 24 h. Decidir si subir su cláusula (a ×1,3 cuesta ~16M) para cubrir el resto de la semana. Mbappé (Pep) se abre vie 6/11 20:53.
-- **Idea abierta**: exigir un margen mínimo (≥1,5 pts esperados) para sustituir a un titular, porque el error de predicción por jugador es ~1,2 pts: cada permuta con menos margen es ruido más rozamiento.
+## 7. Ideas y mejoras abiertas
+**Alineación**
+- Mejorar la elección del once: probar el rival por goles a favor/en contra (ver tabla), y la «sofisticación» del criterio de los 4 primeros. Backtest con plantillas aleatorias y con nuestras alineaciones reales.
+- Efecto suplente (baratos <4M cuando falta el titular) y lesiones por tipo (corta/larga: la API solo da `playerStatus`; inferir por días en estado no-ok).
 
-## 0) Revisión del 24/10 (datos de la nube de las 18:02) — decisiones tomadas
-- **Estado**: patrimonio **329,5M** (+34,9M en 7 días, +29,8% desde el 5/10; caja 58,9M, plantilla 270,7M). Puntos 200 contra 410 (brecha 210; J9: 37 contra 55). Sin los tres ceros de J5–J7 estaríamos a la par; ahora faltan ~11 pts/jornada.
-- **Los que se abrían** (A1, cerrado): Fofana 31,3M (+7,1M), Zabiri 39,1M (+11,1M), Deossa ×1,10, Ilaix 29,2M (+8,6M), Mayol ×1,09: todo vendido por encima de su valor con la oferta de las 20:53; nadie fue clausulado y no hizo falta subir cláusulas.
-- **Bitácora** (A2, cerrado): explica cada venta y cada «hold»; «recambio previsto» y forma con la jornada en curso funcionan.
-- **J10** (A3, cerrado): once legal con 14 plazas, portero suplente (Marrero) y 4 defensas.
-- **Umbrales** (A4, cerrado, sin cambios): 289 ofertas, mediana ×0,998, p90 ×1,08, máximo ×1,10; umbral óptimo ×1,042 frente a nuestro ×1,05 (diferencia irrelevante). El autoajuste propone bajar la «subida esperada» (0,25→0,227, 0,15→0,145, 0,08→0,065): diferencias dentro del ruido, no se aplica.
-- **Pujas** (A6): las 19 pujas cerradas desde el 26/9 suman −6,3M y las 27 por cláusula +57,0M, pero casi todas las pujas son anteriores a la prima p75 y a la escalera de tiempos; las compras «puntos» registradas desde entonces van +12,3%. Se mantiene la regla y se revisa con las pujas que lleguen.
-- **Bloqueo J11** (`siege`, 24/10): no viable. Nuestro portero Soria sería clausulable por Josinho, faltan plazas, certeza 55% < 60% y no compensa (~16M de beneficio frente a 17M de coste). Ver B.
-- **Crédito del parón** (A8, decidido): se mantiene el 20% (`LEVERAGE_PCT`) solo para pujas de inversión en subida ≥25% (neto a 14 días +28%, 82% aciertan) y se prueba `_delever` con `tick --dry-run` el 5/11.
-- **Revalorización a cero** (24/10): el panel «AYER» podía salir con todos a +0,0M si a las 00:20 solo parte de los jugadores tenía ya el valor del día nuevo. Arreglado: un día solo cuenta con ≥90% de los jugadores, un resultado a cero no se guarda y se recalcula cada 30 min. `reval` y `wealth_league` ya se exportan para poder verificarlo.
-- **Soria** (21/10): `shield_target` descartaba cláusulas >×1,12. Ahora a un jugador clave (≥3 pts/jornada) se le blinda hasta ×1,25 (`KEY_SHIELD_RATIO`). De 27 cláusulas pagadas por rivales solo 4 pasaron de ×1,12, ninguna en un jugador de ≥20M por encima de ×1,15.
-- **Diomande** (19/10): comprado a mano por cláusula (80,1M); hoy vale 91,8M (+11,7M). Lamine Yamal (Josinho, 194,7M, 14 pts/jornada) se abre el sáb 31/10 19:42, tras la congelación y la J11; fuera de alcance y sin tendencia.
-- Los puntos de una jornada cuentan para quien tenía al jugador en el once al empezar: un clausulazo tras el inicio solo quita las siguientes. El hueco peligroso va del inicio de una jornada a la congelación de la siguiente.
+**Plantilla y dinero**
+- **Plazas**: tope 23 desde el 8/11. Medir cuántas compras se pierden por falta de plaza (decisiones «sin plaza») y cuántos suplentes se venden «para hacer sitio»; reservar 1 plaza libre se mantiene.
+- **Peso muerto**: regla activa para suplentes sin puntos con cláusula inalcanzable (se vende a ≥×0,97 si baja, o si lleva ≥7 días por debajo de lo pagado). Vigilar que no haya más casos tipo Rafita.
+- Coste de oportunidad del capital parado en el planificador (hoy: caja sin uso).
+- Estrategia de las últimas ~8 jornadas: todo a puntos (`INVEST_FRACTION` y `POINT_VALUE_M` según jornadas restantes).
+- Autoajuste `shadow`: decidir si alguna propuesta merece aplicarse (hoy ninguna: diferencias dentro del ruido).
+- Permutas con deuda (diseño acordado, sin programar): deuda máx. 10% del valor de plantilla, >48 h de margen, una operación a la vez, saldo positivo antes de la jornada.
 
-## A) Pequeñas — cerradas el 26/10
-1. **Permutas** (decidido: siguen en sombra, no se ejecutan). Backtest de las 14 propuestas únicas del `swap_log` a 7 días: prometían +92,9M y el valor realizó +16,7M (18%); las promesas gordas (Deossa→Castrín «+15,2M» sobre 11,6M de coste) son puntos × `POINT_VALUE_M`, no dinero, y no se comprueban. Ejecutar solo con una promesa en dinero ≥ 5% del coste y viendo dos semanas más de resultados.
-2. **Titulares de relleno** (cerrado): en la J9 faltaban defensas y caja; con caja y plantilla completa el planificador ya no los necesita. Se vigila con la bitácora.
-3. **Peores ventas** (cerrado): Gueye −7,1M, Lorenzo −2,5M, Dolan, Musso y Gayá son de septiembre y principios de octubre: pujas con prima alta y salida anterior a las reglas del 10/10 y 18/10. Nada que cambiar.
+**Frente al líder**
+- Bloqueos de portero (`python3 -m fantasy_agent siege`): no viables el 24/10 (certeza 55% <60%, faltan plazas, no compensa). Repetir cuando Josinho tenga porteros con cláusula libre.
+- Financiar clausulazos al líder vendiendo titulares que ya no suben; ejecutarlos justo antes de la congelación.
+- Yamal (Josinho): descartado el 26/10 (habría que vender tres titulares y recuperaría su cláusula en el parón); lo cubre el modo estrella si algún día sale a cuenta.
 
-## B) Alcanzar a Josinho (brecha 210 pts el 24/10, 28 jornadas)
-- Palancas: no volver a puntuar 0 · más puntos por jornada · bloqueos de portero (`python3 -m fantasy_agent siege`; parado mientras nuestro once esté incompleto) · clausulazos a sus titulares cuando salga la cuenta.
-- Sin bloqueos y con media igual, ~3% de alcanzarlo; con 3 bloqueos y +3 pts/jornada, ~57% (modelo simple, revisar cada jornada).
-- Idea: **modo «ahorrar para una estrella»** (caso Diomande, +12,5% en 5 días que no pudimos comprar).
-- **Financiar clausulazos del líder vendiendo titulares que ya no suben** (hoy solo suplentes) y ejecutarlos justo antes de la congelación.
-- **Permutas con deuda** (diseño acordado, sin programar): deuda máx. 10% del valor de plantilla, >48 h de margen, una operación a la vez, saldo positivo antes de la jornada.
+**Protección**
+- Hoy solo hay 2 blindajes por jornada y duran 24 h: se reparten por valor entre lo que se abre en las próximas 2 semanas. Subir cláusulas es la defensa duradera pero cuesta dinero: ver sección 4.
 
-## B2) Modo «estrella» — estudio del 26/10 (decidido: oportunista, no por defecto; hoy en sombra)
-**Datos.** Puntos por partido según precio: <3M 1,6 · 3–8M 3,0 · 8–15M 3,6 · 15–30M 4,6 · 30–60M 5,7 · **60–100M 6,6 (peor tramo)** · **≥100M 11,5** (Raphinha 14,2, Yamal 12,7, Mbappé 12,0, Bellingham 9,3, Güler 9,1). Los de media ≥ 7,4 casi todos sin dueño en la liga: solo salen si LaLiga los pone en el mercado.
-**Reglas confirmadas el 26/10.** (1) Los puntos de un jugador vendido DESPUÉS de empezar la jornada siguen contando para el once registrado (J10: Unai López y G. Villar, vendidos el 24/10, sumaron sus 4 y 1 pts: 40 = suma exacta). (2) Las ofertas de LaLiga valen 24 h (llegan a las 20:53): la de las 20:53 del viernes se puede aceptar después de empezar la jornada sin perder esos puntos. (3) **La API deja subir la cláusula propia mucho más del 20%**: Bil Nsongo +3M (×1,34), cobró la mitad (1,5M). Según el usuario no hay tope (se puede subir sin límite); coste siempre la mitad de lo que sube.
-**Caso Yamal (se abre sáb 31/10 18:42, 196M): NO.** Para pagar 196M habría que vender Diomande + Hancko + Barrenetxea (~180M + 31M de caja). Para nosotros el once esperado pasa de 62,5 a 60,2 pts (−2,3); para Josinho de 69,0 a 58,0 (−11,0): balance +8,7 pts/jornada, pero (a) el bloqueo de 14 días acaba el 14/11, en el parón, y Josinho recupera 196M de caja para recomprarlo a ×1,00 salvo que subamos su cláusula: con lo que sobra solo llegaríamos a ~×1,15, que es lo que ya pagan; (b) solo lo tendríamos en la J12 (6–8/11), un único +9 pts; (c) se pierden la subida de Diomande (+17M en 7 días) y ~5–10M de diferencia en las ventas. Coste estimado 15–45M por ~9 pts.
-**Valles (portero, 55M, hoy)**: media 9,3 pero forma reciente 4,7 y −8,8% en 7 días: no es estrella. Lección: la media de temporada engaña; contar siempre con forma y tendencia.
-**Diseño acordado.** Una estrella se compra solo si (a) el dinero libre + lo que se vende sin romper el once cubre el precio, (b) el balance de puntos del once (`squad_value` antes/después) es ≥ +3 pts/jornada y mejor si quita puntos al líder, (c) forma reciente ≥ 8 y sin caída de 7 días, (d) se puede proteger tras comprar (blindaje al segundo + subir la cláusula con lo que sobre), (e) quedan ≥ 15 jornadas. Canjear Diomande (97M, media 6,1) por una estrella de ≥ 100M es la conversión eficiente. Próximas oportunidades a vigilar: Mbappé (Pep, 180M, se abre vie 6/11 21:53) y lo que salga al mercado (registro `star_log`, ya en marcha).
-**Hecho**: `stars.py` registra cada estrella visible (mercado o cláusula abierta, media ≥ 7,5 y valor ≥ 15M) con forma, tendencia, precio y si la podíamos pagar. A mediados de noviembre habrá datos de frecuencia para fijar los umbrales.
+**Telegram (aparcado)**
+- Horas del resumen (9/14/19/22), qué es urgente, consultas que faltan (`/ofertas`, `/valor`), preguntas con botones, gráficas por jugador, proyección de la jornada, aviso al cerrar cada jornada.
 
-## C) Mejoras del modelo (con más datos)
-- **Efecto suplente** (suplentes baratos <4M cuando falta el titular): registrar casos en sombra con la alineación probable antes de programar.
-- **Lesiones por tipo** (corta/larga): la API solo da `playerStatus`; inferir por días en estado no-ok cuando haya historial.
-- **Rival**: casa/fuera confirmado (≈0,6 pts); el resto, ruido con 8 jornadas. Probar los goles encajados por el rival en sus últimos 3 partidos en lugar de la tabla (revisar con 15+ jornadas).
-- **Capital y jugadores caros** cuando el patrimonio crezca (ofertas de ≥30M parecen peores: mediana ×0,96, n=15).
-- **Coste de oportunidad del capital parado** en el planificador (46M sin usar).
-- **Estrategia de las últimas ~8 jornadas**: todo a puntos (`INVEST_FRACTION` y `POINT_VALUE_M` según jornadas restantes); programarlo.
-- **Autoajuste `shadow`**: decidir si alguna propuesta merece aplicarse.
-- **Cláusula «tentadora»** y **cláusula propia a ×1,20** como política (ver A1).
-
-## D) Telegram (aparcado por ahora)
-- Decidir horas del resumen (9/14/19/22), qué es urgente y qué consultas faltan (`/ofertas`, `/valor`).
-- Preguntas con botones («¿quieres enterarte ya?»); gráficas por jugador.
-- Ideas ofrecidas: proyección de la jornada, aviso al cerrar cada jornada, jugadores clave de Josinho que le quedan.
-
-## E) Del lado del usuario
-- Disparo extra de las 20:32 en cron-job.org (opcional, job aparte).
+## 8. Del lado del usuario
 - Recompensa diaria de 100K: sin ruta conocida en la API (15 rutas probadas, 404).
-- El token de cron-job.org caduca el **14/06/2027**; la rama `data` es pública (`EXPORT_DATA=0` para dejar de publicar).
+- La rama `data` es pública (`EXPORT_DATA=0` para dejar de publicar).
+- El token de GitHub guardado en el Mac caducó una vez (26/10): si `git push` pide contraseña, crear un token clásico con permiso `repo` y usar la app Terminal de macOS (no el panel integrado).
 
-## Cómo retomar (primeros 10 minutos)
+## 9. Cómo retomar (primeros 10 minutos)
 ```bash
 python3 -m fantasy_agent pull                  # estado que publica el bot (rama `data`, cada 6 h)
 python3 -m fantasy_agent review --cloud        # patrimonio, operaciones por origen, posiciones abiertas
@@ -108,5 +94,10 @@ python3 -m fantasy_agent tune --cloud --deep   # autoajuste (modo shadow: NO apl
 python3 -m fantasy_agent siege                 # ¿viable el bloqueo al líder?
 python3 -m fantasy_agent learn-rivals          # cómo operan los rivales (~1 min)
 ```
-Mirar también `kv.errors` y `kv.decisions` tras el `pull`, `git log --oneline -15` y las ejecuciones de GitHub Actions
-(«not acquired by Runner» = incidencia de GitHub). Referencia del 18/10: patrimonio ~301M (caja 46M + plantilla 255M).
+Mirar también `kv.errors`, `kv.decisions`, `kv.star_log` y `kv.exposure_log` tras el `pull`, `git log --oneline -15` y las ejecuciones de GitHub Actions («not acquired by Runner» = incidencia de GitHub). Cuidado con `tick --dry-run` en local: puede tardar varios minutos (espera dentro del job si hay algo programado al segundo y lee futbolfantasy sin caché).
+
+## 10. Hecho recientemente (detalle en `ESTADO.md`)
+- 8/11: modo estrella; tope de plantilla 23; peso muerto (Rafita); estrella en subida solo si queda blindaje; blindajes por valor; registros `star_log`/`exposure_log`; once final a 2 min; modo inversión desde ya.
+- 7/11: blindaje por subida medido en euros; error de lectura de ofertas con reintento.
+- 1/11: forma reciente 0,40→0,15 (backtest de 1.286 jugador-jornada); estrella en subida.
+- 26/10: blindaje al segundo; revalorización a cero corregida; Yamal descartado.
