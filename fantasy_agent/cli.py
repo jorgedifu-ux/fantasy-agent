@@ -507,6 +507,11 @@ def _star_mode(store: Store, s, api: FantasyAPI, world) -> list[str]:
             why = "su cláusula ha subido por encima de lo previsto"
         elif time.time() - saved.get("at", 0) > STAR_PLAN_MAX_AGE_S:
             why = "el plan ha caducado (5 días)"
+        else:
+            still = {p.id: p for p in mine}
+            expected = cash + sum(still[i].market_value * starmode.STAR_SALE_HAIRCUT for i, _ in saved.get("sells", []) if i in still)
+            if expected < sl.clause * 1.01 + starmode.STAR_CASH_RESERVE:
+                why = "con la caja y lo que queda por vender ya no llega al precio"      # 8/11: se gastó caja en otras compras antes de reservarla
         if why:
             store.set("star_plan", "")
             store.log_decision("estrella", saved["name"], "cancelado", why)
