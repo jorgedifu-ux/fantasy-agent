@@ -527,7 +527,7 @@ def _star_mode(store: Store, s, api: FantasyAPI, world) -> list[str]:
             store.log_decision("estrella", saved["name"], "fichado", f"cláusula pagada: {paid / 1e6:.1f}M; el once ganaba {saved['gain']} pts/jornada", price=paid)
             return [f"⭐ <b>ESTRELLA FICHADA</b>: {name} por {service.m(paid)} (el once gana ~{saved['gain']} pts/jornada). Se protege con blindaje al abrirse su cláusula."]
         return []        # aún no hay caja: las ofertas por los jugadores del plan se aceptan en `_resolve_offers`
-    if not store.alert_is_new("star_search", ttl_hours=6):
+    if not store.alert_is_new("star_search", ttl_hours=1):
         return []
     try:
         week = int((api.current_week() or {}).get("weekNumber") or 0)
