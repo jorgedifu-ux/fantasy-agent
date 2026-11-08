@@ -7,7 +7,7 @@
 - **Dinero**: patrimonio ~434M (caja 35M, plantilla ~400M); +57M en 7 días, +70% desde el 5/10. Hemos recortado a todos en dinero.
 - **Puntos**: 300 contra 539 de Josinho (brecha ~239, J12 a medias). La J11 la ganamos 63–53 (primera vez). Con 26 jornadas por delante hay que puntuar unos 9 más por jornada que él: la palanca es tener estrellas y no regalar puntos.
 - **Calendario**: la J12 acaba hoy a las 21:00; **parón sin partidos hasta la J13 (vie 20/11)**.
-- **Qué hace el bot ahora** (para situarse): vende con la oferta diaria de las 20:53 · blinda (gratis, 24 h, 2 por jornada) a quien más se pierde en puntos o en subida, al segundo de abrirse su cláusula · **modo inversión** (desde que el siguiente partido queda a ≥7 días: 60% del saldo libre en jugadores que suben y hasta ~80M de crédito para pujas) · **modo estrella** (cada día mira si fichar a una estrella por cláusula mejora el once ≥3 pts/jornada; si sí, vende lo necesario y la compra solo) · plantilla de hasta **23** (el juego permite 24) · guarda el once definitivo a 2 min del primer partido.
+- **Qué hace el bot ahora** (para situarse): vende con la oferta diaria de las 20:53 · blinda (gratis, 24 h, 2 por jornada) a quien más se pierde en puntos o en subida, al segundo de abrirse su cláusula · **modo inversión** (desde que el siguiente partido queda a ≥7 días: 60% del saldo libre en jugadores que suben y hasta ~80M de crédito para pujas) · **modo estrella** (mira si fichar a una estrella mejora el once ≥3 pts/jornada: en el mercado puja con caja + crédito según lo que puedan pagar los rivales; por cláusula vende lo necesario y la compra solo) · plantilla de hasta **23** (el juego permite 24) · guarda el once definitivo a 2 min del primer partido.
 
 ## 2. Calendario de lo que viene
 | Cuándo | Qué |
@@ -68,6 +68,9 @@ Cambiar **una cosa cada vez** y anotar aquí fecha y resultado. Valor de referen
 - Estrategia de las últimas ~8 jornadas: todo a puntos (`INVEST_FRACTION` y `POINT_VALUE_M` según jornadas restantes).
 - Autoajuste `shadow`: decidir si alguna propuesta merece aplicarse (hoy ninguna: diferencias dentro del ruido).
 - Permutas con deuda (diseño acordado, sin programar): deuda máx. 10% del valor de plantilla, >48 h de margen, una operación a la vez, saldo positivo antes de la jornada.
+
+**Modo estrella**
+- Hecho el 8/11: por cláusula (con ventas planificadas) y por mercado (puja con caja + crédito, sin ventas previas, prima según la caja de los rivales). Falta ver cómo se comporta con una estrella real: revisar `kv.decisions` («estrella») y `purchase_log` (origen «estrella») cuando salga el primer caso, y ajustar umbrales (+3 pts, xpts ≥9, prima 3–15%) con más jornadas.
 
 **Frente al líder**
 - Bloqueos de portero (`python3 -m fantasy_agent siege`): no viables el 24/10 (certeza 55% <60%, faltan plazas, no compensa). Repetir cuando Josinho tenga porteros con cláusula libre.

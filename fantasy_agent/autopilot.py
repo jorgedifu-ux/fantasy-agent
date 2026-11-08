@@ -178,6 +178,7 @@ class Move:
     rival_loss: float = 0.0         # pts/jornada que pierde el líder si se lo quitamos (ver leader_loss)
     score: float = 0.0              # solo "invest": fuerza del momentum (d3 + d7)
     drift: float = 0.0              # revalorización esperada a ~7 días (0,17 = +17%), ver expected_drift
+    star: bool = False              # puja por una estrella del mercado (modo estrella, ver `starmode.market_plan`)
 
     @property
     def executable_now(self) -> bool:

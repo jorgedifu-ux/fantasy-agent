@@ -87,3 +87,63 @@ class StarSale(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+from fantasy_agent.models import MarketItem
+
+
+def item(pid="mstar", avg=11.0, value=60_000_000, price=None, seller="LaLiga", status="ok", my_bid=0):
+    p = pl(pid, 4, avg, value, status)
+    return MarketItem(player=p, price=price or value, expires=NOW, seller=seller, bids=0, market_id="m" + pid, my_bid=my_bid)
+
+
+def mplan(items=None, budget=70_000_000, credit=0, rivals=(), p75=None, hours=300, weeks=25, mine=None, max_squad=23, trends=None):
+    mine = mine or squad()
+    return starmode.market_plan(mine, items if items is not None else [item()], trends or {}, None, budget, credit, 400_000_000, list(rivals), p75, hours, weeks, max_squad)
+
+
+class MarketStar(unittest.TestCase):
+    def test_bids_one_percent_over_the_floor_if_no_rival_can_pay(self):
+        bid, able = starmode.star_bid(60_000_000, [20_000_000, 35_000_000], 1.10, 60_000_000)
+        self.assertEqual((bid, able), (round(60_000_000 * 1.01), 0))
+
+    def test_bids_the_typical_premium_if_a_rival_can_pay(self):
+        bid, able = starmode.star_bid(60_000_000, [200_000_000], 1.09, 60_000_000)
+        self.assertEqual(able, 1)
+        self.assertAlmostEqual(bid / 60_000_000, 1.09, places=2)
+
+    def test_the_premium_is_capped_and_never_below_the_minimum(self):
+        self.assertLessEqual(starmode.star_bid(60_000_000, [500_000_000], 1.60, 60_000_000)[0], 60_000_000 * 1.15 + 1)
+        self.assertGreaterEqual(starmode.star_bid(60_000_000, [500_000_000], 1.001, 60_000_000)[0], 60_000_000 * 1.03 - 1)
+
+    def test_if_the_richest_rival_barely_reaches_the_floor_we_just_beat_his_cash(self):
+        bid, able = starmode.star_bid(60_000_000, [61_000_000], 1.12, 60_000_000)
+        self.assertEqual(able, 1)
+        self.assertLess(bid, 60_000_000 * 1.03)
+        self.assertGreater(bid, 61_000_000)
+
+    def test_a_market_star_is_planned_with_cash_and_credit_and_no_sales(self):
+        plan = mplan(budget=40_000_000, credit=30_000_000)
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.item.player.id, "mstar")
+        self.assertGreater(plan.uses_credit, 0)
+        self.assertGreaterEqual(plan.gain, starmode.STAR_MIN_GAIN)
+
+    def test_not_if_it_does_not_fit_in_cash_plus_credit(self):
+        self.assertIsNone(mplan(budget=10_000_000, credit=20_000_000))
+
+    def test_not_other_sellers_injured_mediocre_or_already_bid(self):
+        self.assertIsNone(mplan(items=[item(seller="Pep")]))
+        self.assertIsNone(mplan(items=[item(status="injured")]))
+        self.assertIsNone(mplan(items=[item(avg=6.0)]))
+        self.assertIsNone(mplan(items=[item(my_bid=1)]))
+
+    def test_not_too_close_to_a_matchday_or_with_a_full_squad(self):
+        self.assertIsNone(mplan(hours=30))
+        self.assertIsNone(mplan(mine=squad(), max_squad=len(squad())))
+
+    def test_a_big_premium_is_not_paid_for_a_small_gain(self):
+        # con un rival rico la puja sube; si la ganancia de puntos no compensa la prima, no se puja
+        plan = mplan(items=[item(avg=9.5, value=60_000_000)], rivals=[300_000_000], p75=1.15, weeks=16)
+        if plan is not None:
+            self.assertGreaterEqual(plan.gain * 0.3 * 16, (plan.bid - 60_000_000) / 1e6)

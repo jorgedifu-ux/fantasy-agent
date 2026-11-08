@@ -648,6 +648,45 @@ def _committed_bids(store: Store, world, api: FantasyAPI | None = None) -> tuple
     return sum(v for v, _ in by_player.values()), [pl for _, pl in by_player.values()]
 
 
+def _rival_cash(store: Store, api: FantasyAPI, world) -> list[int]:
+    """Caja estimada de cada rival (con /activity, error ~1M), refrescada cada 3 h. Sirve para saber quién puede pagar una estrella."""
+    cached = json.loads(store.get("rival_cash") or "null")
+    if not cached or time.time() - cached.get("at", 0) > 3 * 3600:
+        my_manager = next((str(r.manager_id) for r in world.standing if r.team_id == world.my_team_id), "")
+        valid = {str(r.manager_id) for r in world.standing}        # la actividad trae un «mánager» sin id (premios): no es un rival
+        cash = {m: c for m, c in wealth.cash_by_manager(api, world.league_id).items() if m != my_manager and m in valid}
+        cached = {"at": time.time(), "cash": cash}
+        store.set("rival_cash", json.dumps(cached))
+    return [int(c) for c in cached["cash"].values()]
+
+
+def _star_market_move(store: Store, s, api: FantasyAPI, world, budget: int, credit: int, mine: list) -> ap.Move | None:
+    """Modo estrella en el mercado (ver `starmode.market_plan`): puja por una estrella de LaLiga con caja + crédito (sin vender antes) y una puja que depende de
+    lo que pueden pagar los rivales. Devuelve el movimiento (la puja se coloca en el bucle de `_acquire`, en el último minuto si toca)."""
+    from . import starmode
+    cash = world.my_cash or 0
+    wealth_now = cash + sum(p.market_value for p in mine)
+    try:
+        week = int((api.current_week() or {}).get("weekNumber") or 0)
+    except Exception:
+        week = 0
+    hours = world.outlook.hours_to_next if world.outlook else None
+    if hours is None or hours < starmode.STAR_MIN_HOURS or not any(
+            it.seller == "LaLiga" and ap.xpts(it.player, world.recent_form) >= starmode.STAR_MIN_XPTS for it in world.market):
+        return None
+    prem = _rival_premium(store, api, world)
+    found = starmode.market_plan(mine, world.market, dict(world.trends), world.recent_form, budget, credit, wealth_now, _rival_cash(store, api, world),
+                                 prem.p75 if prem else None, hours, max(0, 38 - week), s.max_squad)
+    if not found:
+        return None
+    p = found.item.player
+    if store.alert_is_new(f"star_mkt:{found.item.market_id}", ttl_hours=24):
+        store.log_decision("estrella", p.name, "puja planificada",
+                           f"mercado: {found.bid / 1e6:.1f}M por una estrella de ~{found.xpts} pts/jornada (el once gana ~{found.gain}); rivales con caja para pagarla: {found.rivals_able}"
+                           + (f"; {found.uses_credit / 1e6:.1f}M salen del crédito" if found.uses_credit else ""), price=found.bid)
+    return ap.Move("bid", p, found.bid, gain=found.gain, item=found.item, star=True)
+
+
 def _rival_premium(store: Store, api: FantasyAPI, world) -> ap.RivalPremium | None:
     """Sobreprecio típico de los rivales al ganar pujas, recalculado una vez al día."""
     cached = json.loads(store.get("rival_premium") or "null")
@@ -734,13 +773,18 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
     if vacating and store.alert_is_new("vacating:" + ",".join(sorted(vacating)), ttl_hours=12):
         store.log_decision("recambio", ", ".join(sorted(p.name for p in mine if p.id in vacating))[:120], "previsto",
                            "sus cláusulas se abren en menos de 3 días: se planifica ya su sustituto")
+    star_mv: ap.Move | None = None
+    try:
+        star_mv = _star_market_move(store, s, api, world, budget, credit, planning_mine)
+    except Exception as exc:       # nunca debe romper las compras normales
+        store.log_error("estrella (mercado)", repr(exc))
     avoid = frozenset(t for t in (world.leader_team_id, world.revenge_against_team_id) if t)
     short_pos = frozenset(pos for pos, n in analysis.position_shortage(world.my_slots).items() if n)
     hours_left = _hours_to_deadline(world)
     emergency = hours_left is not None and hours_left <= ap.EMERGENCY_H        # con días por delante no se paga una cláusula cara: se puja en el mercado
     moves = ap.clause_moves(world.rival_slots, now, freeze=world.clause_freeze, avoid_team_ids=avoid,
                             leader_team_id=world.leader_team_id or "", short_positions=short_pos if emergency else frozenset()) + \
-        ap.bid_moves(world.market, skip_player_ids=frozenset(pl.id for pl in incoming))
+        ap.bid_moves(world.market, skip_player_ids=frozenset(pl.id for pl in incoming) | ({star_mv.player.id} if star_mv else frozenset()))
     trends = {pid: tr for pid, (_, tr) in world.trends.items()}
     # Tendencia de las cláusulas de rivales con precio razonable (no están en `world.trends`).
     for m in moves:
@@ -761,8 +805,11 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
             m.rival_loss = ap.leader_loss(leader_players, m.player.id, world.recent_form)
         kept.append(m)
     moves = kept
-    plan = ap.plan_acquisitions(planning_mine, moves, budget, vacated=[p for p in mine if p.id in vacating], needed_positions=short_pos, form=world.recent_form, max_squad=s.max_squad,
+    star_cost = star_mv.cost if star_mv else 0
+    plan = ap.plan_acquisitions(planning_mine, moves, max(0, budget - star_cost), vacated=[p for p in mine if p.id in vacating], needed_positions=short_pos, form=world.recent_form, max_squad=s.max_squad,
                                 rivals=_rival_premium(store, api, world))
+    if star_mv:
+        plan = [star_mv] + plan
     # El portero de reserva va ANTES que las inversiones (protege el once). Si no hay plaza, se quita lo último del
     # plan y se avisa a `_resolve_offers` de que hay que liberar plazas (kv `slots_needed`).
     planned_gks = [m.player for m in plan if m.player.position_id == 1]
@@ -873,9 +920,10 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
                 expires = mv.item.expires.timestamp() if mv.item.expires else None
                 store.add_market_bid(mv.player.id, mv.player.name, mv.cost, expires, ask=mv.item.price)
                 reserve = mv.player.position_id == 1 and not mv.gain
-                store.log_purchase(mv.player.id, "reserva" if reserve else "puntos", mv.cost)
+                store.log_purchase(mv.player.id, "estrella" if mv.star else "reserva" if reserve else "puntos", mv.cost)
                 cierre = mv.item.expires.astimezone().strftime("%H:%M") if mv.item.expires else "?"
-                motivo = ("portero de reserva (protegido 14 días si se gana)" if reserve else
+                motivo = (f"⭐ ESTRELLA: +{mv.gain} pts/jornada" if mv.star else
+                          "portero de reserva (protegido 14 días si se gana)" if reserve else
                           "cuarto defensa (recambio para poder soltar a un titular que se frena)" if mv.player.position_id == 2 and not mv.gain
                           else f"+{mv.gain} pts/jornada")
                 events.append(
@@ -1000,8 +1048,8 @@ def _late_bid(store: Store, api: FantasyAPI, world, mv: ap.Move) -> str | None:
     mv.cost = _bid_robust(api, world.league_id, it, mv.cost)
     expires = it.expires.timestamp() if it.expires else None
     store.add_market_bid(mv.player.id, mv.player.name, mv.cost, expires, ask=it.price)
-    store.log_purchase(mv.player.id, "inversion" if mv.kind == "invest" else "puntos", mv.cost)
-    motivo = ("inversión (en subida)" if mv.kind == "invest" else
+    store.log_purchase(mv.player.id, "estrella" if mv.star else "inversion" if mv.kind == "invest" else "puntos", mv.cost)
+    motivo = (f"⭐ ESTRELLA: +{mv.gain} pts/jornada" if mv.star else "inversión (en subida)" if mv.kind == "invest" else
               "portero de reserva" if mv.player.position_id == 1 and not mv.gain else f"+{mv.gain} pts/jornada")
     return (f"🛒 <b>Puja en el último minuto</b>: {name} ({mv.player.position}) {service.m(mv.cost)} "
             f"(salida {service.m(it.price)}) · {motivo} · los rivales no la han visto venir")
