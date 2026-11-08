@@ -88,3 +88,14 @@ class InvestMode(unittest.TestCase):
     def test_off_close_to_a_matchday(self):
         self.assertFalse(cli._invest_mode(self.world(100)))
         self.assertFalse(cli._invest_mode(SimpleNamespace(outlook=None)))
+
+
+class DailyOffers(unittest.TestCase):
+    def test_seconds_until_2053_madrid(self):
+        from datetime import datetime, timezone
+        # 8/11/2026 es CET (UTC+1): las 20:46 de Madrid son las 19:46 UTC
+        self.assertEqual(ap.seconds_to_daily_offers(datetime(2026, 11, 8, 19, 46, tzinfo=timezone.utc)), 7 * 60)
+
+    def test_none_once_the_offers_have_arrived(self):
+        from datetime import datetime, timezone
+        self.assertIsNone(ap.seconds_to_daily_offers(datetime(2026, 11, 8, 20, 1, tzinfo=timezone.utc)))

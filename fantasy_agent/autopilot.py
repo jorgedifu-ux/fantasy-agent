@@ -878,6 +878,18 @@ def draw_pending(now: datetime, opens_at: datetime, margin_min: int = 15) -> boo
     return nxt <= opens_at.astimezone(tz) + timedelta(minutes=margin_min)
 
 
+def seconds_to_daily_offers(now: datetime) -> float | None:
+    """Segundos hasta las ofertas diarias de LaLiga (20:53 hora de Madrid) de hoy, o None si ya han llegado."""
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Europe/Madrid")
+    except Exception:
+        tz = timezone(timedelta(hours=1))
+    n = now.astimezone(tz)
+    target = n.replace(hour=20, minute=53, second=0, microsecond=0)
+    return (target - n).total_seconds() if target > n else None
+
+
 def raise_plan(slot: SquadSlot, mine: list[Player], form: dict[str, float] | None, cash: int, now: datetime, *,
                rise_per_day: float = 0.0, shield_ok: bool = False) -> tuple[int, int] | None:
     """Último recurso para que un rival no se lleve a su valor a un jugador nuestro que importa (o que sube): subir

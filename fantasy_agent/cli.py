@@ -1418,6 +1418,21 @@ def _remember_xi(store: Store, api: FantasyAPI, eleven) -> None:
         pass
 
 
+OFFERS_WAIT_WINDOW_S = 12 * 60       # solo se espera a las ofertas de las 20:53 si faltan menos de 12 min (el pase de las :46)
+
+
+def _after_daily_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
+    """Si el pase empieza poco antes de las 20:53 (llegan las ofertas diarias de LaLiga), espera a que lleguen y las resuelve en seguida: antes se esperaba al
+    pase siguiente (~8 min después) y en ese rato un rival puede clausular a quien se abre a esa hora (8/11: Guedes, vendido a las 21:01:57, ya era clausulable)."""
+    secs = ap.seconds_to_daily_offers(datetime.now(timezone.utc))
+    if secs is None or secs > OFFERS_WAIT_WINDOW_S:
+        return []
+    time.sleep(secs + 40)
+    api.clear_cache()
+    fresh = _world(api, s, trends=True)
+    return _resolve_offers(store, s, api, fresh)
+
+
 def _final_lineup(store: Store, s, api: FantasyAPI, world) -> list[str]:
     """Revisión final del once: si el primer partido de la jornada es dentro de ≤25 min, espera a que falten 2 min, vuelve a leer la plantilla (lo que
     hayan resuelto las pujas de las 20:53) y las alineaciones probables sin caché, y guarda el once (`_apply_lineup`). Así se saca del once a quien no vaya a ser
@@ -2158,7 +2173,8 @@ def _watch_once(store: Store, s) -> str:
 
     sniped = st("bloqueo (ejecución)", _siege_go, store, s, api, world, default=[]) + \
         st("al segundo", _timed_actions, store, api, world, reserved, default=[]) + \
-        st("once final", _final_lineup, store, s, api, world, default=[])
+        st("once final", _final_lineup, store, s, api, world, default=[]) + \
+        st("ofertas de las 20:53", _after_daily_offers, store, s, api, world, default=[])
     if sniped:
         _deliver(store, s, st, sniped)
     _LAST_CTX.update(api=api, world=world)
