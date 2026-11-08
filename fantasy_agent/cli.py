@@ -481,6 +481,69 @@ def _invest_mode(world) -> bool:
     return bool(world.outlook and world.outlook.in_break) or (hours is not None and hours >= ap.LEVER_OPEN_H)
 
 
+STAR_PLAN_MAX_AGE_S = 5 * 24 * 3600
+
+
+def _star_mode(store: Store, s, api: FantasyAPI, world) -> list[str]:
+    """Modo estrella (ver `starmode`): mantiene un plan para fichar por cláusula a una estrella y vende lo necesario para pagarla (las ofertas ≥×0,97 por los
+    jugadores del plan se aceptan en `_resolve_offers`); cuando hay caja, paga la cláusula. Si la estrella deja de estar disponible, el plan se cancela."""
+    from . import starmode
+    now = datetime.now(timezone.utc)
+    cash = world.my_cash or 0
+    mine = [sl.player for sl in world.my_slots]
+    wealth = cash + sum(p.market_value for p in mine)
+    saved = json.loads(store.get("star_plan") or "null")
+    slot_of = {sl.player.id: sl for sl in world.rival_slots}
+    events: list[str] = []
+    if saved:
+        sl = slot_of.get(saved["player_id"])
+        name = notify.esc(saved["name"])
+        why = None
+        if sl is None:
+            why = "ya no está en el equipo del rival"
+        elif not sl.clause_open(now):
+            why = "su cláusula está blindada o bloqueada"
+        elif sl.clause / max(sl.player.market_value, 1) > starmode.STAR_MAX_RATIO or sl.clause > saved["price"] * 1.05:
+            why = "su cláusula ha subido por encima de lo previsto"
+        elif time.time() - saved.get("at", 0) > STAR_PLAN_MAX_AGE_S:
+            why = "el plan ha caducado (5 días)"
+        if why:
+            store.set("star_plan", "")
+            store.log_decision("estrella", saved["name"], "cancelado", why)
+            return [f"⭐ Plan estrella cancelado: <b>{name}</b> — {why}. Lo que se venda desde ahora vuelve al modo normal."]
+        price = sl.clause
+        if cash >= price * 1.01 + starmode.STAR_CASH_RESERVE:
+            try:
+                paid = _pay_clause(api, world.league_id, sl, price)
+                squad = models.parse_squad(api.team(world.league_id, world.my_team_id), world.my_team_id, "")
+                if not any(x.player.id == sl.player.id for x in squad):
+                    raise RuntimeError("la API respondió bien pero el jugador no aparece en la plantilla")
+            except Exception as exc:
+                store.log_decision("estrella", saved["name"], "error", str(exc)[:200])
+                return [f"❌ Modo estrella: no he podido fichar a <b>{name}</b>: {notify.esc(str(exc))}"]
+            store.record_auto_op("clause", sl.player.id, paid)
+            store.log_purchase(sl.player.id, "estrella", paid)
+            store.set("star_plan", "")
+            store.log_decision("estrella", saved["name"], "fichado", f"cláusula pagada: {paid / 1e6:.1f}M; el once ganaba {saved['gain']} pts/jornada", price=paid)
+            return [f"⭐ <b>ESTRELLA FICHADA</b>: {name} por {service.m(paid)} (el once gana ~{saved['gain']} pts/jornada). Se protege con blindaje al abrirse su cláusula."]
+        return []        # aún no hay caja: las ofertas por los jugadores del plan se aceptan en `_resolve_offers`
+    if not store.alert_is_new("star_search", ttl_hours=6):
+        return []
+    try:
+        week = int((api.current_week() or {}).get("weekNumber") or 0)
+    except Exception:
+        week = 0
+    found = starmode.plan(mine, world.rival_slots, {pid: v for pid, v in world.trends.items()}, world.recent_form, cash, wealth, now,
+                          world.outlook.hours_to_next if world.outlook else None, max(0, 38 - week))
+    if not found:
+        return []
+    store.set("star_plan", json.dumps({**found.to_json(), "at": time.time()}, ensure_ascii=False))
+    sells = ", ".join(n for _, n in found.sells) or "nada (hay caja)"
+    store.log_decision("estrella", found.name, "plan", f"el once gana {found.gain} pts/jornada; precio {found.price / 1e6:.1f}M; se vende: {sells}", price=found.price)
+    return [f"⭐ <b>Plan estrella</b>: fichar a {notify.esc(found.name)} ({service.m(found.price)}, ~{found.xpts} pts/jornada). El once gana ~{found.gain} pts/jornada. "
+            f"Se vende al aceptar ofertas ≥×{starmode.STAR_SALE_MIN:.2f}: {notify.esc(sells)}. Se cancela solo si la estrella deja de estar disponible."]
+
+
 def _log_exposure(store: Store, world) -> None:
     """Registro en sombra de las cláusulas abiertas de la liga (ver `exposure`)."""
     from . import exposure
@@ -1110,6 +1173,7 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
     events: list[str] = []
     paid: dict[str, int] | None = None  # lo que pagué por cada uno: se consulta solo si hay ofertas
     ages: dict[str, float] = {}         # días desde que compré a cada uno
+    star_sells = {pid for pid, _ in ((json.loads(store.get("star_plan") or "null") or {}).get("sells") or [])}      # jugadores que se venden para pagar una estrella
     exit_since: dict[str, float] = json.loads(store.get("exit_since") or "{}")
     need_slots = json.loads(store.get("slots_needed") or "{}")
     n_slots = int(need_slots.get("n", 0)) if time.time() - need_slots.get("at", 0) < 6 * 3600 else 0
@@ -1175,7 +1239,7 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
                 cost_basis=None if in_siege else paid.get(pid),
                 injured=sl.player.status.lower() in ap.INJURED, clause=sl.clause, reserve_keeper=reserve_keeper,
                 free_slot=free_slot, trend_d1=trend.d1, exit_mode=exit_flag, exit_late=exit_late, held_days=ages.get(pid),
-                rise_per_day=max(0.0, trend.d3) / 3 / 100, shield_left=_shield_left_cached(api, world, now),
+                rise_per_day=max(0.0, trend.d3) / 3 / 100, shield_left=_shield_left_cached(api, world, now), star_sale=pid in star_sells,
             )
             if store.alert_is_new(f"dec:{o.id}:{decision}", ttl_hours=36):
                 store.log_decision("oferta", sl.player.name, decision, why, ratio=round(o.money / sl.player.market_value, 3),
@@ -1992,6 +2056,7 @@ def _watch_once(store: Store, s) -> str:
     events += bought
     if bought:
         world = _world(api, s, trends=True)
+    events += st("modo estrella", _star_mode, store, s, api, world, default=[])
 
     hours = _hours_to_deadline(world)
     if any(analysis.position_shortage(world.my_slots).values()) and hours is not None and hours <= s.lineup_lock_hours:

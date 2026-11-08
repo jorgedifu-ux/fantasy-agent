@@ -966,6 +966,7 @@ def is_stalled(trend_d1: float | None, trend_d7: float, value: int) -> bool:
 
 
 STUCK_DAYS = 7                  # suplente sin puntos que lleva ≥7 días por debajo de lo pagado y no sube: sale aunque su valor no baje
+STAR_SALE_MIN = 0.97             # oferta mínima por un jugador que se vende para pagar una estrella (`starmode`)
 DEAD_WEIGHT_MIN = 0.97        # oferta mínima por un suplente sin puntos, de cláusula inalcanzable, cuyo valor baja
 STAR_HOLD_MIN = 1.08            # oferta mínima por una estrella en subida cuando su protección acaba (las ofertas de la liga llegan a ×1,10; p90 ×1,08)
 STAR_HOLD_GAIN_M = 2.0          # estrella en subida = jugador clave que se espera que suba ≥2M€ en 5 días (progresivo: un 2%/día en 40M ya lo es; un 1%/día en 5M no)
@@ -983,7 +984,7 @@ def offer_decision(
     squad_full: bool = False, cost_basis: int | None = None, no_sell: bool = False, liquidity: bool = False,
     injured: bool = False, clause: int = 0, reserve_keeper: bool = False, free_slot: bool = False,
     trend_d1: float | None = None, exit_mode: bool = False, exit_late: bool = False, rise_per_day: float = 0.0, shield_left: bool = True,
-    held_days: float | None = None,
+    held_days: float | None = None, star_sale: bool = False,
 ) -> tuple[str, str]:
     """("accept" | "reject" | "hold", motivo). "hold" = no hacer nada y dejar que caduque.
     `no_sell`: jugador de una operación en curso (bloqueo al líder): no se vende todavía."""
@@ -1001,6 +1002,10 @@ def offer_decision(
         return "hold", ("venderlo ahora te dejaría sin once legal y aún no hay recambio: primero el recambio (mientras, se protege "
                         "con blindaje o subiendo su cláusula)")
     key = loss >= KEY_PLAYER_LOSS
+    if star_sale:
+        # Se vende para pagar una estrella (`starmode`): el plan ya comprobó que el once mejora sin él. Oferta ≥ ×0,97, sin mirar lo pagado.
+        why = "se vende para pagar una estrella (plan del modo estrella)"
+        return ("accept", f"{why}: x{ratio:.2f} el valor") if ratio >= STAR_SALE_MIN else ("hold", f"x{ratio:.2f} el valor, exijo x{STAR_SALE_MIN:.2f} ({why})")
     stuck = held_days is not None and held_days >= STUCK_DAYS and cost_basis and value < cost_basis and trend_d7 <= 3.0
     if loss < BENCH_LOSS and clause and value and clause / value > ATTRACTIVE_RATIO and ((trend_d7 < 0 and trend_d3 <= 0) or stuck) and not injured:
         # Peso muerto (8/11, Rafita): no puntúa, su cláusula (×1,19) está por encima de lo que nadie paga —así que «que me paguen la cláusula» no va a pasar— y su
