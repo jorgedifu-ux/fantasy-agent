@@ -1248,7 +1248,9 @@ def _resolve_offers(store: Store, s, api: FantasyAPI, world) -> list[str]:
     events: list[str] = []
     paid: dict[str, int] | None = None  # lo que pagué por cada uno: se consulta solo si hay ofertas
     ages: dict[str, float] = {}         # días desde que compré a cada uno
-    star_sells = {pid for pid, _ in ((json.loads(store.get("star_plan") or "null") or {}).get("sells") or [])}      # jugadores que se venden para pagar una estrella
+    star_saved = json.loads(store.get("star_plan") or "null") or {}
+    # jugadores que se venden para pagar una estrella, solo mientras la caja no llegue al precio (si ya llega, no se vende nada más)
+    star_sells = {pid for pid, _ in (star_saved.get("sells") or [])} if star_saved and (world.my_cash or 0) < star_saved.get("price", 0) * 1.01 + 2_000_000 else set()
     exit_since: dict[str, float] = json.loads(store.get("exit_since") or "{}")
     need_slots = json.loads(store.get("slots_needed") or "{}")
     n_slots = int(need_slots.get("n", 0)) if time.time() - need_slots.get("at", 0) < 6 * 3600 else 0
