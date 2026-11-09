@@ -484,6 +484,22 @@ def _invest_mode(world) -> bool:
 STAR_PLAN_MAX_AGE_S = 5 * 24 * 3600
 
 
+def _search_star_plan(store: Store, api: FantasyAPI, world, mine: list, cash: int, wealth: int, now: datetime):
+    """Busca la mejor estrella por cláusula (`starmode.plan`) y, si la hay, guarda el plan en `kv.star_plan` y lo anota en la bitácora."""
+    from . import starmode
+    try:
+        week = int((api.current_week() or {}).get("weekNumber") or 0)
+    except Exception:
+        week = 0
+    found = starmode.plan(mine, world.rival_slots, {pid: v for pid, v in world.trends.items()}, world.recent_form, cash, wealth, now,
+                          world.outlook.hours_to_next if world.outlook else None, max(0, 38 - week))
+    if found:
+        store.set("star_plan", json.dumps({**found.to_json(), "at": time.time()}, ensure_ascii=False))
+        sells = ", ".join(n for _, n in found.sells) or "nada (hay caja)"
+        store.log_decision("estrella", found.name, "plan", f"el once gana {found.gain} pts/jornada; precio {found.price / 1e6:.1f}M; se vende: {sells}", price=found.price)
+    return found
+
+
 def _star_mode(store: Store, s, api: FantasyAPI, world) -> list[str]:
     """Modo estrella (ver `starmode`): mantiene un plan para fichar por cláusula a una estrella y vende lo necesario para pagarla (las ofertas ≥×0,97 por los
     jugadores del plan se aceptan en `_resolve_offers`); cuando hay caja, paga la cláusula. Si la estrella deja de estar disponible, el plan se cancela."""
@@ -515,7 +531,14 @@ def _star_mode(store: Store, s, api: FantasyAPI, world) -> list[str]:
         if why:
             store.set("star_plan", "")
             store.log_decision("estrella", saved["name"], "cancelado", why)
-            return [f"⭐ Plan estrella cancelado: <b>{name}</b> — {why}. Lo que se venda desde ahora vuelve al modo normal."]
+            again = _search_star_plan(store, api, world, mine, cash, wealth, now)       # un solo mensaje: o plan nuevo o cancelación (8/11: tres avisos seguidos confundían)
+            if again:
+                sells = ", ".join(n for _, n in again.sells) or "nada (hay caja)"
+                if again.player_id == saved["player_id"]:
+                    return [f"⭐ <b>Plan estrella actualizado</b>: sigue el objetivo {name} ({service.m(again.price)}) — {why}. Ahora se vende: {notify.esc(sells)}. "
+                            f"El once gana ~{again.gain} pts/jornada."]
+                return [f"⭐ <b>Plan estrella cambiado</b>: ya no {name} ({why}); ahora {notify.esc(again.name)} ({service.m(again.price)}), se vende: {notify.esc(sells)}."]
+            return [f"⭐ Plan estrella cancelado: <b>{name}</b> — {why}. No hay otra estrella que compense ahora; lo que se venda vuelve al modo normal."]
         price = sl.clause
         if cash >= price * 1.01 + starmode.STAR_CASH_RESERVE:
             try:
@@ -534,17 +557,10 @@ def _star_mode(store: Store, s, api: FantasyAPI, world) -> list[str]:
         return []        # aún no hay caja: las ofertas por los jugadores del plan se aceptan en `_resolve_offers`
     if not store.alert_is_new("star_search", ttl_hours=1):
         return []
-    try:
-        week = int((api.current_week() or {}).get("weekNumber") or 0)
-    except Exception:
-        week = 0
-    found = starmode.plan(mine, world.rival_slots, {pid: v for pid, v in world.trends.items()}, world.recent_form, cash, wealth, now,
-                          world.outlook.hours_to_next if world.outlook else None, max(0, 38 - week))
+    found = _search_star_plan(store, api, world, mine, cash, wealth, now)
     if not found:
         return []
-    store.set("star_plan", json.dumps({**found.to_json(), "at": time.time()}, ensure_ascii=False))
     sells = ", ".join(n for _, n in found.sells) or "nada (hay caja)"
-    store.log_decision("estrella", found.name, "plan", f"el once gana {found.gain} pts/jornada; precio {found.price / 1e6:.1f}M; se vende: {sells}", price=found.price)
     return [f"⭐ <b>Plan estrella</b>: fichar a {notify.esc(found.name)} ({service.m(found.price)}, ~{found.xpts} pts/jornada). El once gana ~{found.gain} pts/jornada. "
             f"Se vende al aceptar ofertas ≥×{starmode.STAR_SALE_MIN:.2f}: {notify.esc(sells)}. Se cancela solo si la estrella deja de estar disponible."]
 

@@ -414,6 +414,11 @@ def render(world, store: Store, *, hours_to_deadline: float | None, week: dict |
         rows = [f"• {esc(b['player_name'])} {_m(b['price'])}" + (f" · resuelve {datetime.fromtimestamp(b['expires_at']):%d/%m %H:%M}" if b.get("expires_at") else "")
                 for b in bids[:6]]
         money += f"\n🛒 <b>{len(bids)} puja(s) en curso</b>\n" + "\n".join(rows)
+    star = json.loads(store.get("star_plan") or "null")
+    if star:
+        sells = ", ".join(esc(n) for _, n in star.get("sells", [])) or "nada (hay caja)"
+        money += (f"\n⭐ <b>Plan estrella</b>: {esc(star['name'])} ({_m(star['price'])}) · el once gana ~{star['gain']} pts/jornada\n"
+                  f"Vende {sells} al llegar una oferta ≥×0,97 y paga la cláusula al tener {_m(int(star['price'] * 1.01) + 2_000_000)} en caja")
     sections.append(money)
 
     # --- proteger a los que se abren
