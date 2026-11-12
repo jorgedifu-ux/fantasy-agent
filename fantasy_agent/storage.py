@@ -114,12 +114,16 @@ class Store:
             self.db.commit()
 
     def alert_is_new(self, key: str, ttl_hours: float = 72) -> bool:
-        """True la primera vez que se ve una alerta (y la registra)."""
+        """True la primera vez que se ve una alerta (y la registra) y de nuevo cuando pasa su `ttl_hours`. El plazo es de CADA clave: antes cada llamada borraba
+        todo lo anterior a SU plazo, y con una búsqueda cada hora (`star_search`, 1 h) todos los avisos y decisiones se repetían cada hora (12/11)."""
         now = time.time()
-        self.db.execute("DELETE FROM alerts_sent WHERE ts < ?", (now - ttl_hours * 3600,))
-        cur = self.db.execute("INSERT OR IGNORE INTO alerts_sent(key, ts) VALUES (?, ?)", (key, now))
+        row = self.db.execute("SELECT ts FROM alerts_sent WHERE key = ?", (key,)).fetchone()
+        if row and now - row[0] < ttl_hours * 3600:
+            return False
+        self.db.execute("INSERT OR REPLACE INTO alerts_sent(key, ts) VALUES (?, ?)", (key, now))
+        self.db.execute("DELETE FROM alerts_sent WHERE ts < ?", (now - 35 * 86400,))         # limpieza general (el mayor plazo en uso es de 30 días)
         self.db.commit()
-        return cur.rowcount == 1
+        return True
 
     def get(self, key: str) -> str | None:
         row = self.db.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
