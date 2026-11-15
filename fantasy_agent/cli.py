@@ -862,7 +862,11 @@ def _acquire(store: Store, s, api: FantasyAPI, world, extra_reserved: int = 0) -
         store.log_decision("plazas", ", ".join(m.player.name for m in candidates[:3])[:80], "sin plaza",
                            f"{len(candidates)} inversión(es) en subida no caben: plantilla {len(mine)} + {len(plan)} fichajes de {s.max_squad}")
     if (invest_budget > 0 or credit > 0) and slots_left > 0 and candidates:
-        plan += ap.plan_investments_with_credit(candidates, invest_budget, credit, slots_left)
+        wealth_total = (world.my_cash or 0) + sum(pl.market_value for pl in mine)
+        days_credit = (hours_left - ap.DELEVER_H) / 24 if hours_left is not None else None       # días hasta empezar a devolver el crédito
+        plan += ap.plan_investments_with_credit(candidates, invest_budget, credit, slots_left,
+                                                cap_each=int(ap.INVEST_PLAYER_WEALTH_SHARE * wealth_total),
+                                                rivals=_rival_premium(store, api, world), days_available=days_credit)
     # Rotación de capital: si hay inversiones buenas que no se han podido pagar (o no caben en la
     # plantilla), se anota para que `_resolve_offers` venda antes algún suplente que no suba.
     funded = {m.player.id for m in plan}

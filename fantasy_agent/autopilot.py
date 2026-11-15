@@ -178,6 +178,7 @@ class Move:
     rival_loss: float = 0.0         # pts/jornada que pierde el líder si se lo quitamos (ver leader_loss)
     score: float = 0.0              # solo "invest": fuerza del momentum (d3 + d7)
     drift: float = 0.0              # revalorización esperada a ~7 días (0,17 = +17%), ver expected_drift
+    rise_day: float = 0.0           # subida diaria media (fracción) de los últimos 3 días, para fijar la prima de una inversión (`momentum_premium`)
     star: bool = False              # puja por una estrella del mercado (modo estrella, ver `starmode.market_plan`)
 
     @property
@@ -1205,7 +1206,8 @@ def invest_moves(market: list[MarketItem], trends: dict, skip_player_ids: frozen
         drift = expected_drift(tr.d3, tr.d7, (form or {}).get(p.id), p.id)
         net = drift - max(0.0, it.price / p.market_value - 1) - RESALE_SPREAD
         if drift >= 0.08 and net >= 0.03:
-            out.append(Move("invest", p, round(bid_floor(it) * INVEST_BID_MARGIN), item=it, drift=drift, score=round(net * 100 + (tr.d3 + tr.d7) / 10, 1)))
+            out.append(Move("invest", p, round(bid_floor(it) * INVEST_BID_MARGIN), item=it, drift=drift, rise_day=max(0.0, tr.d3) / 3 / 100,
+                            score=round(net * 100 + (tr.d3 + tr.d7) / 10, 1)))
     return sorted(out, key=lambda m: -m.score)
 
 
@@ -1232,26 +1234,49 @@ def clause_invest_moves(
     return sorted(out, key=lambda m: -m.score)
 
 
-def plan_investments_with_credit(moves: list[Move], cash_budget: int, credit: int, slots: int) -> list[Move]:
+INVEST_PLAYER_WEALTH_SHARE = 0.25     # máximo por jugador: el 25% del patrimonio (antes, el 40% del presupuesto de inversión: 12–31M, y Josinho apuesta 50–130M)
+MOMENTUM_PREMIUM_CAPS = ((0.03, 0.12), (0.02, 0.10), (0.015, 0.08), (0.01, 0.05))    # (subida diaria mínima, prima máxima): ver `momentum_premium`
+NET_RETURN_PER_DAY = 0.016           # lo que hay que mantener para recuperar la prima: ~1,6% de prima por día de tenencia (a +8%, 5 días; backtest 15/11)
+
+
+def momentum_premium(rise_day: float, rivals: RivalPremium | None, drift: float, days_available: float | None) -> float:
+    """Prima (sobre el valor) con la que se puja por una inversión en subida. Backtest del 15/11/2026 (301 jugadores, 140 días, entrando con subida ≥2%/día): paga
+    la prima hasta ~+10% (media +10,6% neta a 8 días, 81% ganan; sin señal, −8,2%), pero solo si se mantiene el tiempo suficiente: a +8% de prima hacen falta 4–5 días
+    (1 día: −6,5%; 4 días: +1,0%; 8 días: +9,5%). Por eso: techo según el momentum, lo que pagan los rivales cuando compiten (p75), que quede margen frente a la subida
+    esperada y, si sale del crédito (hay que devolverlo a `DELEVER_H` de la jornada), que dé tiempo a recuperarla."""
+    cap = next((c for th, c in MOMENTUM_PREMIUM_CAPS if rise_day >= th), 0.03)
+    want = max(0.03, (rivals.p75 - 1) if rivals else 0.08)
+    prem = min(cap, want, max(0.0, drift - RESALE_SPREAD - 0.03))
+    if days_available is not None:
+        prem = min(prem, max(0.03, days_available * NET_RETURN_PER_DAY))
+    return max(0.01, round(prem, 3))
+
+
+def plan_investments_with_credit(moves: list[Move], cash_budget: int, credit: int, slots: int, *, cap_each: int | None = None,
+                                 rivals: RivalPremium | None = None, days_available: float | None = None) -> list[Move]:
     """Inversiones con el saldo (pujas y cláusulas) y, además, con CRÉDITO solo para pujas de mercado: el juego no deja endeudarse para pagar una
-    cláusula ni para subirla (comprobado el 13/10/2026), así que un fichaje por cláusula nunca puede salir del crédito."""
-    plan = plan_investments(moves, cash_budget, slots) if cash_budget > 0 and slots > 0 else []
+    cláusula ni para subirla (comprobado el 13/10/2026), así que un fichaje por cláusula nunca puede salir del crédito. La parte que sale del crédito tiene
+    que dar tiempo a recuperar la prima antes de devolverlo (`days_available` = días hasta empezar a devolver)."""
+    plan = plan_investments(moves, cash_budget, slots, cap_each=cap_each, rivals=rivals) if cash_budget > 0 and slots > 0 else []
     if credit > 0 and slots - len(plan) > 0:
         chosen = {m.player.id for m in plan}
         bids_only = [m for m in moves if m.kind == "invest" and m.player.id not in chosen]
-        plan += plan_investments(bids_only, credit, slots - len(plan))
+        plan += plan_investments(bids_only, credit, slots - len(plan), cap_each=cap_each, rivals=rivals, days_available=days_available)
     return plan
 
 
-def plan_investments(moves: list[Move], budget: int, slots: int) -> list[Move]:
-    """Las de más momentum primero, sin pasar de INVEST_MAX_SHARE del presupuesto por jugador
-    ni de las plazas libres de la plantilla."""
+def plan_investments(moves: list[Move], budget: int, slots: int, *, cap_each: int | None = None, rivals: RivalPremium | None = None,
+                     days_available: float | None = None) -> list[Move]:
+    """Las de más momentum primero, sin pasar de `cap_each` (o de INVEST_MAX_SHARE del presupuesto) por jugador ni de las plazas libres de la plantilla."""
     chosen: list[Move] = []
-    left, cap = budget, int(budget * INVEST_MAX_SHARE)
+    left, cap = budget, (cap_each if cap_each else int(budget * INVEST_MAX_SHARE))
     for m in sorted(moves, key=lambda m: -m.score):
         if len(chosen) >= slots:
             break
-        cost = bid_amount(m.item, 0.0) if m.item else m.cost
+        if m.item:
+            cost = round(bid_floor(m.item) * (1 + momentum_premium(m.rise_day, rivals, m.drift, days_available)))
+        else:
+            cost = m.cost
         if cost > left or cost > cap:
             continue
         m.cost = cost

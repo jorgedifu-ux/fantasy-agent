@@ -683,3 +683,35 @@ class FarFromDeadline(unittest.TestCase):
     def test_and_rejected_when_far_from_the_deadline(self):
         squad, mv = self.moves()
         self.assertEqual(ap.plan_acquisitions(squad, mv, 20_000_000, max_squad=23, strict_premium=True), [])
+
+
+class MomentumInvestment(unittest.TestCase):
+    """15/11: Josinho apostó 50–130M por jugador en subida; nuestro tope era de 12–31M. Backtest: con ≥2%/día se paga hasta ~+10% de prima si se mantiene ≥5 días."""
+
+    def test_premium_grows_with_momentum_and_is_capped(self):
+        rv = ap.RivalPremium(1.035, 1.20)
+        self.assertEqual(ap.momentum_premium(0.035, rv, 0.30, None), 0.12)
+        self.assertEqual(ap.momentum_premium(0.025, rv, 0.30, None), 0.10)
+        self.assertEqual(ap.momentum_premium(0.012, rv, 0.30, None), 0.05)
+        self.assertEqual(ap.momentum_premium(0.002, rv, 0.30, None), 0.03)
+
+    def test_it_follows_what_rivals_pay_when_that_is_lower(self):
+        self.assertEqual(ap.momentum_premium(0.035, ap.RivalPremium(1.02, 1.06), 0.30, None), 0.06)
+
+    def test_credit_financed_bids_must_leave_time_to_recover_the_premium(self):
+        rv = ap.RivalPremium(1.035, 1.20)
+        self.assertLessEqual(ap.momentum_premium(0.035, rv, 0.30, 2.0), 0.032)      # 2 días: solo ~3%
+        self.assertAlmostEqual(ap.momentum_premium(0.035, rv, 0.30, 5.0), 0.08, places=2)
+        self.assertEqual(ap.momentum_premium(0.035, rv, 0.30, 12.0), 0.12)
+
+    def test_the_premium_leaves_margin_against_the_expected_rise(self):
+        self.assertLessEqual(ap.momentum_premium(0.035, None, 0.10, None), 0.02)     # drift 10% − spread 5% − 3% de margen
+
+    def test_a_big_bet_fits_under_the_wealth_cap_but_not_under_the_old_one(self):
+        big = player("big", 3, 7.0, 60_000_000)
+        mv = ap.Move("invest", big, 60_000_000, item=item(big), drift=0.20, rise_day=0.03, score=20.0)
+        self.assertEqual(ap.plan_investments([mv], 90_000_000, 5), [])              # tope antiguo: 40% de 90M = 36M
+        mv2 = ap.Move("invest", big, 60_000_000, item=item(big), drift=0.20, rise_day=0.03, score=20.0)
+        got = ap.plan_investments([mv2], 90_000_000, 5, cap_each=110_000_000)
+        self.assertEqual([m.player.id for m in got], ["big"])
+        self.assertGreater(got[0].cost, 60_000_000)

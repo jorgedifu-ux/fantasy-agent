@@ -72,6 +72,10 @@ Cambiar **una cosa cada vez** y anotar aquí fecha y resultado. Valor de referen
 **Modo estrella**
 - Hecho el 8/11: por cláusula (con ventas planificadas) y por mercado (puja con caja + crédito, sin ventas previas, prima según la caja de los rivales). Falta ver cómo se comporta con una estrella real: revisar `kv.decisions` («estrella») y `purchase_log` (origen «estrella») cuando salga el primer caso, y ajustar umbrales (+3 pts, xpts ≥9, prima 3–15%) con más jornadas.
 
+**Inversión y estrellas: asignación de capital** (abierto el 15/11)
+- Mbappé (181M, plano) frente a ese mismo dinero en jugadores que suben ~1,3%/día (~2,4M/día): el modo estrella compara solo puntos (`POINT_VALUE_M` 0,3M) con la fricción, sin el coste de oportunidad del capital. Decidir si el plan estrella debe restarlo (precio × ~1% diario × días hasta la próxima jornada) y revisar `POINT_VALUE_M`: el cuello de botella no es el dinero sino la capacidad de invertir (~1–3 candidatos al día, competencia de Josinho).
+- Revisar con las primeras apuestas grandes: resultado real frente al backtest (+14,5% por operación a ~8 días), primas pagadas, pujas perdidas contra Josinho, y que el crédito se devuelva antes de la jornada (saldo ≥0).
+
 **Frente al líder**
 - Bloqueos de portero (`python3 -m fantasy_agent siege`): no viables el 24/10 (certeza 55% <60%, faltan plazas, no compensa). Repetir cuando Josinho tenga porteros con cláusula libre.
 - Financiar clausulazos al líder vendiendo titulares que ya no suben; ejecutarlos justo antes de la congelación.
